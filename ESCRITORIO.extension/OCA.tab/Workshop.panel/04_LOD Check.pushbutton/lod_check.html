@@ -1,0 +1,271 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>LOD Check</title>
+<style>
+  :root{
+    --bg:#070C16; --panel:rgba(255,255,255,.028); --line:rgba(101,227,255,.22);
+    --grid:rgba(101,227,255,.05); --ink:#D9E8F5; --dim:#7A8FA9;
+    --cy:#65E3FF; --teal:#3DDCB4; --amber:#FFB454; --mag:#FF4F9A; --violet:#9D8CFF;
+    --green:#50D682; --red:#E84A4A;
+  }
+  *{box-sizing:border-box; margin:0; padding:0}
+  body{
+    background:
+      repeating-linear-gradient(0deg, var(--grid) 0 1px, transparent 1px 48px),
+      repeating-linear-gradient(90deg, var(--grid) 0 1px, transparent 1px 48px),
+      radial-gradient(1200px 600px at 15% -10%, #0D1B33 0%, var(--bg) 55%);
+    color:var(--ink); font-family:"Bahnschrift","Segoe UI",system-ui,sans-serif;
+    padding:36px clamp(16px,4vw,56px) 80px; min-height:100vh;
+  }
+  .mono{font-family:Consolas,"Cascadia Mono",monospace}
+  header{display:flex; justify-content:space-between; align-items:flex-end;
+    border-bottom:1px solid var(--line); padding-bottom:18px; margin-bottom:28px}
+  .eyebrow{font-size:11px; letter-spacing:.45em; color:var(--cy); text-transform:uppercase}
+  h1{font-size:clamp(22px,3vw,36px); font-weight:600; letter-spacing:.04em; margin-top:6px}
+  h1 span{color:var(--dim); font-weight:300}
+  .stamp{text-align:right; font-size:11px; color:var(--dim); letter-spacing:.12em; line-height:1.8}
+  .stamp b{color:var(--teal); font-weight:600}
+  .tbadge{display:inline-block; margin-top:6px; padding:3px 12px; border:1px solid var(--cy);
+    border-radius:20px; color:var(--cy); font-size:12px; letter-spacing:.18em}
+  h2{font-size:12px; letter-spacing:.4em; text-transform:uppercase; color:var(--dim);
+    margin:0 0 16px; display:flex; align-items:center; gap:12px}
+  h2::after{content:""; flex:1; height:1px; background:var(--line)}
+
+  .cards{display:grid; grid-template-columns:repeat(auto-fit,minmax(160px,1fr)); gap:14px; margin-bottom:36px}
+  .card{background:var(--panel); border:1px solid var(--line); border-radius:4px;
+    padding:18px 16px 14px; position:relative; overflow:hidden}
+  .card::before{content:""; position:absolute; top:0; left:0; width:100%; height:2px;
+    background:linear-gradient(90deg, var(--c,var(--cy)), transparent 70%)}
+  .card .v{font-size:32px; font-weight:600; color:var(--c,var(--cy)); font-variant-numeric:tabular-nums}
+  .card .l{font-size:10px; letter-spacing:.28em; text-transform:uppercase; color:var(--dim); margin-top:8px}
+
+  /* ---- health hero: score gauge + letter grade ---- */
+  .health{display:flex; gap:34px; align-items:center; flex-wrap:wrap;
+    background:var(--panel); border:1px solid var(--line); border-radius:6px;
+    padding:24px 30px; margin-bottom:26px; position:relative; overflow:hidden}
+  .health::before{content:""; position:absolute; top:0; left:0; bottom:0; width:3px;
+    background:linear-gradient(var(--hc,var(--cy)), transparent)}
+  .gauge{width:184px; height:184px; flex:none; position:relative}
+  .gauge .pctv{position:absolute; inset:0; display:flex; flex-direction:column;
+    align-items:center; justify-content:center}
+  .gauge .pctv b{font-size:38px; font-weight:600; color:var(--hc,var(--cy));
+    font-variant-numeric:tabular-nums; line-height:1}
+  .gauge .pctv small{font-size:9px; letter-spacing:.3em; color:var(--dim);
+    text-transform:uppercase; margin-top:7px}
+  .hbody{flex:1; min-width:250px}
+  .hgrade{display:flex; align-items:center; gap:18px}
+  .hgrade .lg{font-size:70px; font-weight:700; line-height:.85; color:var(--hc,var(--cy));
+    letter-spacing:.02em; text-shadow:0 0 34px var(--hc,var(--cy))}
+  .hgrade .lab{font-size:11px; letter-spacing:.34em; text-transform:uppercase;
+    color:var(--dim); line-height:1.7}
+  .hverdict{font-size:14px; color:var(--ink); margin:12px 0 4px; letter-spacing:.02em}
+
+  /* ---- per-category bars ---- */
+  .catwrap{background:var(--panel); border:1px solid var(--line); border-radius:6px;
+    padding:20px 24px; margin-bottom:36px}
+  .catrow{display:flex; align-items:center; gap:14px; margin:10px 0}
+  .catrow .cn{width:130px; flex:none; color:var(--ink); font-size:13px; letter-spacing:.03em}
+  .catrow .tr{flex:1; height:16px; background:rgba(255,255,255,.05); border-radius:3px;
+    overflow:hidden; display:flex; border:1px solid rgba(255,255,255,.04)}
+  .catrow .fl{height:100%; background:var(--green); width:0; transition:width 1s cubic-bezier(.2,.7,.2,1)}
+  .catrow .flb{height:100%; background:var(--red); flex:1}
+  .catrow .pv{width:150px; flex:none; text-align:right; font-family:Consolas,monospace;
+    font-size:12px; color:var(--dim)}
+  .catrow .pv b{color:var(--teal)}
+
+  /* ---- rules panel ---- */
+  .rules{background:var(--panel); border:1px solid var(--line); border-radius:6px;
+    padding:6px 6px 2px; margin-bottom:36px; overflow-x:auto}
+  table{width:100%; border-collapse:collapse; font-size:13px}
+  th{font-size:10px; letter-spacing:.25em; text-transform:uppercase; color:var(--cy);
+    text-align:left; padding:10px 12px; border-bottom:1px solid var(--line); white-space:nowrap; vertical-align:bottom}
+  td{padding:9px 12px; border-bottom:1px solid rgba(255,255,255,.05); color:var(--ink); vertical-align:top}
+  td.num{font-variant-numeric:tabular-nums; text-align:right}
+  tr:hover td{background:rgba(101,227,255,.05)}
+  .rules td .lodtxt{font-size:12px; line-height:1.5; color:var(--dim)}
+  .rules th.on, .rules td.on{background:rgba(80,214,130,.07)}
+  .rules th.on{color:var(--green)}
+  .rules td.on .lodtxt{color:var(--ink)}
+  .src{display:inline-block; padding:1px 7px; border-radius:2px; font-size:10px;
+    letter-spacing:.1em; text-transform:uppercase}
+  .src.file{border:1px solid rgba(61,220,180,.45); color:var(--teal); background:rgba(61,220,180,.08)}
+  .src.default{border:1px solid var(--line); color:var(--dim)}
+  .rulemeta{font-size:11px; color:var(--dim); margin:2px 12px 12px; letter-spacing:.02em}
+  .rulemeta .path{color:var(--teal); font-family:Consolas,monospace; word-break:break-all}
+  .rulemeta .warn{color:var(--amber)}
+
+  /* ---- below-target table ---- */
+  .tag{display:inline-block; padding:2px 8px; border:1px solid var(--line); border-radius:2px;
+    font-size:11px; color:var(--dim)}
+  .lodpill{display:inline-block; padding:2px 9px; border-radius:12px; font-size:11px;
+    font-variant-numeric:tabular-nums; border:1px solid var(--red); color:var(--red);
+    background:rgba(232,74,74,.08)}
+  .miss{display:inline-block; margin:2px 4px 2px 0; padding:2px 8px; border-radius:2px;
+    background:rgba(232,74,74,.12); border:1px solid rgba(232,74,74,.4); color:#ff9a9a; font-size:11px}
+  .count{font-size:11px; color:var(--dim); letter-spacing:.15em}
+  .empty{text-align:center; padding:44px 0; color:var(--teal); letter-spacing:.2em}
+  footer{margin-top:60px; font-size:10px; letter-spacing:.3em; color:var(--dim);
+    text-transform:uppercase; text-align:center}
+</style>
+</head>
+<body>
+<header>
+  <div>
+    <div class="eyebrow" id="eyebrow">LOD · AUTOMATED CHECK</div>
+    <h1 id="proj"></h1>
+    <span class="tbadge" id="tbadge"></span>
+  </div>
+  <div class="stamp mono">GENERATED <b id="stamp"></b><br>VIEW <b id="viewname"></b><br>SOURCE <b>REVIT · PYREVIT</b></div>
+</header>
+
+<div class="health" id="health"></div>
+
+<div class="cards" id="cards"></div>
+
+<h2>Score by category</h2>
+<div class="catwrap" id="catwrap"></div>
+
+<h2>Rules applied <span style="flex:0" id="rulesTag"></span></h2>
+<div class="rules"><div id="rulesTable"></div><div class="rulemeta" id="ruleMeta"></div></div>
+
+<h2>Elements below target</h2>
+<div id="belowWrap"></div>
+
+<footer>LOD Check · view-only colour overrides · undo (Ctrl+Z) clears them · the model is unchanged</footer>
+
+<script>
+const DATA = __DATA__;
+const esc = s => String(s==null?"":s).replace(/[&<>"]/g,m=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[m]));
+const fmt = n => n.toLocaleString(undefined,{maximumFractionDigits:0});
+const T = DATA.target;
+
+document.getElementById("proj").innerHTML =
+  esc(DATA.project.replace(/\.rvt$/i,"")) + ' <span>/ LOD ' + T + ' check</span>';
+document.getElementById("stamp").textContent = DATA.generated;
+document.getElementById("viewname").textContent = DATA.view;
+document.getElementById("tbadge").textContent = "TARGET · LOD " + T;
+document.title = "LOD " + T + " Check";
+
+/* ---- hero: % at target + letter grade ---- */
+function gradeFor(p){
+  if(p>=90) return {g:"A", c:"var(--teal)",  v:"Excellent - almost everything meets LOD "+T+"."};
+  if(p>=80) return {g:"B", c:"var(--teal)",  v:"Good - a small share is still below LOD "+T+"."};
+  if(p>=70) return {g:"C", c:"var(--amber)", v:"Fair - a fair number of elements are below LOD "+T+"."};
+  if(p>=60) return {g:"D", c:"var(--amber)", v:"Weak - many elements are below LOD "+T+"."};
+  return       {g:"E", c:"var(--mag)",    v:"Needs work - most elements are below LOD "+T+"."};
+}
+function renderHealth(){
+  const s = DATA.summary;
+  const pct = s.total ? 100*s.atTarget/s.total : 100;
+  const gr = gradeFor(pct);
+  const el = document.getElementById("health");
+  el.style.setProperty("--hc", gr.c);
+  const R=78, CIRC=2*Math.PI*R, arc=Math.max(0,Math.min(1,pct/100))*CIRC;
+  el.innerHTML =
+    `<div class="gauge">
+       <svg viewBox="0 0 184 184" width="184" height="184">
+         <circle cx="92" cy="92" r="${R}" fill="none" stroke="rgba(255,255,255,.06)" stroke-width="12"/>
+         <circle id="hgArc" cx="92" cy="92" r="${R}" fill="none" stroke="${gr.c}" stroke-width="12"
+           stroke-linecap="round" transform="rotate(-90 92 92)"
+           stroke-dasharray="${CIRC.toFixed(1)}" stroke-dashoffset="${CIRC.toFixed(1)}"/>
+       </svg>
+       <div class="pctv"><b id="hgPct">0%</b><small>at LOD ${T}</small></div>
+     </div>
+     <div class="hbody">
+       <div class="hgrade"><span class="lg">${gr.g}</span>
+         <span class="lab">LOD ${T}<br>Compliance<br>Grade</span></div>
+       <div class="hverdict">${esc(gr.v)}</div>
+       <div class="count">${fmt(s.atTarget)} of ${fmt(s.total)} elements meet LOD ${T} · ${fmt(s.below)} below</div>
+     </div>`;
+  const reduce = matchMedia("(prefers-reduced-motion: reduce)").matches;
+  const arcEl = document.getElementById("hgArc"), pctEl = document.getElementById("hgPct");
+  if(reduce){ arcEl.style.strokeDashoffset=(CIRC-arc).toFixed(1); pctEl.textContent=pct.toFixed(0)+"%"; return; }
+  requestAnimationFrame(()=>{ arcEl.style.transition="stroke-dashoffset 1.1s cubic-bezier(.2,.7,.2,1)";
+    arcEl.style.strokeDashoffset=(CIRC-arc).toFixed(1); });
+  const t0=performance.now(), dur=1100;
+  (function tick(t){ const p=Math.min(1,(t-t0)/dur), e=1-Math.pow(1-p,3);
+    pctEl.textContent=(pct*e).toFixed(0)+"%"; if(p<1) requestAnimationFrame(tick); })(t0);
+}
+
+function renderCards(){
+  const s = DATA.summary;
+  const pct = s.total ? 100*s.atTarget/s.total : 100;
+  const cards = [
+    {v:s.total, l:"Elements checked", c:"var(--cy)"},
+    {v:s.atTarget, l:"Meet LOD "+T, c:"var(--green)"},
+    {v:s.below, l:"Below LOD "+T, c: s.below?"var(--red)":"var(--teal)"},
+    {v:pct.toFixed(1)+"%", l:"At target", c: pct>=90?"var(--teal)":(pct>=70?"var(--amber)":"var(--red)")},
+  ];
+  document.getElementById("cards").innerHTML = cards.map(m=>
+    `<div class="card" style="--c:${m.c}"><div class="v">${typeof m.v==="number"?fmt(m.v):m.v}</div>
+     <div class="l">${esc(m.l)}</div></div>`).join("");
+}
+
+function renderCats(){
+  const wrap = document.getElementById("catwrap");
+  if(!DATA.categories.length){ wrap.innerHTML = `<div class="count">No elements of interest in this view.</div>`; return; }
+  wrap.innerHTML = DATA.categories.map(c=>{
+    const pct = c.total ? 100*c.atTarget/c.total : 0;
+    return `<div class="catrow">
+      <span class="cn">${esc(c.category)}</span>
+      <span class="tr"><span class="fl" data-w="${pct.toFixed(1)}"></span>${c.below?'<span class="flb"></span>':''}</span>
+      <span class="pv"><b>${c.atTarget}</b> / ${c.total} at target</span></div>`;
+  }).join("");
+  requestAnimationFrame(()=>wrap.querySelectorAll(".fl").forEach(f=>f.style.width=f.dataset.w+"%"));
+}
+
+function renderRules(){
+  const cols = [200,300,350];
+  const head = `<tr><th>Category</th>
+    ${cols.map(l=>`<th class="${l===T?'on':''}">LOD ${l}</th>`).join("")}
+    <th>Detection</th><th>Source</th></tr>`;
+  const body = DATA.rules.map(r=>{
+    const cell = (txt,l)=>`<td class="${l===T?'on':''}"><span class="lodtxt">${esc(txt)}</span></td>`;
+    const det = `${r.minLayers}+ layers${r.requireMaterial?", each with a material":""}; fire param: “${esc(r.fireParam)}”`;
+    return `<tr>
+      <td><b>${esc(r.category)}</b></td>
+      ${cell(r.lod200,200)}${cell(r.lod300,300)}${cell(r.lod350,350)}
+      <td><span class="lodtxt">${det}</span></td>
+      <td><span class="src ${r.source==='file'?'file':'default'}">${r.source}</span></td></tr>`;
+  }).join("");
+  document.getElementById("rulesTable").innerHTML = `<table><thead>${head}</thead><tbody>${body}</tbody></table>`;
+
+  const rs = DATA.rulesSource;
+  const tag = document.getElementById("rulesTag");
+  tag.innerHTML = rs.kind==="default"
+    ? `<span class="src default" style="letter-spacing:.1em">built-in defaults</span>`
+    : `<span class="src file" style="letter-spacing:.1em">from ${esc(rs.kind).toUpperCase()}</span>`;
+  let meta = "";
+  if(rs.name) meta += `Reference file: <span class="path">${esc(rs.name)}</span>. `;
+  meta += `The highlighted <b style="color:var(--green)">LOD ${T}</b> column is the target being checked. `
+        + `Edit the reference file next to the button to change any rule; unlisted categories fall back to the defaults.`;
+  if(rs.error) meta += `<br><span class="warn">Could not read the reference file (${esc(rs.error)}); built-in defaults were used.</span>`;
+  document.getElementById("ruleMeta").innerHTML = meta;
+}
+
+function renderBelow(){
+  const wrap = document.getElementById("belowWrap");
+  const list = DATA.below;
+  if(!list.length){
+    wrap.innerHTML = `<div class="empty">✓ Every checked element meets LOD ${T}</div>`;
+    return;
+  }
+  const head = `<tr><th>Category</th><th>Type</th><th>Level</th><th>Element ID</th>
+    <th>Current</th><th>Missing for LOD ${T}</th></tr>`;
+  const body = list.map(r=>`<tr>
+    <td>${esc(r.category)}</td>
+    <td>${esc(r.type)||"-"}</td>
+    <td><span class="tag">${esc(r.level)}</span></td>
+    <td class="mono">${r.id}</td>
+    <td><span class="lodpill">LOD ${r.lod}</span></td>
+    <td>${r.missing.map(m=>`<span class="miss">${esc(m)}</span>`).join(" ")||"-"}</td></tr>`).join("");
+  wrap.innerHTML = `<table><thead>${head}</thead><tbody>${body}</tbody></table>
+    <div class="count" style="margin-top:12px">${list.length} element(s) below LOD ${T}</div>`;
+}
+
+renderHealth(); renderCards(); renderCats(); renderRules(); renderBelow();
+</script>
+</body>
+</html>
