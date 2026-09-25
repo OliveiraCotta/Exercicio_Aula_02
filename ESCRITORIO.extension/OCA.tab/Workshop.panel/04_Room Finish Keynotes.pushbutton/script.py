@@ -6,20 +6,29 @@ Room finish parameters (Wall / Floor / Ceiling / Base Finish).
 
     READ -> ANALYZE -> PREVIEW -> USER CONFIRMATION -> TRANSACTION -> WRITE -> REPORT
 
-Where each finish comes from (all read-only, nothing but the 4 Room
-parameters is ever written):
+Which parameter a value goes to is decided ONLY by the Keynote prefix
+(case-insensitive, value normalised to upper case), never by the element's
+category:
 
-  Wall Finish    Room.GetBoundarySegments()  -> BoundarySegment.ElementId
-                 (+ LinkElementId for linked walls), filtered to Walls.
-  Floor Finish   SpatialElementGeometryCalculator -> Bottom subfaces whose
-                 bounding element is a Floor.
-  Ceiling Finish SpatialElementGeometryCalculator -> Top subfaces whose
-                 bounding element is a Ceiling (coverage is measured, so a
-                 room that is partly open to the slab is reported).
-  Base Finish    Wall Sweeps (standalone WallSweep elements hosted on a
-                 bounding wall, or sweeps built into the wall type), on the
-                 side of the wall that faces the room, near the wall base.
-                 Anything else is reported as "Not detected".
+  RD... -> Base Finish     FR... -> Ceiling Finish
+  RE... -> Wall Finish     PI... -> Floor Finish      anything else: ignored
+
+The category is only used afterwards to REPORT mismatches (e.g. RE01 on a
+Floor). Nothing but the 4 Room parameters is ever written.
+
+Elements considered for a room (all through Revit API relationships):
+  - Room.GetBoundarySegments(): BoundarySegment.ElementId (+ LinkElementId
+    for linked models) - the elements forming the room outline.
+  - SpatialElementGeometryCalculator: every element bounding the room volume
+    (side / top / bottom subfaces) and the material of the face touching it.
+  - Wall sweeps on the room-facing side of the bounding walls (standalone
+    WallSweep elements and sweeps built into the wall type).
+  - Family instances located in the room (FamilyInstance.Room for the room's
+    phase) - only those whose Keynote has one of the four prefixes.
+  Position guard: a PI keynote on an element that only bounds the room from
+  ABOVE is the floor of the room upstairs, and an FR keynote on an element
+  that only bounds it from BELOW is the ceiling of the room downstairs - both
+  are reported and not written.
 
 Keynote lookup, per element (see KEYNOTE_SOURCES):
   1. Keynote on the element itself (rare - most categories only have it on
@@ -87,12 +96,15 @@ SEPARATOR = u" / "
 # face of the wall, which is what a finish schedule describes.
 BOUNDARY_LOCATION = DB.SpatialElementBoundaryLocation.Finish
 
-# A wall sweep counts as a skirting / base finish when it is measured from the
-# wall base and starts no higher than this above it.
-BASE_MAX_OFFSET_M = 0.30
-BASE_MAX_OFFSET_FT = BASE_MAX_OFFSET_M / 0.3048
+# The ONLY rule that decides which Room parameter a Keynote fills.
+PREFIX_RULES = OrderedDict([
+    ("RD", "base"),
+    ("FR", "ceiling"),
+    ("RE", "wall"),
+    ("PI", "floor"),
+])
 
-# Ceiling must cover this share of the room's top surface to count as "OK".
+# FR elements must cover this share of the room's top surface, else warning.
 CEILING_FULL_COVERAGE = 0.98
 
 KEYNOTE_SOURCES = [
@@ -109,10 +121,21 @@ def _bic(name):
         return None
 
 
-CAT_WALLS = _bic("OST_Walls")
-CAT_FLOORS = _bic("OST_Floors")
-CAT_CEILINGS = _bic("OST_Ceilings")
 CAT_ROOM_SEP = _bic("OST_RoomSeparationLines")
+CAT_CORNICES = _bic("OST_Cornices")      # Wall Sweeps
+
+# Categories each finish is EXPECTED on. Used only to report mismatches -
+# never to classify. Edit freely to match your modelling standard.
+EXPECTED_CATEGORIES = {
+    "wall": set([_bic("OST_Walls")]),
+    "floor": set([_bic("OST_Floors")]),
+    "ceiling": set([_bic("OST_Ceilings")]),
+    "base": set([CAT_CORNICES, _bic("OST_Walls"), _bic("OST_GenericModel")]),
+}
+
+# Keynote of an element that ONLY bounds the room from this side belongs to
+# the neighbouring room (floor slab above, ceiling below) - not written.
+POSITION_GUARD = {"floor": "top", "ceiling": "bottom"}
 
 
 # ==================================================================
@@ -202,6 +225,7 @@ class ModelIndex(object):
         self._link_names = {}
         self._elems = {}
         self._elem_kn = {}
+        self._type_kn = {}
         self._mat_kn = {}
         self._mat_names = {}
 
@@ -247,11 +271,13 @@ class ModelIndex(object):
                 tid = elem.GetTypeId()
             except Exception:
                 tid = None
-            typ = self.element(doc_key, tid) if is_valid_id(tid) else None
-            if typ is not None:
-                kn = param_str(typ.get_Parameter(BIP.KEYNOTE_PARAM))
-                if kn:
-                    result = (kn, "type")
+            if is_valid_id(tid):
+                tk = (doc_key, eid_int(tid))
+                if tk not in self._type_kn:
+                    typ = self.element(doc_key, tid)
+                    self._type_kn[tk] = param_str(typ.get_Parameter(BIP.KEYNOTE_PARAM)) if typ else u""
+                if self._type_kn[tk]:
+                    result = (self._type_kn[tk], "type")
         self._elem_kn[k] = result
         return result
 
@@ -374,10 +400,24 @@ def has_duplicates(candidates):
 
 
 # ==================================================================
-# Wall sweeps (base finish candidates)
+# Finish classification - by Keynote PREFIX only
+# ==================================================================
+def classify(keynote):
+    """-> (normalised keynote, finish key or None). Case-insensitive prefix
+    match; the value is returned in upper case. Unmapped prefixes -> None."""
+    norm = to_unicode(keynote).strip().upper()
+    for prefix, finish in PREFIX_RULES.items():
+        if norm.startswith(prefix):
+            return norm, finish
+    return norm, None
+
+
+# ==================================================================
+# Wall sweeps on bounding walls
 # ==================================================================
 def build_sweep_index(d):
-    """host wall id -> [sweep dict]. One pass over all WallSweep elements."""
+    """host wall id -> [sweep dict]. One pass over all WallSweep elements
+    (sweeps and reveals - the Keynote prefix decides what they are)."""
     idx = {}
     try:
         sweeps = DB.FilteredElementCollector(d).OfClass(DB.WallSweep).ToElements()
@@ -386,13 +426,9 @@ def build_sweep_index(d):
     for sw in sweeps:
         try:
             info = sw.GetWallSweepInfo()
-            if info.WallSweepType != DB.WallSweepType.Sweep:
-                continue                        # reveals are not finishes
             rec = {
                 "elem": sw,
                 "side": info.WallSide,
-                "from": info.DistanceMeasuredFrom,
-                "dist": info.Distance,
                 "mat": info.MaterialId,
                 "bb": sw.get_BoundingBox(None),
             }
@@ -401,10 +437,6 @@ def build_sweep_index(d):
         except Exception:
             continue
     return idx
-
-
-def is_base_height(sweep_from, dist):
-    return sweep_from == DB.DistanceMeasuredFrom.Base and dist <= BASE_MAX_OFFSET_FT + 1e-6
 
 
 def line_interval(line, pts):
@@ -481,8 +513,33 @@ def wall_side_facing(wall, normal):
     return None                         # end face - no side
 
 
+REL_LABEL = {
+    "boundary": u"room boundary",
+    "side": u"side of room volume",
+    "top": u"above the room",
+    "bottom": u"below the room",
+    "sweep": u"sweep on bounding wall",
+    "inside": u"family instance in room",
+}
+
+
+def _subface_rel(stype):
+    if stype == DB.SubfaceType.Top:
+        return "top"
+    if stype == DB.SubfaceType.Bottom:
+        return "bottom"
+    return "side"
+
+
 # ==================================================================
 # Scanner: READ + ANALYZE (no Transaction anywhere in here)
+#
+# 1. collect(): every element related to the room through the Revit API
+#    (2D boundary, 3D room volume faces, sweeps on its walls, family
+#    instances located in it) - WITHOUT looking at categories.
+# 2. classify_room(): read each element's Keynote and route it to a finish
+#    parameter purely by prefix (PREFIX_RULES). Categories are only used
+#    afterwards, to report prefix/category mismatches.
 # ==================================================================
 class Scanner(object):
     def __init__(self, d, mode):
@@ -496,7 +553,49 @@ class Scanner(object):
         calc_opts.StoreFreeBoundaryFaces = True
         self.calc = DB.SpatialElementGeometryCalculator(d, calc_opts)
         self.sweeps = build_sweep_index(d)
-        self.keynote_texts = load_keynote_table(d)
+        # keys are matched upper-case, like the normalised values
+        self.keynote_texts = dict((k.upper(), v) for k, v in load_keynote_table(d).items())
+        self._fi_candidates = None
+        self._inside = {}           # phase id -> {room id: [FamilyInstance]}
+
+    # ---------------- family instances located in a room ----------------
+    def _inside_candidates(self):
+        """Family instances whose own/type Keynote has a finish prefix. The
+        Keynote check is cheap (cached per type), so FamilyInstance.Room - a
+        point-in-room test - only runs for the few instances that matter."""
+        if self._fi_candidates is None:
+            out = []
+            for fi in (DB.FilteredElementCollector(self.doc)
+                       .OfClass(DB.FamilyInstance)
+                       .WhereElementIsNotElementType()):
+                kn, _ = self.idx.element_keynote(0, fi)
+                if kn and classify(kn)[1]:
+                    out.append(fi)
+            self._fi_candidates = out
+        return self._fi_candidates
+
+    def inside_room(self, room):
+        try:
+            phase_id = room.get_Parameter(BIP.ROOM_PHASE).AsElementId()
+        except Exception:
+            phase_id = None
+        pk = eid_int(phase_id) if is_valid_id(phase_id) else -1
+        if pk not in self._inside:
+            phase = self.doc.GetElement(phase_id) if pk != -1 else None
+            by_room = {}
+            for fi in self._inside_candidates():
+                r = None
+                try:
+                    r = fi.get_Room(phase) if phase is not None else fi.Room
+                except Exception:
+                    try:
+                        r = fi.Room
+                    except Exception:
+                        r = None
+                if r is not None:
+                    by_room.setdefault(eid_int(r.Id), []).append(fi)
+            self._inside[pk] = by_room
+        return self._inside[pk].get(eid_int(room.Id), [])
 
     # ---------------- raw relationships ----------------
     def _ref(self, host_or_link_id, linked_id):
@@ -508,11 +607,23 @@ class Scanner(object):
 
     def collect(self, room):
         raw = {
-            "walls": OrderedDict(), "separation_lines": 0, "other_bounding": {},
-            "floors": OrderedDict(), "bottom_other": {}, "bottom_free": 0.0,
-            "ceilings": OrderedDict(), "top_other": {}, "top_free": 0.0, "top_total": 0.0,
+            "elements": OrderedDict(),   # (doc_key, id) -> element record
+            "walls": {},                 # (doc_key, id) -> {"pts", "sides"} for sweeps
+            "integral": [],              # sweeps built into wall types
+            "separation_lines": 0,
+            "top_total": 0.0, "top_free": 0.0, "bottom_free": 0.0,
             "calc_error": None,
         }
+
+        def touch(dk, el, rel):
+            k = (dk, eid_int(el.Id))
+            e = raw["elements"].get(k)
+            if e is None:
+                e = {"doc_key": dk, "elem": el, "rels": set(), "mats": set(), "top_area": 0.0}
+                raw["elements"][k] = e
+            e["rels"].add(rel)
+            return e
+
         # 1) 2D boundary: which elements really bound the room
         loops = room.GetBoundarySegments(self.seg_opts) or []
         for loop in loops:
@@ -523,218 +634,77 @@ class Scanner(object):
                 dk, el = self._ref(eid, seg.LinkElementId)
                 if el is None:
                     continue
-                c = cat_int(el)
+                if cat_int(el) == CAT_ROOM_SEP:
+                    raw["separation_lines"] += 1
+                    continue
+                touch(dk, el, "boundary")
                 if isinstance(el, DB.Wall):
-                    k = (dk, eid_int(el.Id))
-                    w = raw["walls"].get(k)
-                    if w is None:
-                        w = {"doc_key": dk, "elem": el, "pts": [], "mats": set(), "sides": set()}
-                        raw["walls"][k] = w
+                    w = raw["walls"].setdefault((dk, eid_int(el.Id)), {"pts": [], "sides": set()})
                     try:
                         crv = seg.GetCurve()
                         w["pts"].extend([crv.GetEndPoint(0), crv.GetEndPoint(1)])
                     except Exception:
                         pass
-                elif c == CAT_ROOM_SEP:
-                    raw["separation_lines"] += 1
-                else:
-                    n = cat_name(el)
-                    raw["other_bounding"][n] = raw["other_bounding"].get(n, 0) + 1
 
-        # 2) 3D boundary: floor below, ceiling above, room-facing wall faces
+        # 2) 3D boundary: every element bounding the room volume, with the
+        #    material of the face that touches the room
         try:
             res = self.calc.CalculateSpatialElementGeometry(room)
             solid = res.GetGeometry()
         except Exception as ex:
             raw["calc_error"] = to_unicode(ex)
-            return raw
-
-        for face in solid.Faces:
-            subs = list(res.GetBoundaryFaceInfo(face) or [])
-            if not subs:
-                n = face_normal(face)
-                if n is not None and n.Z > 0.9:
-                    raw["top_free"] += face.Area
-                    raw["top_total"] += face.Area
-                elif n is not None and n.Z < -0.9:
-                    raw["bottom_free"] += face.Area
-                continue
-            for sub in subs:
-                stype = sub.SubfaceType
-                try:
-                    area = sub.GetSubface().Area
-                except Exception:
-                    area = 0.0
-                lid = sub.SpatialBoundaryElement
-                if is_valid_id(lid.LinkInstanceId):
-                    dk, el = self._ref(lid.LinkInstanceId, lid.LinkedElementId)
-                else:
-                    dk, el = self._ref(lid.HostElementId, None)
-                if stype == DB.SubfaceType.Top:
-                    raw["top_total"] += area
-                if el is None:
-                    if stype == DB.SubfaceType.Top:
-                        raw["top_free"] += area
-                    elif stype == DB.SubfaceType.Bottom:
-                        raw["bottom_free"] += area
+            solid = None
+        if solid is not None:
+            for face in solid.Faces:
+                subs = list(res.GetBoundaryFaceInfo(face) or [])
+                if not subs:
+                    n = face_normal(face)
+                    if n is not None and n.Z > 0.9:
+                        raw["top_free"] += face.Area
+                        raw["top_total"] += face.Area
+                    elif n is not None and n.Z < -0.9:
+                        raw["bottom_free"] += face.Area
                     continue
-                try:
-                    bface = sub.GetBoundingElementFace()
-                except Exception:
-                    bface = None
-                mat = face_material_id(self.idx.doc_for(dk), el, bface)
-                c = cat_int(el)
-                k = (dk, eid_int(el.Id))
-                if stype == DB.SubfaceType.Bottom:
-                    if c == CAT_FLOORS:
-                        f = raw["floors"].setdefault(k, {"doc_key": dk, "elem": el, "area": 0.0, "mats": set()})
-                        f["area"] += area
-                        if mat is not None:
-                            f["mats"].add(mat)
+                for sub in subs:
+                    rel = _subface_rel(sub.SubfaceType)
+                    try:
+                        area = sub.GetSubface().Area
+                    except Exception:
+                        area = 0.0
+                    lid = sub.SpatialBoundaryElement
+                    if is_valid_id(lid.LinkInstanceId):
+                        dk, el = self._ref(lid.LinkInstanceId, lid.LinkedElementId)
                     else:
-                        n = cat_name(el)
-                        raw["bottom_other"][n] = raw["bottom_other"].get(n, 0.0) + area
-                elif stype == DB.SubfaceType.Top:
-                    if c == CAT_CEILINGS:
-                        f = raw["ceilings"].setdefault(k, {"doc_key": dk, "elem": el, "area": 0.0, "mats": set()})
-                        f["area"] += area
-                        if mat is not None:
-                            f["mats"].add(mat)
-                    else:
-                        n = cat_name(el)
-                        raw["top_other"][n] = raw["top_other"].get(n, 0.0) + area
-                else:   # Side
-                    w = raw["walls"].get(k)
-                    if w is not None:
-                        if mat is not None:
-                            w["mats"].add(mat)
+                        dk, el = self._ref(lid.HostElementId, None)
+                    if rel == "top":
+                        raw["top_total"] += area
+                    if el is None:
+                        if rel == "top":
+                            raw["top_free"] += area
+                        elif rel == "bottom":
+                            raw["bottom_free"] += area
+                        continue
+                    try:
+                        bface = sub.GetBoundingElementFace()
+                    except Exception:
+                        bface = None
+                    e = touch(dk, el, rel)
+                    mat = face_material_id(self.idx.doc_for(dk), el, bface)
+                    if mat is not None:
+                        e["mats"].add(mat)
+                    if rel == "top":
+                        e["top_area"] += area
+                    if rel == "side" and isinstance(el, DB.Wall):
                         side = wall_side_facing(el, face_normal(bface) if bface else None)
+                        w = raw["walls"].setdefault((dk, eid_int(el.Id)), {"pts": [], "sides": set()})
                         if side is not None:
                             w["sides"].add(side)
-        return raw
 
-    # ---------------- keynote resolution ----------------
-    def element_keys(self, dk, el, mats):
-        """-> (list of (keynote, source), why-missing text)"""
-        why = []
-        if self.mode in ("auto", "type"):
-            kn, src = self.idx.element_keynote(dk, el)
-            if kn:
-                return [(kn, src)], u""
-            tname = self.idx.type_name(dk, el)
-            why.append(u"type '{}' has no Keynote".format(tname) if tname else u"no type Keynote")
-            if self.mode == "type":
-                return [], u"; ".join(why)
-        found = []
-        for mid in sorted(mats or [], key=eid_int):
-            kn = self.idx.material_keynote(dk, mid)
-            if kn:
-                found.append((kn, "material"))
-            else:
-                why.append(u"material '{}' has no Keynote".format(self.idx.material_name(dk, mid)))
-        if not mats:
-            why.append(u"no room-facing material found")
-        return found, u"; ".join(why)
-
-    def _item(self, dk, el, keys):
-        return {
-            "id": eid_int(el.Id),
-            "cat": cat_name(el),
-            "link": self.idx.link_name(dk),
-            "kn": [k for k, _ in keys],
-            "src": sorted(set(s for _, s in keys)),
-        }
-
-    def _finish_from(self, entries):
-        """Common Wall/Floor/Ceiling logic. entries: ordered list of dicts with
-        doc_key / elem / mats."""
-        items, issues, keys = [], [], []
-        for e in sorted(entries, key=lambda x: (x["doc_key"], eid_int(x["elem"].Id))):
-            dk, el = e["doc_key"], e["elem"]
-            found, why = self.element_keys(dk, el, e["mats"])
-            items.append(self._item(dk, el, found))
-            if found:
-                keys.extend(k for k, _ in found)
-            else:
-                issues.append({"id": eid_int(el.Id), "cat": cat_name(el),
-                               "link": self.idx.link_name(dk),
-                               "msg": u"Keynote missing ({})".format(why)})
-        keys = unique_sorted(keys)
-        if not entries:
-            state = "not_detected"
-        elif not keys:
-            state = "missing"
-        elif issues:
-            state = "partial"
-        else:
-            state = "ok"
-        return {"state": state, "keys": keys, "items": items, "issues": issues,
-                "notes": [], "warnings": []}
-
-    def finish_walls(self, raw):
-        fin = self._finish_from(list(raw["walls"].values()))
-        if raw["calc_error"] and self.mode != "type":
-            fin["notes"].append(u"Room geometry could not be calculated, so room-facing wall materials "
-                                u"are unknown: " + raw["calc_error"])
-        if not raw["walls"]:
-            why = u"No Wall bounds this room"
-            if raw["separation_lines"]:
-                why += u" (bounded by Room Separation Lines only)"
-            fin["notes"].append(why + u".")
-        if raw["separation_lines"] and raw["walls"]:
-            fin["notes"].append(u"{} boundary segment(s) are Room Separation Lines (no finish).".format(raw["separation_lines"]))
-        if raw["other_bounding"]:
-            fin["notes"].append(u"Also bounded by: " + u", ".join(
-                u"{} ({})".format(k, v) for k, v in sorted(raw["other_bounding"].items())) + u" - not counted as walls.")
-        return fin
-
-    def finish_floor(self, raw):
-        fin = self._finish_from(list(raw["floors"].values()))
-        if raw["calc_error"]:
-            fin["notes"].append(u"Room geometry could not be calculated: " + raw["calc_error"])
-        elif not raw["floors"]:
-            if raw["bottom_other"]:
-                fin["notes"].append(u"Room bottom is bounded by " + u", ".join(sorted(raw["bottom_other"])) + u", not by a Floor.")
-            else:
-                fin["notes"].append(u"Room bottom is not bounded by a Floor. Check the floor is Room Bounding and its top is not below the room base.")
-        return fin
-
-    def finish_ceiling(self, raw):
-        fin = self._finish_from(list(raw["ceilings"].values()))
-        if raw["calc_error"]:
-            fin["notes"].append(u"Room geometry could not be calculated: " + raw["calc_error"])
-            return fin
-        ceil_area = sum(c["area"] for c in raw["ceilings"].values())
-        total = raw["top_total"] or 0.0
-        if not raw["ceilings"]:
-            if raw["top_other"]:
-                fin["notes"].append(u"Room top is bounded by " + u", ".join(sorted(raw["top_other"])) + u" (no ceiling).")
-            else:
-                fin["notes"].append(u"Room top is not bounded by a Ceiling. If the room has a ceiling, raise the room Upper Limit / Limit Offset above it.")
-        elif total > 0 and ceil_area / total < CEILING_FULL_COVERAGE:
-            rest = []
-            if raw["top_other"]:
-                rest.append(u", ".join(sorted(raw["top_other"])))
-            if raw["top_free"] > 0:
-                rest.append(u"unbounded (room top below the ceiling)")
-            fin["warnings"].append(u"Ceilings cover {:.0f}% of the room top; the rest is {}.".format(
-                100.0 * ceil_area / total, u" / ".join(rest) or u"other elements"))
-            if fin["state"] == "ok":
-                fin["state"] = "partial"
-        return fin
-
-    def finish_base(self, raw):
-        items, issues, keys, notes = [], [], [], []
-        found_any = False
-        linked_walls = 0
-        for w in sorted(raw["walls"].values(), key=lambda x: (x["doc_key"], eid_int(x["elem"].Id))):
-            if w["doc_key"]:
-                linked_walls += 1
+        # 3) sweeps on the room-facing side of the bounding walls (host model)
+        for (dk, wid), w in sorted(raw["walls"].items()):
+            if dk or not w["sides"]:
                 continue
-            wall = w["elem"]
-            sides = w["sides"]
-            if not sides:
-                continue
+            wall = raw["elements"][(dk, wid)]["elem"]
             members = [wall]
             try:
                 if wall.IsStackedWall:
@@ -743,62 +713,198 @@ class Scanner(object):
             except Exception:
                 pass
             for m in members:
-                # a) standalone wall sweeps hosted on this wall
                 for sw in self.sweeps.get(eid_int(m.Id), []):
-                    if sw["side"] not in sides or not is_base_height(sw["from"], sw["dist"]):
-                        continue
-                    if not sweep_overlaps_room(m, sw["bb"], w["pts"]):
-                        continue
-                    found_any = True
-                    el = sw["elem"]
-                    mats = set([sw["mat"]]) if is_valid_id(sw["mat"]) else set()
-                    got, why = self.element_keys(0, el, mats)
-                    items.append(self._item(0, el, got))
-                    if got:
-                        keys.extend(k for k, _ in got)
-                    else:
-                        issues.append({"id": eid_int(el.Id), "cat": cat_name(el), "link": u"",
-                                       "msg": u"Keynote missing ({})".format(why)})
-                # b) sweeps built into the wall type's structure
+                    if sw["side"] in w["sides"] and sweep_overlaps_room(m, sw["bb"], w["pts"]):
+                        e = touch(0, sw["elem"], "sweep")
+                        if is_valid_id(sw["mat"]):
+                            e["mats"].add(sw["mat"])
                 try:
                     cs = m.WallType.GetCompoundStructure()
                     infos = list(cs.GetWallSweepsInfo(DB.WallSweepType.Sweep)) if cs else []
                 except Exception:
                     infos = []
                 for info in infos:
-                    if info.WallSide not in sides or not is_base_height(info.DistanceMeasuredFrom, info.Distance):
-                        continue
-                    found_any = True
-                    kn = self.idx.material_keynote(0, info.MaterialId)
-                    items.append({"id": eid_int(m.Id), "cat": u"Wall type sweep", "link": u"",
-                                  "kn": [kn] if kn else [], "src": ["integral sweep material"] if kn else []})
-                    if kn:
-                        keys.append(kn)
-                    else:
-                        issues.append({"id": eid_int(m.Id), "cat": u"Walls", "link": u"",
-                                       "msg": u"Integral sweep in wall type - material '{}' has no Keynote".format(
-                                           self.idx.material_name(0, info.MaterialId))})
-        keys = unique_sorted(keys)
-        if not found_any:
-            state = "not_detected"
-            if raw["calc_error"]:
-                notes.append(u"Room geometry could not be calculated, so the room-facing side of the walls is unknown.")
+                    if info.WallSide in w["sides"]:
+                        raw["integral"].append({"wall": m, "mat": info.MaterialId})
+
+        # 4) family instances located in the room (e.g. skirting families)
+        for fi in self.inside_room(room):
+            touch(0, fi, "inside")
+        return raw
+
+    # ---------------- keynote resolution ----------------
+    def element_keys(self, dk, el, mats):
+        """-> (list of (keynote, source), why-missing text). Read only."""
+        why = []
+        found = []
+        if self.mode in ("auto", "type"):
+            kn, src = self.idx.element_keynote(dk, el)
+            if kn:
+                found.append((kn, src))
+                # a finish-prefixed element/type Keynote is the answer; an
+                # unmapped one (e.g. a structural code) lets auto mode go on
+                # to the room-facing material
+                if self.mode == "type" or classify(kn)[1]:
+                    return found, u""
             else:
-                notes.append(u"No wall sweep found at the base (<= {:.2f} m) of the room-facing side of the bounding walls.".format(BASE_MAX_OFFSET_M))
-        elif not keys:
-            state = "missing"
-        elif issues:
-            state = "partial"
-        else:
-            state = "ok"
-        if linked_walls:
-            notes.append(u"{} linked wall(s) not evaluated for base finish.".format(linked_walls))
-        return {"state": state, "keys": keys, "items": items, "issues": issues,
-                "notes": notes, "warnings": []}
+                tname = self.idx.type_name(dk, el)
+                why.append(u"type '{}' has no Keynote".format(tname) if tname else u"no type Keynote")
+                if self.mode == "type":
+                    return [], u"; ".join(why)
+        for mid in sorted(mats or [], key=eid_int):
+            kn = self.idx.material_keynote(dk, mid)
+            if kn:
+                found.append((kn, "material"))
+            else:
+                why.append(u"material '{}' has no Keynote".format(self.idx.material_name(dk, mid)))
+        if not mats and self.mode == "material":
+            why.append(u"no room-facing material found")
+        return found, u"; ".join(why)
+
+    def _base_item(self, dk, el, rels, cat=None):
+        return {
+            "id": eid_int(el.Id),
+            "cat": cat or cat_name(el),
+            "link": self.idx.link_name(dk),
+            "rels": [REL_LABEL.get(r, r) for r in sorted(rels)],
+        }
+
+    def classify_room(self, raw):
+        fins = OrderedDict((k, {"keys": [], "items": [], "warnings": [], "mismatches": [], "notes": []})
+                           for k in FINISH_PARAMS)
+        issues, others = [], []
+        fr_top_area = 0.0
+        fr_keys = set()             # elements that contributed a ceiling (FR) value
+
+        def route(norm, fk, item, cat_id, rels):
+            """Put one classified keynote into its finish; returns True if used."""
+            pos = POSITION_GUARD.get(fk)
+            if pos and rels == set([pos]):
+                fins[fk]["notes"].append(
+                    u"{} on {} {} is ignored: that element only bounds the room from {} "
+                    u"(it belongs to the adjacent room).".format(
+                        norm, item["cat"], item["id"], u"above" if pos == "top" else u"below"))
+                return False
+            fins[fk]["keys"].append(norm)
+            if cat_id not in EXPECTED_CATEGORIES[fk]:
+                fins[fk]["mismatches"].append(
+                    u"{} found on a {} element ({}) - classified as {} by the prefix rule.".format(
+                        norm, item["cat"], item["id"], FINISH_PARAMS[fk]))
+            return True
+
+        for key in sorted(raw["elements"]):
+            e = raw["elements"][key]
+            dk, el, rels = e["doc_key"], e["elem"], e["rels"]
+            item = self._base_item(dk, el, rels)
+            found, why = self.element_keys(dk, el, e["mats"])
+            if not found:
+                if rels - set(["inside"]):
+                    issues.append(dict(item, msg=u"Keynote missing ({})".format(why)))
+                continue
+            used = OrderedDict()
+            ignored = []
+            for kn, src in found:
+                norm, fk = classify(kn)
+                if fk is None:
+                    ignored.append(norm)
+                elif route(norm, fk, item, cat_int(el), rels):
+                    used.setdefault(fk, []).append((norm, src))
+            for fk, lst in used.items():
+                fins[fk]["items"].append(dict(item, kn=unique_sorted(k for k, _ in lst),
+                                              src=sorted(set(s for _, s in lst))))
+                if fk == "ceiling":
+                    fr_top_area += e["top_area"]
+                    fr_keys.add(key)
+            if ignored and not used and rels - set(["inside"]):
+                others.append(dict(item, kn=unique_sorted(ignored),
+                                   msg=u"prefix is not RD / FR / RE / PI - ignored"))
+
+        # sweeps built into wall types: the only Keynote they can carry is
+        # their material's
+        for it in raw["integral"]:
+            wall = it["wall"]
+            item = {"id": eid_int(wall.Id), "cat": u"Wall type sweep", "link": u"",
+                    "rels": [u"sweep in wall type"]}
+            kn = self.idx.material_keynote(0, it["mat"])
+            if not kn:
+                issues.append(dict(item, msg=u"Keynote missing (sweep material '{}' has no Keynote)".format(
+                    self.idx.material_name(0, it["mat"]))))
+                continue
+            norm, fk = classify(kn)
+            if fk is None:
+                others.append(dict(item, kn=[norm], msg=u"prefix is not RD / FR / RE / PI - ignored"))
+            elif route(norm, fk, item, CAT_CORNICES, set(["sweep"])):
+                fins[fk]["items"].append(dict(item, kn=[norm], src=["integral sweep material"]))
+
+        for fk, fin in fins.items():
+            fin["keys"] = unique_sorted(fin["keys"])
+            fin["state"] = "ok" if fin["keys"] else "missing"
+            fin["notes"] = unique_sorted(fin["notes"])
+            fin["mismatches"] = sorted(set(fin["mismatches"]), key=natural_key)
+            if self.keynote_texts:
+                for k in fin["keys"]:
+                    if k not in self.keynote_texts:
+                        fin["warnings"].append(u"'{}' is not in the loaded keynote file.".format(k))
+        self._diagnose(raw, fins, fr_top_area, fr_keys)
+        return fins, issues, others
+
+    def _diagnose(self, raw, fins, fr_top_area, fr_keys):
+        """Explain an empty finish - diagnostics only, never a value."""
+        def cats_with(rel, skip=()):
+            return sorted(set(cat_name(e["elem"]) for k, e in raw["elements"].items()
+                              if rel in e["rels"] and k not in skip))
+        err = raw["calc_error"]
+        if err:
+            for fk in ("floor", "ceiling", "base"):
+                fins[fk]["notes"].append(u"Room geometry could not be calculated: " + err)
+        if fins["wall"]["state"] == "missing":
+            if not raw["walls"]:
+                fins["wall"]["notes"].append(u"No Wall bounds this room{}.".format(
+                    u" (Room Separation Lines only)" if raw["separation_lines"] else u""))
+            else:
+                fins["wall"]["notes"].append(u"No Keynote starting with RE on the elements around this room.")
+        if fins["floor"]["state"] == "missing" and not err:
+            below = cats_with("bottom")
+            fins["floor"]["notes"].append(
+                u"No Keynote starting with PI. Below the room: {}.".format(u", ".join(below))
+                if below else
+                u"Room bottom is not bounded by any element. Check the floor is Room Bounding "
+                u"and its top is not below the room base.")
+        if not err:
+            total = raw["top_total"]
+            if fins["ceiling"]["state"] == "missing":
+                if total > 0 and raw["top_free"] >= total * CEILING_FULL_COVERAGE:
+                    fins["ceiling"]["notes"].append(
+                        u"Room top is not bounded by any element. If the room has a ceiling, raise the "
+                        u"room Upper Limit / Limit Offset above it.")
+                else:
+                    above = cats_with("top")
+                    fins["ceiling"]["notes"].append(u"No Keynote starting with FR. Above the room: {}.".format(
+                        u", ".join(above) or u"nothing"))
+            elif fr_top_area > 0 and total > 0 and fr_top_area / total < CEILING_FULL_COVERAGE:
+                rest = []
+                other_top = cats_with("top", fr_keys)
+                if other_top:
+                    rest.append(u", ".join(other_top))
+                if raw["top_free"] > 0:
+                    rest.append(u"unbounded (room top below the ceiling)")
+                fins["ceiling"]["warnings"].append(
+                    u"FR elements cover {:.0f}% of the room top; the rest is {}.".format(
+                        100.0 * fr_top_area / total, u" / ".join(rest) or u"other elements"))
+        if fins["base"]["state"] == "missing":
+            fins["base"]["notes"].append(
+                u"No Keynote starting with RD (checked: bounding elements, sweeps on the room-facing "
+                u"side of the bounding walls, sweeps in wall types, family instances in the room).")
+        linked = len([1 for (dk, _) in raw["walls"] if dk])
+        if linked:
+            fins["base"]["notes"].append(u"{} linked wall(s): their sweeps are not evaluated.".format(linked))
+        if raw["separation_lines"] and raw["walls"]:
+            fins["wall"]["notes"].append(u"{} boundary segment(s) are Room Separation Lines (no finish).".format(
+                raw["separation_lines"]))
 
     # ---------------- one room ----------------
     def analyze(self, room):
-        rec = {"room": room, "boundary": "ok", "finishes": {}, "error": None}
+        rec = {"room": room, "boundary": "ok", "finishes": {}, "issues": [], "others": [], "error": None}
         try:
             if room.Location is None:
                 rec["boundary"] = "unplaced"
@@ -807,20 +913,9 @@ class Scanner(object):
                 rec["boundary"] = "unenclosed"
                 return rec
             raw = self.collect(room)
-            if not raw["walls"] and not raw["separation_lines"] and not raw["other_bounding"]:
+            if not raw["elements"] and not raw["separation_lines"]:
                 rec["boundary"] = "no_segments"
-            rec["finishes"] = OrderedDict([
-                ("wall", self.finish_walls(raw)),
-                ("floor", self.finish_floor(raw)),
-                ("ceiling", self.finish_ceiling(raw)),
-                ("base", self.finish_base(raw)),
-            ])
-            # keys that don't exist in the loaded keynote file
-            if self.keynote_texts:
-                for fk, fin in rec["finishes"].items():
-                    for k in fin["keys"]:
-                        if k not in self.keynote_texts:
-                            fin["warnings"].append(u"'{}' is not in the loaded keynote file.".format(k))
+            rec["finishes"], rec["issues"], rec["others"] = self.classify_room(raw)
         except Exception as ex:
             rec["boundary"] = "error"
             rec["error"] = to_unicode(ex)
@@ -854,9 +949,10 @@ def room_info(room):
 def room_status(rec):
     if rec["boundary"] != "ok" or rec.get("write_error"):
         return "ERROR"
-    # notes are informational (e.g. a separation line); warnings and any
-    # state other than "ok" make the room incomplete
-    if all(f["state"] == "ok" and not f["warnings"] for f in rec["finishes"].values()):
+    # notes are informational (e.g. a separation line); an empty finish, a
+    # warning or a prefix/category mismatch makes the room incomplete
+    if all(f["state"] == "ok" and not f["warnings"] and not f["mismatches"]
+           for f in rec["finishes"].values()):
         return "OK"
     return "WARNING"
 
@@ -919,23 +1015,20 @@ def build_json(records, targets, mode, keynote_texts, problems):
     for rec in records:
         info = rec["info"]
         fins = OrderedDict()
-        issues = []
         for key in FINISH_PARAMS:
             fin = rec["finishes"].get(key)
             ch = rec.get("changes", {}).get(key, {})
             if fin is None:
                 fins[key] = {"state": "n/a", "keys": [], "value": u"", "current": ch.get("current", u""),
-                             "items": [], "notes": [], "warnings": [], "change": ch.get("kind", u"")}
+                             "items": [], "notes": [], "warnings": [], "mismatches": [],
+                             "change": ch.get("kind", u"")}
                 continue
             fins[key] = {
                 "state": fin["state"], "keys": fin["keys"], "value": join_keys(fin["keys"]),
                 "current": ch.get("current", u""), "change": ch.get("kind", u""),
                 "items": fin["items"], "notes": fin["notes"], "warnings": fin["warnings"],
+                "mismatches": fin["mismatches"],
             }
-            for iss in fin["issues"]:
-                d = dict(iss)
-                d["finish"] = key
-                issues.append(d)
         boundary_msg = {
             "unplaced": u"Room is not placed.",
             "unenclosed": u"Room is not enclosed or is redundant (area = 0).",
@@ -948,7 +1041,7 @@ def build_json(records, targets, mode, keynote_texts, problems):
             "boundary": rec["boundary"], "boundaryMsg": boundary_msg,
             "status": rec["status"], "updated": bool(rec.get("updated")),
             "writeError": rec.get("write_error") or u"",
-            "finishes": fins, "issues": issues,
+            "finishes": fins, "issues": rec.get("issues", []), "others": rec.get("others", []),
         })
     return {
         "project": to_unicode(doc.Title),
@@ -956,6 +1049,7 @@ def build_json(records, targets, mode, keynote_texts, problems):
         "keynoteSource": dict(KEYNOTE_SOURCES).get(mode, mode),
         "boundaryLocation": to_unicode(BOUNDARY_LOCATION),
         "separator": SEPARATOR,
+        "prefixRules": OrderedDict((p, FINISH_PARAMS[f]) for p, f in PREFIX_RULES.items()),
         "params": OrderedDict((k, {"name": n, "kind": targets[k].kind if k in targets else None})
                               for k, n in FINISH_PARAMS.items()),
         "paramProblems": problems,
@@ -1231,13 +1325,13 @@ class RoomFinishWindow(forms.WPFWindow):
         self.tb_status.Text = self._summary()
 
     def _log_keynotes(self):
-        issues = []
-        for r in self.records:
-            for key, fin in r["finishes"].items():
-                for iss in fin["issues"]:
-                    issues.append((r, iss))
-        output.print_md(u"**[4/6] Keynotes collected** (source: {}). {} element(s) without Keynote.".format(
-            dict(KEYNOTE_SOURCES)[self.mode], len(issues)))
+        issues = [(r, iss) for r in self.records for iss in r.get("issues", [])]
+        mismatches = [(r, m) for r in self.records for f in r["finishes"].values() for m in f["mismatches"]]
+        output.print_md(u"**[4/6] Keynotes collected** (source: {}; classified by prefix: {}). "
+                        u"{} element(s) without Keynote, {} prefix/category mismatch(es).".format(
+                            dict(KEYNOTE_SOURCES)[self.mode],
+                            u", ".join(u"{} = {}".format(p, FINISH_PARAMS[f]) for p, f in PREFIX_RULES.items()),
+                            len(issues), len(mismatches)))
         if not self.keynote_texts:
             output.print_md(u"_Keynote file not loaded or empty - keys are not validated against it._")
         for r, iss in issues[:60]:
@@ -1245,6 +1339,10 @@ class RoomFinishWindow(forms.WPFWindow):
                 r["info"]["number"], iss["cat"], log_link(iss), iss["msg"]))
         if len(issues) > 60:
             output.print_md(u"- ... and {} more (see the HTML report).".format(len(issues) - 60))
+        for r, m in mismatches[:40]:
+            output.print_md(u"- **Mismatch** Room `{}`: {}".format(r["info"]["number"], m))
+        if len(mismatches) > 40:
+            output.print_md(u"- ... and {} more mismatches (see the HTML report).".format(len(mismatches) - 40))
 
     def _summary(self):
         recs = self.records
@@ -1295,8 +1393,8 @@ class RoomFinishWindow(forms.WPFWindow):
                 row["New"] = ch["new"]
                 row["Change"] = ch["kind"]
                 note = block or u""
-                if rec["finishes"][key]["state"] == "partial":
-                    note = (note + u"; " if note else u"") + u"some elements have no Keynote"
+                if rec["finishes"][key]["mismatches"]:
+                    note = (note + u"; " if note else u"") + u"prefix/category mismatch - see report"
                 row["Note"] = note
                 t.Rows.Add(row)
                 self.row_keys.append((rec, key))

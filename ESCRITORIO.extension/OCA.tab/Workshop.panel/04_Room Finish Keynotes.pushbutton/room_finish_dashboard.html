@@ -166,10 +166,12 @@ const STATS = [
   {k:"total",   l:"Total Rooms",                    c:"var(--cy)",     f: r => true},
   {k:"updated", l:"Rooms updated",                  c:"var(--violet)", f: r => r.updated},
   {k:"nobound", l:"Rooms without boundaries",       c:"var(--mag)",    f: r => !hasBounds(r)},
-  {k:"wall",    l:"Missing Wall Keynotes",          c:"var(--amber)",  f: missing("wall")},
-  {k:"floor",   l:"Missing Floor Keynotes",         c:"var(--amber)",  f: missing("floor")},
-  {k:"ceiling", l:"Missing Ceiling Keynotes",       c:"var(--amber)",  f: missing("ceiling")},
-  {k:"base",    l:"Missing Base Finish",            c:"var(--amber)",  f: missing("base")},
+  {k:"wall",    l:"Missing Wall Keynotes (RE)",     c:"var(--amber)",  f: missing("wall")},
+  {k:"floor",   l:"Missing Floor Keynotes (PI)",    c:"var(--amber)",  f: missing("floor")},
+  {k:"ceiling", l:"Missing Ceiling Keynotes (FR)",  c:"var(--amber)",  f: missing("ceiling")},
+  {k:"base",    l:"Missing Base Finish (RD)",       c:"var(--amber)",  f: missing("base")},
+  {k:"nokn",    l:"Rooms with elements without Keynote", c:"var(--mag)", f: r => hasBounds(r) && (r.issues||[]).length > 0},
+  {k:"mismatch",l:"Prefix / category mismatches",   c:"var(--mag)",    f: r => hasBounds(r) && FIN.some(k=>(r.finishes[k].mismatches||[]).length)},
   {k:"complete",l:"Rooms with complete information",c:"var(--teal)",   f: r => r.status === "OK"},
 ];
 let statFilter = null;
@@ -194,7 +196,7 @@ fillSelect("fLevel", [["","All levels"], ...levels.map(l=>[l,l])]);
 fillSelect("fStatus", [["","All"],["OK","OK"],["WARNING","Warning"],["ERROR","Error"]]);
 FIN.forEach(k=>{
   const keys = [...new Set(ROOMS.flatMap(r=>hasBounds(r)?r.finishes[k].keys:[]))].sort(natural);
-  fillSelect("f_"+k, [["","All"],["__issue","Missing / not detected"],["__diff","Differs from Revit value"],
+  fillSelect("f_"+k, [["","All"],["__issue","Missing"],["__diff","Differs from Revit value"],
     ...keys.map(x=>[x, x + (KN[x] ? " - " + KN[x] : "")])]);
 });
 
@@ -217,7 +219,8 @@ function matches(r){
   }
   if(q){
     const hay = [r.number, r.name, r.level, r.status, r.id,
-      ...FIN.flatMap(k=>[r.finishes[k].value, r.finishes[k].current, ...r.finishes[k].items.map(i=>i.id)])]
+      ...FIN.flatMap(k=>[r.finishes[k].value, r.finishes[k].current, ...r.finishes[k].items.map(i=>i.id)]),
+      ...(r.issues||[]).map(i=>i.id), ...(r.others||[]).flatMap(o=>[o.id, ...(o.kn||[])])]
       .join(" ").toLowerCase();
     if(!hay.includes(q)) return false;
   }
@@ -230,16 +233,11 @@ const openRows = new Set();
 function finishCell(r, k){
   if(!hasBounds(r)) return `<span class="st nd">-</span>`;
   const f = r.finishes[k];
-  let main;
-  if(f.keys.length){
-    main = f.keys.map(x=>`<span class="kn" title="${esc(KN[x]||"")}">${esc(x)}</span>`).join("");
-    if(f.state === "partial") main += `<span class="st partial" title="Some elements have no Keynote">+ gaps</span>`;
-  } else if(f.state === "missing"){
-    main = `<span class="st missing">Keynote missing</span>`;
-  } else {
-    main = `<span class="st nd">Not detected</span>`;
-  }
-  if((f.warnings||[]).length && f.state === "ok") main += ` <span class="st partial" title="${esc(f.warnings.join(" "))}">!</span>`;
+  let main = f.keys.length
+    ? f.keys.map(x=>`<span class="kn" title="${esc(KN[x]||"")}">${esc(x)}</span>`).join("")
+    : `<span class="st missing">Missing</span>`;
+  const flags = [...(f.mismatches||[]), ...(f.warnings||[])];
+  if(flags.length) main += ` <span class="st partial" title="${esc(flags.join("\n"))}">!</span>`;
   let cur = "";
   if(f.current && f.current !== f.value){
     cur = f.value ? `<span class="cur diff">in Revit: ${esc(f.current)}</span>`
@@ -288,23 +286,29 @@ function detailRow(r, span){
   let msgs = "";
   if(r.boundaryMsg) msgs += `<div class="dmsg">${esc(r.boundaryMsg)}</div>`;
   if(r.writeError) msgs += `<div class="dmsg">Write error - ${esc(r.writeError)}</div>`;
+  const elLine = (i, tail) => {
+    const link = i.link ? ` <span class="src">(linked: ${esc(i.link)})</span>` : "";
+    const rels = (i.rels||[]).length ? ` <span class="src">[${esc(i.rels.join(", "))}]</span>` : "";
+    return `${esc(i.cat)} <span class="id">${i.id}</span>${link}${rels} ${tail}`;
+  };
   const boxes = hasBounds(r) ? FIN.map(k=>{
     const f = r.finishes[k];
     const items = f.items.map(i=>{
-      const link = i.link ? ` <span class="src">(linked: ${esc(i.link)})</span>` : "";
-      const kn = i.kn.length ? i.kn.map(x=>`<span class="kn">${esc(x)}</span>`).join("")
-                             : `<span class="st missing">no Keynote</span>`;
+      const kn = i.kn.map(x=>`<span class="kn">${esc(x)}</span>`).join("");
       const src = i.src.length ? ` <span class="src">${esc(i.src.join(", "))}</span>` : "";
-      return `<li>${esc(i.cat)} <span class="id">${i.id}</span>${link} → ${kn}${src}</li>`;
+      return `<li>${elLine(i, "→ " + kn + src)}</li>`;
     });
-    const iss = (r.issues||[]).filter(i=>i.finish===k)
-      .map(i=>`<li class="iss">${esc(i.cat)} <span class="id">${i.id}</span> - ${esc(i.msg)}</li>`);
+    const mism = (f.mismatches||[]).map(m=>`<li class="warn">${esc(m)}</li>`);
     const warn = (f.warnings||[]).map(w=>`<li class="warn">${esc(w)}</li>`);
     const notes = (f.notes||[]).map(n=>`<li class="note">${esc(n)}</li>`);
-    const cur = `<li class="note">Written value: ${esc(f.value||"(nothing detected)")} · in Revit: ${esc(f.current||"(empty)")}</li>`;
-    return `<div class="dbox"><h4>${FIN_LABEL[k]}</h4><ul>${[...items,...iss,...warn,...notes,cur].join("")||"<li class='note'>-</li>"}</ul></div>`;
+    const cur = `<li class="note">Written value: ${esc(f.value||"(nothing found)")} · in Revit: ${esc(f.current||"(empty)")}</li>`;
+    return `<div class="dbox"><h4>${FIN_LABEL[k]}</h4><ul>${[...items,...mism,...warn,...notes,cur].join("")}</ul></div>`;
   }).join("") : "";
-  return `<tr class="detail"><td colspan="${span}">${msgs}<div class="dgrid">${boxes}</div>
+  const iss = (r.issues||[]).map(i=>`<li class="iss">${elLine(i, "- " + esc(i.msg))}</li>`);
+  const oth = (r.others||[]).map(o=>`<li class="note">${elLine(o, (o.kn||[]).map(x=>`<span class="kn">${esc(x)}</span>`).join("") + " " + esc(o.msg))}</li>`);
+  const otherBox = (iss.length || oth.length)
+    ? `<div class="dbox"><h4>Other elements</h4><ul>${[...iss,...oth].join("")}</ul></div>` : "";
+  return `<tr class="detail"><td colspan="${span}">${msgs}<div class="dgrid">${boxes}${otherBox}</div>
     <div class="cur">Room element id ${r.id}${r.phase?" · phase "+esc(r.phase):""}</div></td></tr>`;
 }
 
@@ -317,7 +321,10 @@ document.getElementById("resetBtn").onclick = ()=>{
 };
 
 const P = DATA.params || {};
+const RULES = DATA.prefixRules || {};
 document.getElementById("meta").innerHTML =
+  `<b>Classification (by Keynote prefix only):</b> ` +
+    Object.keys(RULES).map(p=>`${esc(p)}… → ${esc(RULES[p])}`).join(" · ") + ` · other prefixes ignored<br>` +
   `<b>Keynote source:</b> ${esc(DATA.keynoteSource)}<br>` +
   `<b>Boundary location:</b> ${esc(DATA.boundaryLocation)} · <b>Separator:</b> "${esc(DATA.separator)}"<br>` +
   `<b>Parameters:</b> ` + FIN.map(k=>`${esc((P[k]||{}).name||FIN_LABEL[k])} (${esc((P[k]||{}).kind||"not found")})`).join(" · ") +
