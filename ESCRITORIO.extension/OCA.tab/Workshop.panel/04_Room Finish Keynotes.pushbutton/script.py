@@ -32,9 +32,14 @@ Elements considered for a room (all through Revit API relationships):
     what finds skirtings (low walls, sweeps, families) and ceilings that the
     Revit room relations don't report: elements below the room computation
     height, not Room Bounding, or above a low room Limit Offset.
+  The zone is grown 2 cm outwards so elements flush with the room faces
+  count too, and every Wall Sweep and Ceiling is tested even without a
+  finish-prefix type Keynote (their material Keynotes are read).
+  Exception to the prefix rule: a Wall Sweep ("Moldura de parede") always
+  fills Base Finish (BASE_CATEGORIES), whatever its Keynote prefix.
   Height guard: a value is only used if the element sits where that finish
-  can be for THIS room - PI starts below the room's mid-height, FR ends above
-  it, RE / RD overlap the room's height. This keeps the floor finish,
+  can be for THIS room - PI starts below the room's mid-height, FR is not
+  entirely below the room floor, RE / RD overlap the room's height. This keeps the floor finish,
   skirting and walls of the storey above out of the room below. Rejected
   values are reported, not written.
 
@@ -131,7 +136,18 @@ def _bic(name):
 
 
 CAT_ROOM_SEP = _bic("OST_RoomSeparationLines")
-CAT_CORNICES = _bic("OST_Cornices")      # Wall Sweeps
+CAT_CORNICES = _bic("OST_Cornices")      # Wall Sweeps ("Molduras de parede")
+CAT_CEILINGS = _bic("OST_Ceilings")
+
+# Categories whose Keynote ALWAYS fills Base Finish (treated as RD), whatever
+# its prefix: wall sweeps are skirtings / mouldings. Sweeps built into wall
+# types follow the same rule.
+BASE_CATEGORIES = set([CAT_CORNICES])
+
+# Categories tested by the geometric search even without a finish-prefix
+# type Keynote, so a sweep or ceiling whose Keynote is only on its material
+# (or missing) is still found and reported.
+ALWAYS_SEARCH = set([CAT_CORNICES, CAT_CEILINGS])
 
 # Categories each finish is EXPECTED on. Used only to report mismatches -
 # never to classify. Edit freely to match your modelling standard.
@@ -147,6 +163,9 @@ EXPECTED_CATEGORIES = {
 # (so a ceiling above a room whose Limit Offset is too low is still found).
 SEARCH_BELOW_M = 0.02
 SEARCH_ABOVE_M = 1.00
+# The outline is also grown outwards by this much, so elements that are only
+# flush with the room faces (touching, zero overlap) are found too.
+SEARCH_OUTWARD_M = 0.02
 
 # Fallback when an element has no bounding box (height guard not possible):
 # a Keynote of an element that ONLY bounds the room from this side belongs to
@@ -321,6 +340,18 @@ class ModelIndex(object):
             self._mat_names[k] = name
         return self._mat_kn[k]
 
+    def element_materials(self, doc_key, elem):
+        """All materials of an element, painted ones included."""
+        out = set()
+        for painted in (False, True):
+            try:
+                for mid in elem.GetMaterialIds(painted):
+                    if is_valid_id(mid):
+                        out.add(mid)
+            except Exception:
+                pass
+        return out
+
     def material_name(self, doc_key, mat_id):
         self.material_keynote(doc_key, mat_id)
         return self._mat_names.get((doc_key, eid_int(mat_id)), u"")
@@ -426,6 +457,16 @@ def classify(keynote):
         if norm.startswith(prefix):
             return norm, finish
     return norm, None
+
+
+def classify_element(keynote, cat_id):
+    """classify() plus the category exception: a Keynote on a BASE_CATEGORIES
+    element (wall sweep) always goes to Base Finish.
+    -> (normalised keynote, finish key or None, forced)"""
+    norm, finish = classify(keynote)
+    if norm and cat_id in BASE_CATEGORIES:
+        return norm, "base", finish != "base"
+    return norm, finish, False
 
 
 # ==================================================================
@@ -537,6 +578,7 @@ REL_LABEL = {
     "sweep": u"sweep on bounding wall",
     "inside": u"family instance in room",
     "surface": u"on the room surfaces (geometry)",
+    "flush": u"flush with the room faces (geometry)",
 }
 
 
@@ -598,7 +640,8 @@ class Scanner(object):
                 if cat is None or cat.CategoryType != DB.CategoryType.Model:
                     continue
                 tid = el.GetTypeId()
-                if (is_valid_id(tid) and eid_int(tid) in type_ok) or \
+                if eid_int(cat.Id) in ALWAYS_SEARCH or \
+                        (is_valid_id(tid) and eid_int(tid) in type_ok) or \
                         classify(param_str(el.get_Parameter(BIP.KEYNOTE_PARAM)))[1]:
                     ids.Add(el.Id)
             except Exception:
@@ -652,7 +695,10 @@ class Scanner(object):
         return min(lo.Z, hi.Z), max(lo.Z, hi.Z)
 
     def search_zone(self, loops, zrange):
-        """Room outline extruded around the room height, as a Solid."""
+        """(grown, inner): the room outline extruded around the room height,
+        grown outwards by SEARCH_OUTWARD_M (grown) and as-is (inner). An
+        element hitting only the grown zone is flush with the room from
+        outside. None if the outline cannot be extruded."""
         base, top = zrange
         z0 = base - SEARCH_BELOW_M / 0.3048
         z1 = top + SEARCH_ABOVE_M / 0.3048
@@ -668,33 +714,75 @@ class Scanner(object):
             curve_loops.append(DB.CurveLoop.CreateViaTransform(cl, move))
         if not curve_loops:
             return None
-        for attempt in (curve_loops, curve_loops[:1]):     # all loops, else outer only
+        def extrude(sets):
+            for attempt in sets:                        # all loops, else outer only
+                try:
+                    return DB.GeometryCreationUtilities.CreateExtrusionGeometry(
+                        List[DB.CurveLoop](attempt), DB.XYZ.BasisZ, z1 - z0)
+                except Exception:
+                    continue
+            return None
+        inner = extrude([curve_loops, curve_loops[:1]])
+        if inner is None:
+            return None
+        grown_loops = self._grow(curve_loops)
+        grown = extrude([grown_loops, grown_loops[:1]]) if grown_loops else None
+        return (grown or inner), inner
+
+    def _grow(self, loops):
+        """Loops offset outwards by SEARCH_OUTWARD_M (islands shrink by the
+        same amount). The offset sign that lengthens the outer loop is the
+        outward one. None if the offset is not possible."""
+        off = SEARCH_OUTWARD_M / 0.3048
+        if off <= 0:
+            return None
+        try:
+            outer_len = loops[0].GetExactLength()
+        except Exception:
+            return None
+        for sign in (1.0, -1.0):
             try:
-                return DB.GeometryCreationUtilities.CreateExtrusionGeometry(
-                    List[DB.CurveLoop](attempt), DB.XYZ.BasisZ, z1 - z0)
+                test = DB.CurveLoop.CreateViaOffset(loops[0], sign * off, DB.XYZ.BasisZ)
+                if test.GetExactLength() > outer_len:
+                    return [DB.CurveLoop.CreateViaOffset(cl, sign * off, DB.XYZ.BasisZ) for cl in loops]
             except Exception:
                 continue
         return None
 
-    def elements_on_surfaces(self, solid):
-        """(doc_key, element) for every finish-keynoted element intersecting
-        the search zone, host and linked models."""
+    def elements_on_surfaces(self, zone):
+        """(doc_key, element, flush_only) for every candidate element hitting
+        the grown zone, host and linked models. flush_only = it only touches
+        the room from outside (misses the un-grown zone)."""
+        grown, inner = zone
         found = []
         for dk, d, xf in self._search_docs():
             ids = self._finish_candidates(dk, d)
             if ids.Count == 0:
                 continue
-            s = solid if xf is None else DB.SolidUtils.CreateTransformed(solid, xf.Inverse)
-            bb = s.GetBoundingBox()
-            p0, p1 = bb.Transform.OfPoint(bb.Min), bb.Transform.OfPoint(bb.Max)
-            outline = DB.Outline(DB.XYZ(min(p0.X, p1.X), min(p0.Y, p1.Y), min(p0.Z, p1.Z)),
-                                 DB.XYZ(max(p0.X, p1.X), max(p0.Y, p1.Y), max(p0.Z, p1.Z)))
-            col = (DB.FilteredElementCollector(d, ids)
-                   .WherePasses(DB.BoundingBoxIntersectsFilter(outline))
-                   .WherePasses(DB.ElementIntersectsSolidFilter(s)))
-            for el in col:
-                found.append((dk, el))
+            hits = self._hits(d, ids, grown, xf)
+            if not hits:
+                continue
+            if inner is grown:
+                inside = set(eid_int(el.Id) for el in hits)
+            else:
+                hit_ids = List[DB.ElementId]()
+                for el in hits:
+                    hit_ids.Add(el.Id)
+                inside = set(eid_int(el.Id) for el in self._hits(d, hit_ids, inner, xf))
+            for el in hits:
+                found.append((dk, el, eid_int(el.Id) not in inside))
         return found
+
+    def _hits(self, d, ids, solid, xf):
+        """Elements of ids (in document d) intersecting solid (host coords)."""
+        s = solid if xf is None else DB.SolidUtils.CreateTransformed(solid, xf.Inverse)
+        bb = s.GetBoundingBox()
+        p0, p1 = bb.Transform.OfPoint(bb.Min), bb.Transform.OfPoint(bb.Max)
+        outline = DB.Outline(DB.XYZ(min(p0.X, p1.X), min(p0.Y, p1.Y), min(p0.Z, p1.Z)),
+                             DB.XYZ(max(p0.X, p1.X), max(p0.Y, p1.Y), max(p0.Z, p1.Z)))
+        return list(DB.FilteredElementCollector(d, ids)
+                    .WherePasses(DB.BoundingBoxIntersectsFilter(outline))
+                    .WherePasses(DB.ElementIntersectsSolidFilter(s)))
 
     # ---------------- family instances located in a room ----------------
     def _inside_candidates(self):
@@ -880,8 +968,8 @@ class Scanner(object):
                 if zone is None:
                     raw["search_error"] = u"could not build the room search zone from its boundary"
                 else:
-                    for dk, el in self.elements_on_surfaces(zone):
-                        touch(dk, el, "surface")
+                    for dk, el, flush_only in self.elements_on_surfaces(zone):
+                        touch(dk, el, "flush" if flush_only else "surface")
             except Exception as ex:
                 raw["search_error"] = to_unicode(ex)
         return raw
@@ -934,14 +1022,16 @@ class Scanner(object):
 
         def height_reject(fk, zr, rels):
             """Why this element can't carry finish fk for THIS room, or None."""
+            if rels == set(["flush"]) and fk != "ceiling":
+                return u"it only touches the room from outside (flush) - accepted for Ceiling Finish only"
             if zr is not None and room_z is not None:
                 base, top = room_z
                 mid, tol = (base + top) / 2.0, 0.03     # tol ~ 1 cm
                 lo, hi = zr
                 if fk == "floor" and lo >= mid:
                     return u"it is above the room (floor of the storey above)"
-                if fk == "ceiling" and hi <= mid:
-                    return u"it is below the room (ceiling of the storey below)"
+                if fk == "ceiling" and hi <= base + tol:
+                    return u"it is below the room floor (ceiling of the storey below)"
                 if fk in ("wall", "base") and (lo >= top - tol or hi <= base + tol):
                     return u"it is outside the room height (belongs to another storey)"
                 return None
@@ -950,7 +1040,7 @@ class Scanner(object):
                 return u"it only bounds the room from {}".format(u"above" if pos == "top" else u"below")
             return None
 
-        def route(norm, fk, item, cat_id, rels, zr=None):
+        def route(norm, fk, item, cat_id, rels, zr=None, forced=False):
             """Put one classified keynote into its finish; returns True if used."""
             why = height_reject(fk, zr, rels)
             if why:
@@ -958,7 +1048,14 @@ class Scanner(object):
                     norm, item["cat"], item["id"], why))
                 return False
             fins[fk]["keys"].append(norm)
-            if cat_id not in EXPECTED_CATEGORIES[fk]:
+            if forced:
+                prefix_fk = classify(norm)[1]
+                msg = u"{} on {} {} - wall sweeps always fill Base Finish".format(norm, item["cat"], item["id"])
+                if prefix_fk and prefix_fk != "base":
+                    fins[fk]["mismatches"].append(msg + u" (its prefix points to {}).".format(FINISH_PARAMS[prefix_fk]))
+                elif not prefix_fk:
+                    fins[fk]["notes"].append(msg + u".")
+            elif cat_id not in EXPECTED_CATEGORIES[fk]:
                 fins[fk]["mismatches"].append(
                     u"{} found on a {} element ({}) - classified as {} by the prefix rule.".format(
                         norm, item["cat"], item["id"], FINISH_PARAMS[fk]))
@@ -968,22 +1065,28 @@ class Scanner(object):
             e = raw["elements"][key]
             dk, el, rels = e["doc_key"], e["elem"], e["rels"]
             item = self._base_item(dk, el, rels)
-            found, why = self.element_keys(dk, el, e["mats"])
+            cid = cat_int(el)
             # elements only found by position (in the room / geometric search)
-            # are candidates, not boundaries: no "missing Keynote" noise
-            bounding = rels - set(["inside", "surface"])
+            # are candidates, not boundaries: no "missing Keynote" noise,
+            # except sweeps and ceilings, which are always relevant
+            bounding = rels - set(["inside", "surface", "flush"])
+            mats = e["mats"]
+            if not mats and not bounding:
+                # no touching face known: use the element's own materials
+                mats = self.idx.element_materials(dk, el)
+            found, why = self.element_keys(dk, el, mats)
             if not found:
-                if bounding:
+                if bounding or cid in ALWAYS_SEARCH:
                     issues.append(dict(item, msg=u"Keynote missing ({})".format(why)))
                 continue
             zr = self.elem_zrange(dk, el)
             used = OrderedDict()
             ignored = []
             for kn, src in found:
-                norm, fk = classify(kn)
+                norm, fk, forced = classify_element(kn, cid)
                 if fk is None:
                     ignored.append(norm)
-                elif route(norm, fk, item, cat_int(el), rels, zr):
+                elif route(norm, fk, item, cid, rels, zr, forced):
                     used.setdefault(fk, []).append((norm, src))
             for fk, lst in used.items():
                 fins[fk]["items"].append(dict(item, kn=unique_sorted(k for k, _ in lst),
@@ -991,7 +1094,7 @@ class Scanner(object):
                 if fk == "ceiling":
                     fr_top_area += e["top_area"]
                     fr_keys.add(key)
-            if ignored and not used and bounding:
+            if ignored and not used and (bounding or cid in ALWAYS_SEARCH):
                 others.append(dict(item, kn=unique_sorted(ignored),
                                    msg=u"prefix is not RD / FR / RE / PI - ignored"))
 
@@ -1006,10 +1109,8 @@ class Scanner(object):
                 issues.append(dict(item, msg=u"Keynote missing (sweep material '{}' has no Keynote)".format(
                     self.idx.material_name(0, it["mat"]))))
                 continue
-            norm, fk = classify(kn)
-            if fk is None:
-                others.append(dict(item, kn=[norm], msg=u"prefix is not RD / FR / RE / PI - ignored"))
-            elif route(norm, fk, item, CAT_CORNICES, set(["sweep"])):
+            norm, fk, forced = classify_element(kn, CAT_CORNICES)
+            if route(norm, fk, item, CAT_CORNICES, set(["sweep"]), None, forced):
                 fins[fk]["items"].append(dict(item, kn=[norm], src=["integral sweep material"]))
 
         for fk, fin in fins.items():
