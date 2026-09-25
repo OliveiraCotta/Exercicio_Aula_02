@@ -35,6 +35,12 @@ Elements considered for a room (all through Revit API relationships):
   The zone is grown 2 cm outwards so elements flush with the room faces
   count too, and every Wall Sweep and Ceiling is tested even without a
   finish-prefix type Keynote (their material Keynotes are read).
+  - Room containment (Document.GetRoomAtPoint) for every element with a
+    finish Keynote that no room claimed above, and for EVERY wall sweep:
+    points are sampled inside the element's own geometry along its whole
+    length, so a sweep running through several rooms goes to all of them.
+    Elements with a finish Keynote that end up in no room are listed in the
+    log and the report ("not assigned to any room").
   Exception to the prefix rule: a Wall Sweep ("Moldura de parede") always
   fills Base Finish (BASE_CATEGORIES), whatever its Keynote prefix.
   Height guard: a value is only used if the element sits where that finish
@@ -62,6 +68,7 @@ __doc__ = ("Automatically reads finish Keynotes from Room boundaries and "
 
 import os
 import re
+import math
 import json
 import codecs
 from datetime import datetime
@@ -476,11 +483,17 @@ def build_sweep_index(d):
     """host wall id -> [sweep dict]. One pass over all WallSweep elements
     (sweeps and reveals - the Keynote prefix decides what they are)."""
     idx = {}
-    try:
-        sweeps = DB.FilteredElementCollector(d).OfClass(DB.WallSweep).ToElements()
-    except Exception:
-        return idx
+    sweeps = []
+    for bic in ("OST_Cornices", "OST_Reveals"):          # by category, not OfClass
+        try:
+            sweeps.extend(DB.FilteredElementCollector(d)
+                          .OfCategory(getattr(DB.BuiltInCategory, bic))
+                          .WhereElementIsNotElementType().ToElements())
+        except Exception:
+            continue
     for sw in sweeps:
+        if not isinstance(sw, DB.WallSweep):
+            continue
         try:
             info = sw.GetWallSweepInfo()
             rec = {
@@ -494,6 +507,89 @@ def build_sweep_index(d):
         except Exception:
             continue
     return idx
+
+
+def touch_element(raw, dk, el, rel):
+    """Add (or extend) an element record in a room's raw element set."""
+    k = (dk, eid_int(el.Id))
+    e = raw["elements"].get(k)
+    if e is None:
+        e = {"doc_key": dk, "elem": el, "rels": set(), "mats": set(), "top_area": 0.0}
+        raw["elements"][k] = e
+    e["rels"].add(rel)
+    return e
+
+
+# ==================================================================
+# Sampling points inside an element (for Document.GetRoomAtPoint)
+# ==================================================================
+SAMPLE_STEP_FT = 0.50 / 0.3048      # one sample every ~50 cm along each face
+SAMPLE_INSET_FT = 0.005 / 0.3048    # pushed 5 mm into the element
+SAMPLE_CAP = 300                    # per element
+
+
+def element_solids(el):
+    opts = DB.Options()
+    opts.ComputeReferences = False
+    opts.IncludeNonVisibleObjects = False
+    try:
+        opts.DetailLevel = DB.ViewDetailLevel.Fine
+    except Exception:
+        pass
+    out = []
+
+    def walk(geo, depth):
+        if geo is None or depth > 3:
+            return
+        for g in geo:
+            if isinstance(g, DB.Solid):
+                if g.Volume > 1e-9:
+                    out.append(g)
+            elif isinstance(g, DB.GeometryInstance):
+                walk(g.GetInstanceGeometry(), depth + 1)
+    try:
+        walk(el.get_Geometry(opts), 0)
+    except Exception:
+        pass
+    return out
+
+
+def sample_points(el):
+    """Points just inside the element's solids, spread over every face so a
+    long element is sampled along its whole length."""
+    pts = []
+    for solid in element_solids(el):
+        for f in solid.Faces:
+            try:
+                bb = f.GetBoundingBox()
+                du, dv = bb.Max.U - bb.Min.U, bb.Max.V - bb.Min.V
+                nu = int(min(60, max(1, math.ceil(abs(du) / SAMPLE_STEP_FT))))
+                nv = int(min(60, max(1, math.ceil(abs(dv) / SAMPLE_STEP_FT))))
+                while nu * nv > 120:
+                    if nu >= nv:
+                        nu -= 1
+                    else:
+                        nv -= 1
+                for i in range(nu):
+                    for j in range(nv):
+                        uv = DB.UV(bb.Min.U + du * (i + 0.5) / nu, bb.Min.V + dv * (j + 0.5) / nv)
+                        if not f.IsInside(uv):
+                            continue
+                        n = f.ComputeNormal(uv)
+                        pts.append(f.Evaluate(uv).Subtract(n.Multiply(SAMPLE_INSET_FT)))
+            except Exception:
+                continue
+            if len(pts) >= SAMPLE_CAP:
+                return pts
+    if not pts:
+        try:
+            bb = el.get_BoundingBox(None)
+            if bb is not None:
+                pts.append(DB.XYZ((bb.Min.X + bb.Max.X) / 2.0, (bb.Min.Y + bb.Max.Y) / 2.0,
+                                  (bb.Min.Z + bb.Max.Z) / 2.0))
+        except Exception:
+            pass
+    return pts
 
 
 def line_interval(line, pts):
@@ -579,6 +675,7 @@ REL_LABEL = {
     "inside": u"family instance in room",
     "surface": u"on the room surfaces (geometry)",
     "flush": u"flush with the room faces (geometry)",
+    "contained": u"inside the room (room at point)",
 }
 
 
@@ -842,13 +939,7 @@ class Scanner(object):
         }
 
         def touch(dk, el, rel):
-            k = (dk, eid_int(el.Id))
-            e = raw["elements"].get(k)
-            if e is None:
-                e = {"doc_key": dk, "elem": el, "rels": set(), "mats": set(), "top_area": 0.0}
-                raw["elements"][k] = e
-            e["rels"].add(rel)
-            return e
+            return touch_element(raw, dk, el, rel)
 
         # 1) 2D boundary: which elements really bound the room
         loops = room.GetBoundarySegments(self.seg_opts) or []
@@ -1069,7 +1160,7 @@ class Scanner(object):
             # elements only found by position (in the room / geometric search)
             # are candidates, not boundaries: no "missing Keynote" noise,
             # except sweeps and ceilings, which are always relevant
-            bounding = rels - set(["inside", "surface", "flush"])
+            bounding = rels - set(["inside", "surface", "flush", "contained"])
             mats = e["mats"]
             if not mats and not bounding:
                 # no touching face known: use the element's own materials
@@ -1182,8 +1273,10 @@ class Scanner(object):
                 raw["separation_lines"]))
 
     # ---------------- one room ----------------
-    def analyze(self, room):
-        rec = {"room": room, "boundary": "ok", "finishes": {}, "issues": [], "others": [], "error": None}
+    def collect_room(self, room):
+        """READ step for one room: rec with its raw element set."""
+        rec = {"room": room, "boundary": "ok", "finishes": {}, "issues": [], "others": [],
+               "error": None, "raw": None}
         try:
             if room.Location is None:
                 rec["boundary"] = "unplaced"
@@ -1191,14 +1284,93 @@ class Scanner(object):
             if room.Area <= 0:
                 rec["boundary"] = "unenclosed"
                 return rec
-            raw = self.collect(room)
+            rec["raw"] = self.collect(room)
+        except Exception as ex:
+            rec["boundary"] = "error"
+            rec["error"] = to_unicode(ex)
+        return rec
+
+    def finish_room(self, rec):
+        """ANALYZE step for one room: classify its raw element set."""
+        raw = rec.get("raw")
+        if raw is None:
+            return rec
+        try:
             if not raw["elements"] and not raw["separation_lines"]:
                 rec["boundary"] = "no_segments"
             rec["finishes"], rec["issues"], rec["others"] = self.classify_room(raw)
         except Exception as ex:
             rec["boundary"] = "error"
             rec["error"] = to_unicode(ex)
+        rec["raw"] = None                     # free the geometry references
         return rec
+
+    def analyze(self, room):
+        return self.finish_room(self.collect_room(room))
+
+    def contain_pass(self, records, progress=None):
+        """Assign by Document.GetRoomAtPoint every finish-keynoted element no
+        room has claimed yet, plus every wall sweep (a sweep may run through
+        several rooms). Returns stats and the elements left in no room."""
+        by_room, assigned, phases = {}, set(), {}
+        for rec in records:
+            raw = rec.get("raw")
+            if raw is None:
+                continue
+            by_room[eid_int(rec["room"].Id)] = rec
+            assigned.update(raw["elements"].keys())
+            try:
+                pid = rec["room"].get_Parameter(BIP.ROOM_PHASE).AsElementId()
+                if is_valid_id(pid):
+                    phases[eid_int(pid)] = self.doc.GetElement(pid)
+            except Exception:
+                pass
+        phase_list = [phases[k] for k in sorted(phases)] or [None]
+
+        todo = []
+        for dk, d, xf in self._search_docs():
+            for eid in self._finish_candidates(dk, d):
+                el = self.idx.element(dk, eid)
+                if el is None:
+                    continue
+                is_sweep = cat_int(el) in BASE_CATEGORIES
+                if is_sweep or (dk, eid_int(eid)) not in assigned:
+                    todo.append((dk, el, xf, is_sweep))
+
+        stats = {"tested": len(todo), "sweeps": 0, "sweeps_in_rooms": 0, "unassigned": []}
+        for i, (dk, el, xf, is_sweep) in enumerate(todo):
+            if progress is not None and not progress(i + 1, len(todo)):
+                break
+            pts = sample_points(el)
+            if xf is not None:
+                pts = [xf.OfPoint(p) for p in pts]
+            rids = set()
+            for p in pts:
+                for ph in phase_list:
+                    try:
+                        r = self.doc.GetRoomAtPoint(p, ph) if ph is not None else self.doc.GetRoomAtPoint(p)
+                    except Exception:
+                        r = None
+                    if r is not None:
+                        rids.add(eid_int(r.Id))
+            hits = [by_room[r] for r in sorted(rids) if r in by_room]
+            for rec in hits:
+                touch_element(rec["raw"], dk, el, "contained")
+            k = (dk, eid_int(el.Id))
+            if is_sweep:
+                stats["sweeps"] += 1
+                if hits or k in assigned:
+                    stats["sweeps_in_rooms"] += 1
+            if not hits and k not in assigned:
+                kn, _ = self.idx.element_keynote(dk, el)
+                stats["unassigned"].append({
+                    "id": eid_int(el.Id), "cat": cat_name(el), "link": self.idx.link_name(dk),
+                    "kn": classify(kn)[0] if kn else u"",
+                    "reason": (u"no sampled point is inside a room" if pts
+                               else u"element has no solid geometry"),
+                })
+        stats["unassigned"].sort(key=lambda u: (u["cat"], u["id"]))
+        return stats
 
 
 # ==================================================================
@@ -1289,7 +1461,7 @@ def worksharing_block(room):
     return u""
 
 
-def build_json(records, targets, mode, keynote_texts, problems):
+def build_json(records, targets, mode, keynote_texts, problems, contain_stats=None):
     rooms = []
     for rec in records:
         info = rec["info"]
@@ -1334,6 +1506,8 @@ def build_json(records, targets, mode, keynote_texts, problems):
         "paramProblems": problems,
         "keynotes": keynote_texts,
         "rooms": rooms,
+        "containStats": dict((k, v) for k, v in (contain_stats or {}).items() if k != "unassigned"),
+        "unassigned": (contain_stats or {}).get("unassigned", []),
     }
 
 
@@ -1511,6 +1685,7 @@ class RoomFinishWindow(forms.WPFWindow):
         self.table = None
         self.mode = "auto"
         self.keynote_texts = {}
+        self.contain_stats = {"tested": 0, "sweeps": 0, "sweeps_in_rooms": 0, "unassigned": []}
 
         self.cb_source.ItemsSource = [label for _, label in KEYNOTE_SOURCES]
         self.cb_source.SelectedIndex = 0
@@ -1575,15 +1750,38 @@ class RoomFinishWindow(forms.WPFWindow):
                 if pb.cancelled:
                     cancelled = True
                     break
-                rec = scanner.analyze(room)
+                rec = scanner.collect_room(room)
                 rec["info"] = room_info(room)
                 records.append(rec)
                 if i % 5 == 0 or i == n - 1:
                     pb.update_progress(i + 1, n)
+        if not cancelled:
+            # every element with a finish Keynote (and every wall sweep) that no
+            # room claimed yet: which room contains it?
+            with forms.ProgressBar(title="Assigning elements to rooms ({value} of {max_value})",
+                                   cancellable=True) as pb:
+                def progress(i, total):
+                    if pb.cancelled:
+                        return False
+                    if i % 10 == 0 or i == total:
+                        pb.update_progress(i, total)
+                    return True
+                self.contain_stats = scanner.contain_pass(records, progress)
+                cancelled = pb.cancelled
         if cancelled:
-            output.print_md(u"Scan cancelled after {} room(s) - nothing was reported.".format(len(records)))
+            output.print_md(u"Scan cancelled - nothing was reported.")
             self.tb_status.Text = u"Scan cancelled."
             return
+        for rec in records:
+            scanner.finish_room(rec)
+        cs = self.contain_stats
+        output.print_md(u"**Room containment:** {} element(s) tested with GetRoomAtPoint; wall sweeps: {} in the "
+                        u"model, {} inside a room. **{} element(s) with a finish Keynote are not in any room.**".format(
+                            cs["tested"], cs["sweeps"], cs["sweeps_in_rooms"], len(cs["unassigned"])))
+        for u in cs["unassigned"][:40]:
+            output.print_md(u"- {} {} `{}` - {}".format(u["cat"], log_link(u), u["kn"] or u"(no Keynote)", u["reason"]))
+        if len(cs["unassigned"]) > 40:
+            output.print_md(u"- ... and {} more (see the HTML report).".format(len(cs["unassigned"]) - 40))
 
         self.records = sort_records(records)
         no_bound = [r for r in self.records if r["boundary"] != "ok"]
@@ -1632,7 +1830,8 @@ class RoomFinishWindow(forms.WPFWindow):
 
     def _write_report(self):
         try:
-            data = build_json(self.records, self.targets, self.mode, self.keynote_texts, self.problems)
+            data = build_json(self.records, self.targets, self.mode, self.keynote_texts, self.problems,
+                              self.contain_stats)
             write_report(data)
         except Exception as ex:
             output.print_md(u"**ERROR:** could not write the HTML report: `{}`".format(to_unicode(ex)))

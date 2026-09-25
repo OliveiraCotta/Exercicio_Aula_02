@@ -137,6 +137,7 @@
 </div>
 <div class="tablewrap" id="tableWrap"></div>
 
+<div id="unassigned"></div>
 <div class="meta" id="meta"></div>
 <footer>Room Finish Keynotes · generated locally · no data leaves this machine</footer>
 
@@ -321,6 +322,20 @@ document.getElementById("resetBtn").onclick = ()=>{
 };
 
 const P = DATA.params || {};
+/* ---- elements with a finish Keynote that no room claimed ---- */
+const UN = DATA.unassigned || [];
+if(UN.length){
+  document.getElementById("unassigned").innerHTML =
+    `<h2 style="margin-top:40px">Not assigned to any room · ${fmt(UN.length)}</h2>
+     <div class="tablewrap"><table><thead><tr><th>Category</th><th>Element id</th><th>Keynote</th><th>Reason</th></tr></thead><tbody>` +
+    UN.map(u=>`<tr><td>${esc(u.cat)}${u.link?` <span class="cur">linked: ${esc(u.link)}</span>`:""}</td>
+      <td class="mono">${u.id}</td>
+      <td>${u.kn?`<span class="kn">${esc(u.kn)}</span>`:`<span class="st missing">no Keynote</span>`}</td>
+      <td class="st nd">${esc(u.reason)}</td></tr>`).join("") +
+    `</tbody></table></div>`;
+}
+const CS = DATA.containStats || {};
+
 const RULES = DATA.prefixRules || {};
 document.getElementById("meta").innerHTML =
   `<b>Classification (by Keynote prefix only):</b> ` +
@@ -328,6 +343,7 @@ document.getElementById("meta").innerHTML =
   `<b>Keynote source:</b> ${esc(DATA.keynoteSource)}<br>` +
   `<b>Boundary location:</b> ${esc(DATA.boundaryLocation)} · <b>Separator:</b> "${esc(DATA.separator)}"<br>` +
   `<b>Parameters:</b> ` + FIN.map(k=>`${esc((P[k]||{}).name||FIN_LABEL[k])} (${esc((P[k]||{}).kind||"not found")})`).join(" · ") +
+  `<br><b>Room containment:</b> ${fmt(CS.tested||0)} elements tested · wall sweeps ${fmt(CS.sweeps||0)} in the model, ${fmt(CS.sweeps_in_rooms||0)} inside a room · ${fmt(UN.length)} not in any room` +
   `<br><b>Keynote file:</b> ${Object.keys(KN).length ? fmt(Object.keys(KN).length)+" keys loaded" : "not loaded - keys not validated"}`;
 
 renderCards();
