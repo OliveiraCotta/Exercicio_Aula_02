@@ -1,0 +1,330 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Room Finish Keynotes</title>
+<style>
+  :root{
+    --bg:#070C16; --panel:rgba(255,255,255,.028); --line:rgba(101,227,255,.22);
+    --grid:rgba(101,227,255,.05); --ink:#D9E8F5; --dim:#7A8FA9;
+    --cy:#65E3FF; --teal:#3DDCB4; --amber:#FFB454; --mag:#FF4F9A; --violet:#9D8CFF;
+  }
+  *{box-sizing:border-box; margin:0; padding:0}
+  body{
+    background:
+      repeating-linear-gradient(0deg, var(--grid) 0 1px, transparent 1px 48px),
+      repeating-linear-gradient(90deg, var(--grid) 0 1px, transparent 1px 48px),
+      radial-gradient(1200px 600px at 15% -10%, #0D1B33 0%, var(--bg) 55%);
+    background-color:var(--bg);
+    color:var(--ink); font-family:"Bahnschrift","Segoe UI",system-ui,sans-serif;
+    padding:36px clamp(16px,4vw,56px) 80px; min-height:100vh;
+  }
+  .mono{font-family:Consolas,"Cascadia Mono",monospace}
+  header{display:flex; justify-content:space-between; align-items:flex-end; gap:16px; flex-wrap:wrap;
+    border-bottom:1px solid var(--line); padding-bottom:18px; margin-bottom:28px}
+  .eyebrow{font-size:11px; letter-spacing:.45em; color:var(--cy); text-transform:uppercase}
+  h1{font-size:clamp(22px,3vw,36px); font-weight:600; letter-spacing:.04em; margin-top:6px}
+  h1 span{color:var(--dim); font-weight:300}
+  .stamp{text-align:right; font-size:11px; color:var(--dim); letter-spacing:.12em; line-height:1.8}
+  .stamp b{color:var(--teal); font-weight:600}
+  h2{font-size:12px; letter-spacing:.4em; text-transform:uppercase; color:var(--dim);
+    margin:0 0 16px; display:flex; align-items:center; gap:12px}
+  h2::after{content:""; flex:1; height:1px; background:var(--line)}
+
+  .banner{border:1px solid rgba(255,79,154,.5); background:rgba(255,79,154,.07); color:var(--mag);
+    border-radius:4px; padding:12px 16px; margin-bottom:22px; font-size:13px; line-height:1.7}
+
+  /* stat cards - click to filter the table */
+  .cards{display:grid; grid-template-columns:repeat(auto-fit,minmax(150px,1fr)); gap:12px; margin-bottom:32px}
+  .card{background:var(--panel); border:1px solid var(--line); border-radius:4px; text-align:left;
+    padding:16px 14px 12px; position:relative; overflow:hidden; cursor:pointer; color:inherit;
+    font:inherit}
+  .card::before{content:""; position:absolute; top:0; left:0; width:100%; height:2px;
+    background:linear-gradient(90deg, var(--c,var(--cy)), transparent 70%)}
+  .card:hover{border-color:var(--cy)}
+  .card.on{border-color:var(--c,var(--cy)); background:rgba(101,227,255,.07)}
+  .card .v{font-size:30px; font-weight:600; color:var(--c,var(--cy)); font-variant-numeric:tabular-nums}
+  .card .l{font-size:10px; letter-spacing:.2em; text-transform:uppercase; color:var(--dim); margin-top:6px; line-height:1.5}
+
+  /* filters */
+  .filters{display:grid; grid-template-columns:repeat(auto-fill,minmax(160px,1fr)); gap:10px 12px; margin-bottom:12px}
+  .f label{display:block; font-size:10px; letter-spacing:.2em; text-transform:uppercase; color:var(--dim); margin-bottom:5px}
+  .f input, .f select{width:100%; background:#0C1424; border:1px solid var(--line); border-radius:3px;
+    color:var(--ink); padding:7px 9px; font-size:12px; font-family:inherit; outline:none}
+  .f input:focus, .f select:focus{border-color:var(--cy)}
+  .f.wide{grid-column:span 2}
+  .toolrow{display:flex; gap:12px; align-items:center; margin:4px 0 16px; flex-wrap:wrap}
+  .btn{background:transparent; border:1px solid var(--line); border-radius:3px; color:var(--cy);
+    font-family:inherit; font-size:11px; letter-spacing:.15em; text-transform:uppercase;
+    padding:8px 14px; cursor:pointer}
+  .btn:hover{border-color:var(--cy); background:rgba(101,227,255,.12)}
+  .count{font-size:11px; color:var(--dim); letter-spacing:.15em; margin-left:auto}
+
+  /* table */
+  .tablewrap{overflow-x:auto}
+  table{width:100%; border-collapse:collapse; font-size:13px; min-width:900px}
+  th{font-size:10px; letter-spacing:.22em; text-transform:uppercase; color:var(--cy);
+    text-align:left; padding:10px 10px; border-bottom:1px solid var(--line);
+    cursor:pointer; user-select:none; white-space:nowrap}
+  th .dir{color:var(--amber)}
+  td{padding:9px 10px; border-bottom:1px solid rgba(255,255,255,.05); vertical-align:top}
+  tbody tr.room{cursor:pointer}
+  tbody tr.room:hover td{background:rgba(101,227,255,.05)}
+  tbody tr.room.open td{background:rgba(101,227,255,.07)}
+  .tag{display:inline-block; padding:2px 8px; border:1px solid var(--line); border-radius:2px;
+    font-size:11px; color:var(--dim)}
+  .kn{display:inline-block; margin:1px 4px 1px 0; padding:1px 7px; border-radius:2px;
+    border:1px solid rgba(101,227,255,.35); background:rgba(101,227,255,.07);
+    font-family:Consolas,monospace; font-size:12px; color:var(--cy)}
+  .st{font-size:11px; letter-spacing:.05em}
+  .st.missing{color:var(--mag)}
+  .st.nd{color:var(--dim)}
+  .st.partial{color:var(--amber)}
+  .cur{display:block; font-size:10.5px; color:var(--dim); margin-top:3px; letter-spacing:.03em}
+  .cur.diff{color:var(--amber)}
+  .badge{display:inline-block; font-size:10px; letter-spacing:.15em; padding:3px 8px; border-radius:2px;
+    border:1px solid currentColor; text-transform:uppercase}
+  .badge.OK{color:var(--teal)} .badge.WARNING{color:var(--amber)} .badge.ERROR{color:var(--mag)}
+  .upd{display:inline-block; margin-left:6px; font-size:10px; color:var(--violet); letter-spacing:.1em}
+
+  /* detail row */
+  tr.detail td{background:rgba(0,0,0,.25); padding:16px 18px 18px}
+  .dgrid{display:grid; grid-template-columns:repeat(auto-fit,minmax(260px,1fr)); gap:16px}
+  .dbox h4{font-size:10px; letter-spacing:.3em; text-transform:uppercase; color:var(--cy); margin-bottom:8px; font-weight:600}
+  .dbox ul{list-style:none; font-size:12px; line-height:1.7}
+  .dbox li{color:var(--ink)}
+  .dbox li .id{font-family:Consolas,monospace; color:var(--dim)}
+  .dbox li .src{color:var(--dim); font-size:11px}
+  .dbox li.iss{color:var(--mag)}
+  .dbox li.warn{color:var(--amber)}
+  .dbox li.note{color:var(--dim)}
+  .dmsg{color:var(--mag); font-size:12px; margin-bottom:10px}
+
+  .empty{text-align:center; padding:50px 0; color:var(--dim); letter-spacing:.2em}
+  .meta{margin-top:40px; font-size:11px; color:var(--dim); line-height:1.9}
+  .meta b{color:var(--ink); font-weight:600}
+  footer{margin-top:40px; font-size:10px; letter-spacing:.3em; color:var(--dim);
+    text-transform:uppercase; text-align:center}
+</style>
+</head>
+<body>
+<header>
+  <div>
+    <div class="eyebrow">Room Finishes // Keynote Automation</div>
+    <h1 id="proj"></h1>
+  </div>
+  <div class="stamp mono">GENERATED <b id="stamp"></b><br>SOURCE <b>REVIT · PYREVIT</b></div>
+</header>
+
+<div id="banner"></div>
+<div class="cards" id="cards"></div>
+
+<h2>Rooms</h2>
+<div class="filters">
+  <div class="f wide"><label for="q">Search</label><input id="q" type="search" placeholder="number, name, keynote, element id…" autocomplete="off"></div>
+  <div class="f"><label for="fNumber">Room Number</label><input id="fNumber" type="text" placeholder="e.g. 101" autocomplete="off"></div>
+  <div class="f"><label for="fLevel">Level</label><select id="fLevel"></select></div>
+  <div class="f"><label for="fStatus">Status</label><select id="fStatus"></select></div>
+  <div class="f"><label for="f_wall">Wall Finish</label><select id="f_wall"></select></div>
+  <div class="f"><label for="f_floor">Floor Finish</label><select id="f_floor"></select></div>
+  <div class="f"><label for="f_ceiling">Ceiling Finish</label><select id="f_ceiling"></select></div>
+  <div class="f"><label for="f_base">Base Finish</label><select id="f_base"></select></div>
+</div>
+<div class="toolrow">
+  <button class="btn" id="resetBtn">Reset filters</button>
+  <span class="count" id="count"></span>
+</div>
+<div class="tablewrap" id="tableWrap"></div>
+
+<div class="meta" id="meta"></div>
+<footer>Room Finish Keynotes · generated locally · no data leaves this machine</footer>
+
+<script>
+const DATA = __DATA__;
+const ROOMS = DATA.rooms || [];
+const FIN = ["wall","floor","ceiling","base"];
+const FIN_LABEL = {wall:"Wall Finish", floor:"Floor Finish", ceiling:"Ceiling Finish", base:"Base Finish"};
+const KN = DATA.keynotes || {};
+const esc = s => String(s==null?"":s).replace(/[&<>"]/g,m=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[m]));
+const fmt = n => n.toLocaleString();
+const natural = (a,b) => String(a).localeCompare(String(b), undefined, {numeric:true, sensitivity:"base"});
+
+document.getElementById("proj").innerHTML =
+  esc(String(DATA.project||"").replace(/\.rvt$/i,"")) + " <span>/ room finishes</span>";
+document.getElementById("stamp").textContent = DATA.generated || "";
+
+if((DATA.paramProblems||[]).length){
+  document.getElementById("banner").innerHTML = `<div class="banner">${DATA.paramProblems.map(esc).join("<br>")}
+    <br>These parameters were reported but not written. Nothing is created automatically.</div>`;
+}
+
+/* ---- stats: each is also a filter ---- */
+const hasBounds = r => r.boundary === "ok";
+const missing = k => r => hasBounds(r) && r.finishes[k].state !== "ok";
+const STATS = [
+  {k:"total",   l:"Total Rooms",                    c:"var(--cy)",     f: r => true},
+  {k:"updated", l:"Rooms updated",                  c:"var(--violet)", f: r => r.updated},
+  {k:"nobound", l:"Rooms without boundaries",       c:"var(--mag)",    f: r => !hasBounds(r)},
+  {k:"wall",    l:"Missing Wall Keynotes",          c:"var(--amber)",  f: missing("wall")},
+  {k:"floor",   l:"Missing Floor Keynotes",         c:"var(--amber)",  f: missing("floor")},
+  {k:"ceiling", l:"Missing Ceiling Keynotes",       c:"var(--amber)",  f: missing("ceiling")},
+  {k:"base",    l:"Missing Base Finish",            c:"var(--amber)",  f: missing("base")},
+  {k:"complete",l:"Rooms with complete information",c:"var(--teal)",   f: r => r.status === "OK"},
+];
+let statFilter = null;
+function renderCards(){
+  document.getElementById("cards").innerHTML = STATS.map(s=>{
+    const n = ROOMS.filter(s.f).length;
+    return `<button class="card${statFilter===s.k?" on":""}" data-k="${s.k}" style="--c:${s.c}"
+      title="Click to show only these rooms"><div class="v">${fmt(n)}</div><div class="l">${esc(s.l)}</div></button>`;
+  }).join("");
+  document.querySelectorAll(".card").forEach(b=>b.onclick=()=>{
+    statFilter = (statFilter===b.dataset.k || b.dataset.k==="total") ? null : b.dataset.k;
+    renderCards(); renderTable();
+  });
+}
+
+/* ---- filter dropdowns ---- */
+function fillSelect(id, options){
+  document.getElementById(id).innerHTML = options.map(([v,l])=>`<option value="${esc(v)}">${esc(l)}</option>`).join("");
+}
+const levels = [...new Set(ROOMS.map(r=>r.level))];         // rooms arrive sorted by elevation
+fillSelect("fLevel", [["","All levels"], ...levels.map(l=>[l,l])]);
+fillSelect("fStatus", [["","All"],["OK","OK"],["WARNING","Warning"],["ERROR","Error"]]);
+FIN.forEach(k=>{
+  const keys = [...new Set(ROOMS.flatMap(r=>hasBounds(r)?r.finishes[k].keys:[]))].sort(natural);
+  fillSelect("f_"+k, [["","All"],["__issue","Missing / not detected"],["__diff","Differs from Revit value"],
+    ...keys.map(x=>[x, x + (KN[x] ? " - " + KN[x] : "")])]);
+});
+
+function matches(r){
+  const q = document.getElementById("q").value.trim().toLowerCase();
+  const num = document.getElementById("fNumber").value.trim().toLowerCase();
+  const lv = document.getElementById("fLevel").value;
+  const st = document.getElementById("fStatus").value;
+  if(statFilter){ const s = STATS.find(x=>x.k===statFilter); if(s && !s.f(r)) return false; }
+  if(lv && r.level !== lv) return false;
+  if(st && r.status !== st) return false;
+  if(num && !String(r.number).toLowerCase().includes(num)) return false;
+  for(const k of FIN){
+    const v = document.getElementById("f_"+k).value;
+    if(!v) continue;
+    const f = r.finishes[k];
+    if(v === "__issue"){ if(!hasBounds(r) || f.state === "ok") return false; }
+    else if(v === "__diff"){ if(!f.value || f.value === f.current) return false; }
+    else if(!f.keys.includes(v)) return false;
+  }
+  if(q){
+    const hay = [r.number, r.name, r.level, r.status, r.id,
+      ...FIN.flatMap(k=>[r.finishes[k].value, r.finishes[k].current, ...r.finishes[k].items.map(i=>i.id)])]
+      .join(" ").toLowerCase();
+    if(!hay.includes(q)) return false;
+  }
+  return true;
+}
+
+/* ---- table ---- */
+let sortK = null, sortDir = 1;
+const openRows = new Set();
+function finishCell(r, k){
+  if(!hasBounds(r)) return `<span class="st nd">-</span>`;
+  const f = r.finishes[k];
+  let main;
+  if(f.keys.length){
+    main = f.keys.map(x=>`<span class="kn" title="${esc(KN[x]||"")}">${esc(x)}</span>`).join("");
+    if(f.state === "partial") main += `<span class="st partial" title="Some elements have no Keynote">+ gaps</span>`;
+  } else if(f.state === "missing"){
+    main = `<span class="st missing">Keynote missing</span>`;
+  } else {
+    main = `<span class="st nd">Not detected</span>`;
+  }
+  if((f.warnings||[]).length && f.state === "ok") main += ` <span class="st partial" title="${esc(f.warnings.join(" "))}">!</span>`;
+  let cur = "";
+  if(f.current && f.current !== f.value){
+    cur = f.value ? `<span class="cur diff">in Revit: ${esc(f.current)}</span>`
+                  : `<span class="cur">in Revit: ${esc(f.current)} (kept)</span>`;
+  }
+  return main + cur;
+}
+const STATUS_RANK = {ERROR:0, WARNING:1, OK:2};
+function renderTable(){
+  let list = ROOMS.filter(matches);
+  if(sortK){
+    list = list.slice().sort((a,b)=>{
+      let x, y;
+      if(sortK === "status"){ x = STATUS_RANK[a.status]; y = STATUS_RANK[b.status]; return (x-y)*sortDir; }
+      if(FIN.includes(sortK)){ x = a.finishes[sortK].value; y = b.finishes[sortK].value; }
+      else { x = a[sortK]; y = b[sortK]; }
+      return natural(x||"", y||"") * sortDir;
+    });
+  }
+  document.getElementById("count").textContent = `${list.length} / ${ROOMS.length} ROOMS`;
+  const wrap = document.getElementById("tableWrap");
+  if(!list.length){ wrap.innerHTML = `<div class="empty">No room matches the filters.</div>`; return; }
+  const arrow = k => sortK===k ? ` <span class="dir">${sortDir>0?"▲":"▼"}</span>` : "";
+  const cols = [["number","Room Number"],["name","Room Name"],["level","Level"],
+    ...FIN.map(k=>[k, FIN_LABEL[k]]),["status","Status"]];
+  const head = `<tr>${cols.map(([k,l])=>`<th data-k="${k}">${l}${arrow(k)}</th>`).join("")}</tr>`;
+  const body = list.map(r=>{
+    const open = openRows.has(r.id);
+    const row = `<tr class="room${open?" open":""}" data-id="${r.id}">
+      <td class="mono">${esc(r.number)||"-"}</td>
+      <td>${esc(r.name)||"-"}</td>
+      <td><span class="tag">${esc(r.level)}</span></td>
+      ${FIN.map(k=>`<td>${finishCell(r,k)}</td>`).join("")}
+      <td><span class="badge ${r.status}">${r.status}</span>${r.updated?`<span class="upd">UPDATED</span>`:""}</td></tr>`;
+    return open ? row + detailRow(r, cols.length) : row;
+  }).join("");
+  wrap.innerHTML = `<table><thead>${head}</thead><tbody>${body}</tbody></table>`;
+  wrap.querySelectorAll("th[data-k]").forEach(th=>th.onclick=()=>{
+    const k = th.dataset.k; sortDir = (sortK===k) ? -sortDir : 1; sortK = k; renderTable();
+  });
+  wrap.querySelectorAll("tr.room").forEach(tr=>tr.onclick=()=>{
+    const id = +tr.dataset.id; openRows.has(id) ? openRows.delete(id) : openRows.add(id); renderTable();
+  });
+}
+function detailRow(r, span){
+  let msgs = "";
+  if(r.boundaryMsg) msgs += `<div class="dmsg">${esc(r.boundaryMsg)}</div>`;
+  if(r.writeError) msgs += `<div class="dmsg">Write error - ${esc(r.writeError)}</div>`;
+  const boxes = hasBounds(r) ? FIN.map(k=>{
+    const f = r.finishes[k];
+    const items = f.items.map(i=>{
+      const link = i.link ? ` <span class="src">(linked: ${esc(i.link)})</span>` : "";
+      const kn = i.kn.length ? i.kn.map(x=>`<span class="kn">${esc(x)}</span>`).join("")
+                             : `<span class="st missing">no Keynote</span>`;
+      const src = i.src.length ? ` <span class="src">${esc(i.src.join(", "))}</span>` : "";
+      return `<li>${esc(i.cat)} <span class="id">${i.id}</span>${link} → ${kn}${src}</li>`;
+    });
+    const iss = (r.issues||[]).filter(i=>i.finish===k)
+      .map(i=>`<li class="iss">${esc(i.cat)} <span class="id">${i.id}</span> - ${esc(i.msg)}</li>`);
+    const warn = (f.warnings||[]).map(w=>`<li class="warn">${esc(w)}</li>`);
+    const notes = (f.notes||[]).map(n=>`<li class="note">${esc(n)}</li>`);
+    const cur = `<li class="note">Written value: ${esc(f.value||"(nothing detected)")} · in Revit: ${esc(f.current||"(empty)")}</li>`;
+    return `<div class="dbox"><h4>${FIN_LABEL[k]}</h4><ul>${[...items,...iss,...warn,...notes,cur].join("")||"<li class='note'>-</li>"}</ul></div>`;
+  }).join("") : "";
+  return `<tr class="detail"><td colspan="${span}">${msgs}<div class="dgrid">${boxes}</div>
+    <div class="cur">Room element id ${r.id}${r.phase?" · phase "+esc(r.phase):""}</div></td></tr>`;
+}
+
+/* ---- wiring ---- */
+["q","fNumber"].forEach(id=>document.getElementById(id).addEventListener("input", renderTable));
+["fLevel","fStatus",...FIN.map(k=>"f_"+k)].forEach(id=>document.getElementById(id).addEventListener("change", renderTable));
+document.getElementById("resetBtn").onclick = ()=>{
+  document.querySelectorAll(".filters input, .filters select").forEach(el=>el.value="");
+  statFilter = null; renderCards(); renderTable();
+};
+
+const P = DATA.params || {};
+document.getElementById("meta").innerHTML =
+  `<b>Keynote source:</b> ${esc(DATA.keynoteSource)}<br>` +
+  `<b>Boundary location:</b> ${esc(DATA.boundaryLocation)} · <b>Separator:</b> "${esc(DATA.separator)}"<br>` +
+  `<b>Parameters:</b> ` + FIN.map(k=>`${esc((P[k]||{}).name||FIN_LABEL[k])} (${esc((P[k]||{}).kind||"not found")})`).join(" · ") +
+  `<br><b>Keynote file:</b> ${Object.keys(KN).length ? fmt(Object.keys(KN).length)+" keys loaded" : "not loaded - keys not validated"}`;
+
+renderCards();
+renderTable();
+</script>
+</body>
+</html>
