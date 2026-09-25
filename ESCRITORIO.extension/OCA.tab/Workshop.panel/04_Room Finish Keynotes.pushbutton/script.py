@@ -25,10 +25,18 @@ Elements considered for a room (all through Revit API relationships):
     WallSweep elements and sweeps built into the wall type).
   - Family instances located in the room (FamilyInstance.Room for the room's
     phase) - only those whose Keynote has one of the four prefixes.
-  Position guard: a PI keynote on an element that only bounds the room from
-  ABOVE is the floor of the room upstairs, and an FR keynote on an element
-  that only bounds it from BELOW is the ceiling of the room downstairs - both
-  are reported and not written.
+  - Geometric search of the room's surfaces: the room outline (finish
+    boundary) extruded from just below the room base to SEARCH_ABOVE_M above
+    its top, tested with ElementIntersectsSolidFilter against every element
+    (host + loaded links) whose Keynote has one of the four prefixes. This is
+    what finds skirtings (low walls, sweeps, families) and ceilings that the
+    Revit room relations don't report: elements below the room computation
+    height, not Room Bounding, or above a low room Limit Offset.
+  Height guard: a value is only used if the element sits where that finish
+  can be for THIS room - PI starts below the room's mid-height, FR ends above
+  it, RE / RD overlap the room's height. This keeps the floor finish,
+  skirting and walls of the storey above out of the room below. Rejected
+  values are reported, not written.
 
 Keynote lookup, per element (see KEYNOTE_SOURCES):
   1. Keynote on the element itself (rare - most categories only have it on
@@ -58,6 +66,7 @@ import clr
 clr.AddReference("System.Data")
 from System import Boolean, String
 from System.Data import DataTable
+from System.Collections.Generic import List
 
 from pyrevit import revit, DB, script, forms
 
@@ -133,7 +142,14 @@ EXPECTED_CATEGORIES = {
     "base": set([CAT_CORNICES, _bic("OST_Walls"), _bic("OST_GenericModel")]),
 }
 
-# Keynote of an element that ONLY bounds the room from this side belongs to
+# Geometric search zone around the room surfaces: the finish outline extruded
+# from SEARCH_BELOW_M under the room base to SEARCH_ABOVE_M over the room top
+# (so a ceiling above a room whose Limit Offset is too low is still found).
+SEARCH_BELOW_M = 0.02
+SEARCH_ABOVE_M = 1.00
+
+# Fallback when an element has no bounding box (height guard not possible):
+# a Keynote of an element that ONLY bounds the room from this side belongs to
 # the neighbouring room (floor slab above, ceiling below) - not written.
 POSITION_GUARD = {"floor": "top", "ceiling": "bottom"}
 
@@ -520,6 +536,7 @@ REL_LABEL = {
     "bottom": u"below the room",
     "sweep": u"sweep on bounding wall",
     "inside": u"family instance in room",
+    "surface": u"on the room surfaces (geometry)",
 }
 
 
@@ -557,6 +574,127 @@ class Scanner(object):
         self.keynote_texts = dict((k.upper(), v) for k, v in load_keynote_table(d).items())
         self._fi_candidates = None
         self._inside = {}           # phase id -> {room id: [FamilyInstance]}
+        self._cands = {}            # doc_key -> List[ElementId] with a finish-prefix Keynote
+        self._links = None          # [(doc_key, link doc, total transform)]
+
+    # ---------------- geometric search of the room surfaces ----------------
+    def _finish_candidates(self, dk, d):
+        """Placed model elements whose type (or own) Keynote has a finish
+        prefix. Built once per document; only these are tested geometrically,
+        so the per-room search stays cheap on big models."""
+        if dk in self._cands:
+            return self._cands[dk]
+        type_ok = set()
+        for t in DB.FilteredElementCollector(d).WhereElementIsElementType():
+            try:
+                if classify(param_str(t.get_Parameter(BIP.KEYNOTE_PARAM)))[1]:
+                    type_ok.add(eid_int(t.Id))
+            except Exception:
+                continue
+        ids = List[DB.ElementId]()
+        for el in DB.FilteredElementCollector(d).WhereElementIsNotElementType():
+            try:
+                cat = el.Category
+                if cat is None or cat.CategoryType != DB.CategoryType.Model:
+                    continue
+                tid = el.GetTypeId()
+                if (is_valid_id(tid) and eid_int(tid) in type_ok) or \
+                        classify(param_str(el.get_Parameter(BIP.KEYNOTE_PARAM)))[1]:
+                    ids.Add(el.Id)
+            except Exception:
+                continue
+        self._cands[dk] = ids
+        return ids
+
+    def _search_docs(self):
+        """[(doc_key, document, transform or None)] - host plus loaded links."""
+        if self._links is None:
+            self._links = []
+            try:
+                for inst in DB.FilteredElementCollector(self.doc).OfClass(DB.RevitLinkInstance):
+                    ld = inst.GetLinkDocument()
+                    if ld is not None:
+                        dk = eid_int(inst.Id)
+                        self.idx.doc_for(dk)
+                        self._links.append((dk, ld, inst.GetTotalTransform()))
+            except Exception:
+                pass
+        return [(0, self.doc, None)] + self._links
+
+    def _link_xf(self, dk):
+        for k, _, xf in self._links or []:
+            if k == dk:
+                return xf
+        return None
+
+    def room_zrange(self, room):
+        """(base, top) elevation of the room volume, or None."""
+        try:
+            bb = room.get_BoundingBox(None)
+            if bb is not None and bb.Max.Z > bb.Min.Z:
+                return bb.Min.Z, bb.Max.Z
+        except Exception:
+            pass
+        return None
+
+    def elem_zrange(self, dk, el):
+        """(low, high) elevation of an element in host coordinates, or None."""
+        try:
+            bb = el.get_BoundingBox(None)
+        except Exception:
+            bb = None
+        if bb is None:
+            return None
+        lo, hi = bb.Min, bb.Max
+        xf = self._link_xf(dk) if dk else None
+        if xf is not None:
+            lo, hi = xf.OfPoint(lo), xf.OfPoint(hi)
+        return min(lo.Z, hi.Z), max(lo.Z, hi.Z)
+
+    def search_zone(self, loops, zrange):
+        """Room outline extruded around the room height, as a Solid."""
+        base, top = zrange
+        z0 = base - SEARCH_BELOW_M / 0.3048
+        z1 = top + SEARCH_ABOVE_M / 0.3048
+        curve_loops = []
+        for loop in loops:
+            curves = [seg.GetCurve() for seg in loop]
+            if not curves:
+                continue
+            cl = DB.CurveLoop()
+            for c in curves:
+                cl.Append(c)
+            move = DB.Transform.CreateTranslation(DB.XYZ(0, 0, z0 - curves[0].GetEndPoint(0).Z))
+            curve_loops.append(DB.CurveLoop.CreateViaTransform(cl, move))
+        if not curve_loops:
+            return None
+        for attempt in (curve_loops, curve_loops[:1]):     # all loops, else outer only
+            try:
+                return DB.GeometryCreationUtilities.CreateExtrusionGeometry(
+                    List[DB.CurveLoop](attempt), DB.XYZ.BasisZ, z1 - z0)
+            except Exception:
+                continue
+        return None
+
+    def elements_on_surfaces(self, solid):
+        """(doc_key, element) for every finish-keynoted element intersecting
+        the search zone, host and linked models."""
+        found = []
+        for dk, d, xf in self._search_docs():
+            ids = self._finish_candidates(dk, d)
+            if ids.Count == 0:
+                continue
+            s = solid if xf is None else DB.SolidUtils.CreateTransformed(solid, xf.Inverse)
+            bb = s.GetBoundingBox()
+            p0, p1 = bb.Transform.OfPoint(bb.Min), bb.Transform.OfPoint(bb.Max)
+            outline = DB.Outline(DB.XYZ(min(p0.X, p1.X), min(p0.Y, p1.Y), min(p0.Z, p1.Z)),
+                                 DB.XYZ(max(p0.X, p1.X), max(p0.Y, p1.Y), max(p0.Z, p1.Z)))
+            col = (DB.FilteredElementCollector(d, ids)
+                   .WherePasses(DB.BoundingBoxIntersectsFilter(outline))
+                   .WherePasses(DB.ElementIntersectsSolidFilter(s)))
+            for el in col:
+                found.append((dk, el))
+        return found
 
     # ---------------- family instances located in a room ----------------
     def _inside_candidates(self):
@@ -612,7 +750,7 @@ class Scanner(object):
             "integral": [],              # sweeps built into wall types
             "separation_lines": 0,
             "top_total": 0.0, "top_free": 0.0, "bottom_free": 0.0,
-            "calc_error": None,
+            "calc_error": None, "zrange": self.room_zrange(room), "search_error": None,
         }
 
         def touch(dk, el, rel):
@@ -730,6 +868,22 @@ class Scanner(object):
         # 4) family instances located in the room (e.g. skirting families)
         for fi in self.inside_room(room):
             touch(0, fi, "inside")
+
+        # 5) everything else on the room surfaces: skirtings below the room
+        #    computation height, non-bounding finish walls / ceilings,
+        #    ceilings above a low room Limit Offset
+        if raw["zrange"] is None:
+            raw["search_error"] = u"room has no volume bounding box"
+        else:
+            try:
+                zone = self.search_zone(loops, raw["zrange"])
+                if zone is None:
+                    raw["search_error"] = u"could not build the room search zone from its boundary"
+                else:
+                    for dk, el in self.elements_on_surfaces(zone):
+                        touch(dk, el, "surface")
+            except Exception as ex:
+                raw["search_error"] = to_unicode(ex)
         return raw
 
     # ---------------- keynote resolution ----------------
@@ -776,14 +930,32 @@ class Scanner(object):
         fr_top_area = 0.0
         fr_keys = set()             # elements that contributed a ceiling (FR) value
 
-        def route(norm, fk, item, cat_id, rels):
-            """Put one classified keynote into its finish; returns True if used."""
+        room_z = raw["zrange"]
+
+        def height_reject(fk, zr, rels):
+            """Why this element can't carry finish fk for THIS room, or None."""
+            if zr is not None and room_z is not None:
+                base, top = room_z
+                mid, tol = (base + top) / 2.0, 0.03     # tol ~ 1 cm
+                lo, hi = zr
+                if fk == "floor" and lo >= mid:
+                    return u"it is above the room (floor of the storey above)"
+                if fk == "ceiling" and hi <= mid:
+                    return u"it is below the room (ceiling of the storey below)"
+                if fk in ("wall", "base") and (lo >= top - tol or hi <= base + tol):
+                    return u"it is outside the room height (belongs to another storey)"
+                return None
             pos = POSITION_GUARD.get(fk)
             if pos and rels == set([pos]):
-                fins[fk]["notes"].append(
-                    u"{} on {} {} is ignored: that element only bounds the room from {} "
-                    u"(it belongs to the adjacent room).".format(
-                        norm, item["cat"], item["id"], u"above" if pos == "top" else u"below"))
+                return u"it only bounds the room from {}".format(u"above" if pos == "top" else u"below")
+            return None
+
+        def route(norm, fk, item, cat_id, rels, zr=None):
+            """Put one classified keynote into its finish; returns True if used."""
+            why = height_reject(fk, zr, rels)
+            if why:
+                fins[fk]["notes"].append(u"{} on {} {} is ignored: {}.".format(
+                    norm, item["cat"], item["id"], why))
                 return False
             fins[fk]["keys"].append(norm)
             if cat_id not in EXPECTED_CATEGORIES[fk]:
@@ -797,17 +969,21 @@ class Scanner(object):
             dk, el, rels = e["doc_key"], e["elem"], e["rels"]
             item = self._base_item(dk, el, rels)
             found, why = self.element_keys(dk, el, e["mats"])
+            # elements only found by position (in the room / geometric search)
+            # are candidates, not boundaries: no "missing Keynote" noise
+            bounding = rels - set(["inside", "surface"])
             if not found:
-                if rels - set(["inside"]):
+                if bounding:
                     issues.append(dict(item, msg=u"Keynote missing ({})".format(why)))
                 continue
+            zr = self.elem_zrange(dk, el)
             used = OrderedDict()
             ignored = []
             for kn, src in found:
                 norm, fk = classify(kn)
                 if fk is None:
                     ignored.append(norm)
-                elif route(norm, fk, item, cat_int(el), rels):
+                elif route(norm, fk, item, cat_int(el), rels, zr):
                     used.setdefault(fk, []).append((norm, src))
             for fk, lst in used.items():
                 fins[fk]["items"].append(dict(item, kn=unique_sorted(k for k, _ in lst),
@@ -815,7 +991,7 @@ class Scanner(object):
                 if fk == "ceiling":
                     fr_top_area += e["top_area"]
                     fr_keys.add(key)
-            if ignored and not used and rels - set(["inside"]):
+            if ignored and not used and bounding:
                 others.append(dict(item, kn=unique_sorted(ignored),
                                    msg=u"prefix is not RD / FR / RE / PI - ignored"))
 
@@ -857,6 +1033,10 @@ class Scanner(object):
         if err:
             for fk in ("floor", "ceiling", "base"):
                 fins[fk]["notes"].append(u"Room geometry could not be calculated: " + err)
+        if raw["search_error"]:
+            for fk in FINISH_PARAMS:
+                if fins[fk]["state"] == "missing":
+                    fins[fk]["notes"].append(u"Geometric search of the room surfaces failed: " + raw["search_error"])
         if fins["wall"]["state"] == "missing":
             if not raw["walls"]:
                 fins["wall"]["notes"].append(u"No Wall bounds this room{}.".format(
@@ -873,14 +1053,11 @@ class Scanner(object):
         if not err:
             total = raw["top_total"]
             if fins["ceiling"]["state"] == "missing":
-                if total > 0 and raw["top_free"] >= total * CEILING_FULL_COVERAGE:
-                    fins["ceiling"]["notes"].append(
-                        u"Room top is not bounded by any element. If the room has a ceiling, raise the "
-                        u"room Upper Limit / Limit Offset above it.")
-                else:
-                    above = cats_with("top")
-                    fins["ceiling"]["notes"].append(u"No Keynote starting with FR. Above the room: {}.".format(
-                        u", ".join(above) or u"nothing"))
+                above = cats_with("top")
+                fins["ceiling"]["notes"].append(
+                    u"No Keynote starting with FR on the room surfaces or up to {:.2f} m above the room top "
+                    u"(room top bounded by: {}). If the ceiling is higher, raise the room Upper Limit / "
+                    u"Limit Offset or SEARCH_ABOVE_M.".format(SEARCH_ABOVE_M, u", ".join(above) or u"nothing"))
             elif fr_top_area > 0 and total > 0 and fr_top_area / total < CEILING_FULL_COVERAGE:
                 rest = []
                 other_top = cats_with("top", fr_keys)
@@ -894,7 +1071,8 @@ class Scanner(object):
         if fins["base"]["state"] == "missing":
             fins["base"]["notes"].append(
                 u"No Keynote starting with RD (checked: bounding elements, sweeps on the room-facing "
-                u"side of the bounding walls, sweeps in wall types, family instances in the room).")
+                u"side of the bounding walls, sweeps in wall types, family instances in the room, "
+                u"elements on the room surfaces).")
         linked = len([1 for (dk, _) in raw["walls"] if dk])
         if linked:
             fins["base"]["notes"].append(u"{} linked wall(s): their sweeps are not evaluated.".format(linked))
