@@ -1,0 +1,585 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Element QA/QC</title>
+<style>
+  :root{
+    --bg:#070C16; --panel:rgba(255,255,255,.028); --line:rgba(101,227,255,.22);
+    --grid:rgba(101,227,255,.05); --ink:#D9E8F5; --dim:#7A8FA9;
+    --cy:#65E3FF; --teal:#3DDCB4; --amber:#FFB454; --mag:#FF4F9A; --violet:#9D8CFF;
+  }
+  *{box-sizing:border-box; margin:0; padding:0}
+  body{
+    background:
+      repeating-linear-gradient(0deg, var(--grid) 0 1px, transparent 1px 48px),
+      repeating-linear-gradient(90deg, var(--grid) 0 1px, transparent 1px 48px),
+      radial-gradient(1200px 600px at 15% -10%, #0D1B33 0%, var(--bg) 55%);
+    color:var(--ink); font-family:"Bahnschrift","Segoe UI",system-ui,sans-serif;
+    padding:36px clamp(16px,4vw,56px) 80px; min-height:100vh;
+  }
+  .mono{font-family:Consolas,"Cascadia Mono",monospace}
+  header{display:flex; justify-content:space-between; align-items:flex-end;
+    border-bottom:1px solid var(--line); padding-bottom:18px; margin-bottom:28px}
+  .eyebrow{font-size:11px; letter-spacing:.45em; color:var(--cy); text-transform:uppercase}
+  h1{font-size:clamp(22px,3vw,36px); font-weight:600; letter-spacing:.04em; margin-top:6px}
+  h1 span{color:var(--dim); font-weight:300}
+  .stamp{text-align:right; font-size:11px; color:var(--dim); letter-spacing:.12em; line-height:1.8}
+  .stamp b{color:var(--teal); font-weight:600}
+  h2{font-size:12px; letter-spacing:.4em; text-transform:uppercase; color:var(--dim);
+    margin:0 0 16px; display:flex; align-items:center; gap:12px}
+  h2::after{content:""; flex:1; height:1px; background:var(--line)}
+
+  .cards{display:grid; grid-template-columns:repeat(auto-fit,minmax(160px,1fr)); gap:14px; margin-bottom:36px}
+  .card{background:var(--panel); border:1px solid var(--line); border-radius:4px;
+    padding:18px 16px 14px; position:relative; overflow:hidden}
+  .card::before{content:""; position:absolute; top:0; left:0; width:100%; height:2px;
+    background:linear-gradient(90deg, var(--c,var(--cy)), transparent 70%)}
+  .card .v{font-size:32px; font-weight:600; color:var(--c,var(--cy)); font-variant-numeric:tabular-nums}
+  .card .v small{font-size:14px; color:var(--dim); font-weight:400}
+  .card .l{font-size:10px; letter-spacing:.28em; text-transform:uppercase; color:var(--dim); margin-top:8px}
+
+  /* check chips */
+  .checkbar{display:flex; gap:10px; flex-wrap:wrap; align-items:center; margin-bottom:14px}
+  .chip{display:inline-flex; align-items:center; gap:8px; padding:7px 10px 7px 12px;
+    border:1px solid var(--line); border-radius:20px; font-size:12px; letter-spacing:.05em;
+    background:rgba(101,227,255,.05); color:var(--ink)}
+  .chip.missing{border-color:rgba(255,79,154,.5); background:rgba(255,79,154,.06); color:var(--mag)}
+  .chip .n{font-family:Consolas,monospace; font-size:11px; color:var(--dim)}
+  .chip .x{cursor:pointer; color:var(--dim); font-size:15px; line-height:1; padding:0 2px}
+  .chip .x:hover{color:var(--mag)}
+  .addwrap{position:relative}
+  .addwrap input{background:rgba(101,227,255,.04); border:1px dashed var(--line); border-radius:20px;
+    color:var(--cy); padding:8px 14px; font-size:12px; font-family:inherit; letter-spacing:.05em;
+    outline:none; min-width:230px}
+  .addwrap input:focus{border-color:var(--cy); border-style:solid}
+  .aclist{position:absolute; top:110%; left:0; right:0; z-index:20; max-height:230px; overflow-y:auto;
+    background:#0C1424; border:1px solid var(--line); border-radius:6px; display:none}
+  .aclist.open{display:block}
+  .aclist div{padding:7px 12px; font-size:12px; cursor:pointer; color:var(--ink)}
+  .aclist div:hover, .aclist div.active{background:rgba(101,227,255,.12); color:var(--cy)}
+  .aclist .none{color:var(--dim); cursor:default}
+  .toolrow{display:flex; gap:12px; align-items:center; margin:6px 0 20px; flex-wrap:wrap}
+  .btn{background:transparent; border:1px solid var(--line); border-radius:3px; color:var(--cy);
+    font-family:inherit; font-size:11px; letter-spacing:.15em; text-transform:uppercase;
+    padding:9px 14px; cursor:pointer; outline:none; display:inline-block}
+  .btn:hover{border-color:var(--cy); background:rgba(101,227,255,.12)}
+  .count{font-size:11px; color:var(--dim); letter-spacing:.15em; margin-left:auto}
+
+  table{width:100%; border-collapse:collapse; font-size:13px}
+  th{font-size:10px; letter-spacing:.25em; text-transform:uppercase; color:var(--cy);
+    text-align:left; padding:10px 12px; border-bottom:1px solid var(--line);
+    cursor:pointer; user-select:none; white-space:nowrap}
+  th .dir{color:var(--amber)}
+  td{padding:8px 12px; border-bottom:1px solid rgba(255,255,255,.05); color:var(--ink); vertical-align:top}
+  td.num{font-variant-numeric:tabular-nums; text-align:right}
+  tr:hover td{background:rgba(101,227,255,.05)}
+  .tag{display:inline-block; padding:2px 8px; border:1px solid var(--line); border-radius:2px;
+    font-size:11px; color:var(--dim)}
+  .miss{display:inline-block; margin:2px 4px 2px 0; padding:2px 8px; border-radius:2px;
+    background:rgba(255,79,154,.12); border:1px solid rgba(255,79,154,.4); color:var(--mag); font-size:11px}
+  /* value cells in the always-on element table */
+  td.val{color:var(--ink)}
+  td.val.blank{background:rgba(255,79,154,.10)}
+  td.val.blank::after{content:"- empty -"; color:var(--mag); font-size:11px; letter-spacing:.05em}
+  td.val.absent::after{content:"n/a"; color:var(--dim); font-size:11px}
+  .rowflag{color:var(--mag); font-size:11px; letter-spacing:.1em}
+  .rowok{color:var(--teal); font-size:13px}
+  /* show-only-issues toggle */
+  .vtoggle{display:inline-flex; align-items:center; gap:7px; font-size:11px; letter-spacing:.12em;
+    text-transform:uppercase; color:var(--dim); cursor:pointer; user-select:none}
+  .vtoggle input{accent-color:var(--cy); cursor:pointer}
+  .ok-badge{color:var(--teal); letter-spacing:.1em}
+  .empty{text-align:center; padding:50px 0; color:var(--teal); letter-spacing:.2em}
+  /* help icon + hover tooltip */
+  .help{position:relative; display:inline-flex; align-items:center; justify-content:center;
+    width:22px; height:22px; border-radius:50%; border:1px solid var(--line);
+    color:var(--cy); font-size:13px; cursor:help; user-select:none; flex:none;
+    background:rgba(101,227,255,.05)}
+  .help:hover{border-color:var(--cy); background:rgba(101,227,255,.15)}
+  .help .tip{position:absolute; top:130%; left:0; z-index:40; width:420px; max-width:78vw;
+    background:#0C1424; border:1px solid var(--line); border-radius:8px; padding:14px 16px;
+    font-size:12px; line-height:1.65; color:var(--dim); letter-spacing:.02em;
+    text-transform:none; box-shadow:0 8px 30px rgba(0,0,0,.5);
+    opacity:0; visibility:hidden; transform:translateY(-4px); transition:all .15s; text-align:left}
+  .help:hover .tip{opacity:1; visibility:visible; transform:translateY(0)}
+  .help .tip b{color:var(--ink)}
+  .help .tip .cy{color:var(--cy)}
+  .help .tip .path{color:var(--teal); font-family:Consolas,monospace; word-break:break-all}
+  /* ---- Model Health hero (score gauge + letter grade) ---- */
+  .health{display:flex; gap:34px; align-items:center; flex-wrap:wrap;
+    background:var(--panel); border:1px solid var(--line); border-radius:6px;
+    padding:24px 30px; margin-bottom:26px; position:relative; overflow:hidden}
+  .health::before{content:""; position:absolute; top:0; left:0; bottom:0; width:3px;
+    background:linear-gradient(var(--hc,var(--cy)), transparent)}
+  .gauge{width:184px; height:184px; flex:none; position:relative}
+  .gauge .pctv{position:absolute; inset:0; display:flex; flex-direction:column;
+    align-items:center; justify-content:center}
+  .gauge .pctv b{font-size:38px; font-weight:600; color:var(--hc,var(--cy));
+    font-variant-numeric:tabular-nums; line-height:1}
+  .gauge .pctv small{font-size:9px; letter-spacing:.3em; color:var(--dim);
+    text-transform:uppercase; margin-top:7px}
+  .hbody{flex:1; min-width:250px}
+  .hgrade{display:flex; align-items:center; gap:18px}
+  .hgrade .lg{font-size:78px; font-weight:700; line-height:.85; color:var(--hc,var(--cy));
+    letter-spacing:.02em; text-shadow:0 0 34px var(--hc,var(--cy))}
+  .hgrade .lab{font-size:11px; letter-spacing:.38em; text-transform:uppercase;
+    color:var(--dim); line-height:1.7}
+  .hverdict{font-size:14px; color:var(--ink); margin:12px 0 16px; letter-spacing:.02em}
+  .hchecks{display:flex; flex-direction:column; gap:7px; max-width:540px}
+  .hcheck{display:flex; align-items:center; gap:12px; font-size:12px}
+  .hcheck .cn{width:130px; color:var(--dim); letter-spacing:.05em; flex:none;
+    white-space:nowrap; overflow:hidden; text-overflow:ellipsis}
+  .hcheck .tr{flex:1; height:6px; background:rgba(255,255,255,.06); border-radius:3px; overflow:hidden}
+  .hcheck .fl{height:100%; border-radius:3px; width:0;
+    transition:width 1s cubic-bezier(.2,.7,.2,1)}
+  .hcheck .pv{width:44px; text-align:right; font-family:Consolas,monospace; font-size:11px;
+    color:var(--dim); flex:none}
+
+  footer{margin-top:60px; font-size:10px; letter-spacing:.3em; color:var(--dim);
+    text-transform:uppercase; text-align:center}
+</style>
+</head>
+<body>
+<header>
+  <div>
+    <div class="eyebrow" id="eyebrow">QA · QC</div>
+    <h1 id="proj"></h1>
+  </div>
+  <div class="stamp mono">GENERATED <b id="stamp"></b><br>SOURCE <b>REVIT · PYREVIT</b></div>
+</header>
+
+<div class="health" id="health"></div>
+
+<div class="cards" id="cards"></div>
+
+<h2>Parameter Checks</h2>
+<div class="checkbar" id="chips"></div>
+<div class="toolrow">
+  <div class="addwrap">
+    <input id="addparam" type="text" placeholder="+ add parameter to check…" autocomplete="off">
+    <div class="aclist" id="aclist"></div>
+  </div>
+  <button class="btn" id="exportBtn">&#x2913; Export (.xlsx)</button>
+  <button class="btn" id="saveChecksBtn" title="Download your current set of checks so it loads automatically next time">&#x2913; Save checks</button>
+  <button class="btn" id="resetChecksBtn" title="Clear the saved set and go back to the default checks">&#x21bb; Reset checks</button>
+  <span class="help" id="helpIcon">?<span class="tip" id="helpTip"></span></span>
+  <label class="vtoggle" style="margin-left:auto"><input type="checkbox" id="onlyIssues"> Only items with issues</label>
+  <span class="count" id="count"></span>
+</div>
+
+<div id="tableWrap"></div>
+
+<footer>Element QA/QC · generated locally · no data leaves this machine</footer>
+
+<script>
+const DATA = __DATA__;
+const elements = DATA.elements;
+const PARAM_NAMES = DATA.paramNames;
+const CATEGORY = DATA.category || "Elements";       // e.g. "Rooms", "Doors"
+const NOUN = CATEGORY;                                // used in card / count labels
+const ID_LABEL = DATA.idLabel || "Mark";             // identity column header
+const ID_COLUMN = DATA.idColumn || "ElementID";      // export id column header
+const fmt = n => n.toLocaleString(undefined,{maximumFractionDigits:0});
+const esc = s => String(s==null?"":s).replace(/[&<>"]/g,m=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[m]));
+
+document.getElementById("eyebrow").textContent = CATEGORY + " Analytics // QA · QC";
+document.getElementById("proj").innerHTML =
+  esc(DATA.project.replace(/\.rvt$/i,"")) + ' <span>/ ' + esc(CATEGORY) + ' · qa · qc</span>';
+document.getElementById("stamp").textContent = DATA.generated;
+document.title = CATEGORY + " QA/QC";
+
+// fill the help tooltip (moved out of the always-on paragraph)
+(function(){
+  const tip = document.getElementById("helpTip");
+  if(!tip) return;
+  const folder = DATA.checksFolder ? esc(DATA.checksFolder) : "the pyRevit data folder";
+  const noun = esc(NOUN.toLowerCase());
+  tip.innerHTML =
+    '<b>Export & write-back:</b> the export includes <b>every ' + noun + ' item</b>, one column per selected check '
+    + 'holding each item’s current value (blank where missing). Edit any value - fill blanks, '
+    + 'change existing ones, or clear a cell to empty it - then use the '
+    + '<b class="cy">Update from Excel</b> button in Revit to write it back. Keep the '
+    + '<b>' + esc(ID_COLUMN) + '</b> column intact; that’s how rows are matched.<br><br>'
+    + '<b>Saving checks:</b> click <b class="cy">Save checks</b>, then move the downloaded '
+    + '<b>qaqc_checks.json</b> into:<br><span class="path">' + folder + '</span><br>'
+    + 'It loads automatically next time for <b>' + esc(CATEGORY) + '</b>. (A file left in Downloads is picked up once.) '
+    + 'Use <b class="cy">Reset checks</b> to clear the saved set and return to the defaults.';
+})();
+
+/* ---- checks: load saved set if present, else category defaults ---- */
+// DATA.savedChecks is injected by the Python script from the per-category
+// qaqc_checks file if it exists. Stored as display names; matched
+// case-insensitively against element params.
+let checks = (Array.isArray(DATA.savedChecks) && DATA.savedChecks.length)
+  ? DATA.savedChecks.slice()
+  : DATA.defaultChecks.slice();
+let sortK = "number", sortDir = 1;
+
+// case-insensitive param lookup: returns the value if the element has the param, else null (param absent)
+function elemValue(elem, checkName){
+  const target = checkName.toLowerCase();
+  for(const k in elem.params){
+    if(k.toLowerCase() === target) return elem.params[k];
+  }
+  return null; // parameter not present on this element at all
+}
+// does this category have this parameter on ANY element?
+function paramExistsSomewhere(checkName){
+  const t = checkName.toLowerCase();
+  return elements.some(r => Object.keys(r.params).some(k => k.toLowerCase() === t));
+}
+// is a given check "missing" for an element?
+// An element fails a check only when the parameter APPLIES to it (the element
+// actually has that parameter) but the value is blank. A parameter that is
+// absent from the element does not apply - e.g. a door has no "Department", a
+// room has no "Fire Rating" - so it is never counted as missing. This keeps the
+// health score honest: each element is judged only on the parameters it should
+// carry, which is what makes the fixed model climb from E to A.
+function isMissing(elem, checkName){
+  const v = elemValue(elem, checkName);
+  if(v == null) return false;                 // parameter not applicable to this element
+  return String(v).trim() === "";             // applicable, but left blank
+}
+// which checks does this element fail?
+function missingList(elem){ return checks.filter(c => isMissing(elem, c)); }
+
+// completeness of ONE check = share of the elements it APPLIES to whose value
+// is filled. Denominator is only the elements that carry the parameter, so a
+// check is never dragged down by elements it was never meant to apply to.
+function checkCompleteness(checkName){
+  const applicable = elements.filter(r => elemValue(r, checkName) !== null);
+  if(!applicable.length) return 1;
+  const filled = applicable.filter(r => String(elemValue(r, checkName)).trim() !== "").length;
+  return filled / applicable.length;
+}
+
+function renderCards(){
+  const flagged = elements.filter(r => missingList(r).length > 0).length;
+  const complete = elements.length - flagged;
+  // Completeness = AVERAGE fill-rate across the selected parameters that
+  // actually exist in this model (each parameter weighted equally), rather
+  // than the share of elements that pass every single check. So one empty
+  // parameter no longer forces the whole score to 0%.
+  const presentChecks = checks.filter(paramExistsSomewhere);
+  const pct = presentChecks.length
+    ? 100 * presentChecks.reduce((a,c) => a + checkCompleteness(c), 0) / presentChecks.length
+    : 100;
+  const cards = [
+    {v:elements.length, l:NOUN+" checked", c:"var(--cy)"},
+    {v:flagged, l:NOUN+" with issues", c: flagged?"var(--mag)":"var(--teal)"},
+    {v:complete, l:NOUN+" complete", c:"var(--teal)"},
+    {v:pct.toFixed(1)+"%", l:"Completeness", c: pct>=99?"var(--teal)":(pct>=90?"var(--amber)":"var(--mag)")},
+  ];
+  document.getElementById("cards").innerHTML = cards.map(m=>
+    `<div class="card" style="--c:${m.c}"><div class="v">${typeof m.v==="number"?fmt(m.v):m.v}</div>
+     <div class="l">${esc(m.l)}</div></div>`).join("");
+}
+
+/* ---- Model Health hero: score gauge + letter grade ----
+   Score = average fill-rate across the selected checks that exist in the model
+   (same basis as the Completeness card). Grade bands turn the number into the
+   headline the workshop is built around: run it, get a red E; fix the model,
+   re-run, watch it climb to a green A. */
+function computeHealth(){
+  const present = checks.filter(paramExistsSomewhere);
+  const per = present.map(c => ({name:c, pct:100*checkCompleteness(c)}));
+  const pct = per.length ? per.reduce((a,p)=>a+p.pct,0)/per.length : 100;
+  return {pct, per};
+}
+function gradeFor(p){
+  if(p>=90) return {g:"A", c:"var(--teal)",  v:"Model health is strong - data is essentially complete."};
+  if(p>=80) return {g:"B", c:"var(--teal)",  v:"Good - a few gaps left to close."};
+  if(p>=70) return {g:"C", c:"var(--amber)", v:"Fair - several parameters are still missing."};
+  if(p>=60) return {g:"D", c:"var(--amber)", v:"Weak - many parameters are missing."};
+  return       {g:"E", c:"var(--mag)",    v:"Needs attention - the model data is largely incomplete."};
+}
+function renderHealth(){
+  const el = document.getElementById("health");
+  if(!el) return;
+  const {pct, per} = computeHealth();
+  const gr = gradeFor(pct);
+  el.style.setProperty("--hc", gr.c);
+  const R=78, CIRC=2*Math.PI*R, arc=Math.max(0,Math.min(1,pct/100))*CIRC;
+  el.innerHTML =
+    `<div class="gauge">
+       <svg viewBox="0 0 184 184" width="184" height="184">
+         <circle cx="92" cy="92" r="${R}" fill="none" stroke="rgba(255,255,255,.06)" stroke-width="12"/>
+         <circle id="hgArc" cx="92" cy="92" r="${R}" fill="none" stroke="${gr.c}" stroke-width="12"
+           stroke-linecap="round" transform="rotate(-90 92 92)"
+           stroke-dasharray="${CIRC.toFixed(1)}" stroke-dashoffset="${CIRC.toFixed(1)}"/>
+       </svg>
+       <div class="pctv"><b id="hgPct">0%</b><small>Health</small></div>
+     </div>
+     <div class="hbody">
+       <div class="hgrade"><span class="lg">${gr.g}</span>
+         <span class="lab">Model<br>Health<br>Grade</span></div>
+       <div class="hverdict">${esc(gr.v)}</div>
+       <div class="hchecks">${per.map(p=>{
+         const col = p.pct>=90?"var(--teal)":(p.pct>=60?"var(--amber)":"var(--mag)");
+         return `<div class="hcheck"><span class="cn">${esc(p.name)}</span>
+           <span class="tr"><span class="fl" style="background:${col}" data-w="${p.pct.toFixed(0)}"></span></span>
+           <span class="pv">${p.pct.toFixed(0)}%</span></div>`;
+       }).join("")}</div>
+     </div>`;
+  const reduce = matchMedia("(prefers-reduced-motion: reduce)").matches;
+  const arcEl = document.getElementById("hgArc");
+  const pctEl = document.getElementById("hgPct");
+  const bars  = el.querySelectorAll(".hcheck .fl");
+  if(reduce){
+    arcEl.style.strokeDashoffset = (CIRC-arc).toFixed(1);
+    pctEl.textContent = pct.toFixed(0)+"%";
+    bars.forEach(b=>b.style.width = b.dataset.w+"%");
+    return;
+  }
+  requestAnimationFrame(()=>{
+    arcEl.style.transition = "stroke-dashoffset 1.1s cubic-bezier(.2,.7,.2,1)";
+    arcEl.style.strokeDashoffset = (CIRC-arc).toFixed(1);
+    bars.forEach(b=>b.style.width = b.dataset.w+"%");
+  });
+  const t0=performance.now(), dur=1100;
+  (function tick(t){ const p=Math.min(1,(t-t0)/dur), e=1-Math.pow(1-p,3);
+    pctEl.textContent=(pct*e).toFixed(0)+"%"; if(p<1) requestAnimationFrame(tick); })(t0);
+}
+
+function renderChips(){
+  const chips = document.getElementById("chips");
+  if(!checks.length){
+    chips.innerHTML = `<span class="count" style="margin:0">No checks active - add a parameter to begin.</span>`;
+    return;
+  }
+  chips.innerHTML = checks.map(c=>{
+    const n = elements.filter(r => isMissing(r, c)).length;
+    const absent = !paramExistsSomewhere(c);
+    const cls = n>0 ? "chip missing" : "chip";
+    const note = absent ? `<span class="n" title="No element in this category has this parameter">not present</span>`
+                        : `<span class="n">${n} empty</span>`;
+    return `<span class="${cls}">${esc(c)} ${note}
+      <span class="x" data-remove="${esc(c)}" title="Remove check">×</span></span>`;
+  }).join("");
+  chips.querySelectorAll("[data-remove]").forEach(x=>{
+    x.onclick = ()=>{ checks = checks.filter(c => c !== x.getAttribute("data-remove")); renderAll(); };
+  });
+}
+
+function renderTable(){
+  const wrap = document.getElementById("tableWrap");
+  if(!checks.length){
+    wrap.innerHTML = `<div class="empty" style="color:var(--dim)">Add a parameter to check to see the ${esc(NOUN.toLowerCase())} list.</div>`;
+    document.getElementById("count").textContent = "";
+    return;
+  }
+  const onlyIssues = document.getElementById("onlyIssues").checked;
+  let list = elements.slice();
+  if(onlyIssues) list = list.filter(r => missingList(r).length > 0);
+
+  // sort: by identity column, missing count, or a specific parameter's value
+  list.sort((a,b)=>{
+    let x, y;
+    if(sortK === "count"){ x = missingList(a).length; y = missingList(b).length; }
+    else if(sortK.indexOf("param:") === 0){
+      const pn = sortK.slice(6);
+      x = elemValue(a, pn) || ""; y = elemValue(b, pn) || "";
+    }
+    else { x = a[sortK]; y = b[sortK]; }
+    return (typeof x === "number" ? x-y
+      : String(x).localeCompare(String(y),undefined,{numeric:true})) * sortDir;
+  });
+
+  const flaggedTotal = elements.filter(r => missingList(r).length > 0).length;
+  document.getElementById("count").textContent =
+    list.length + " / " + elements.length + " " + NOUN.toUpperCase() + (onlyIssues ? " (ISSUES)" : "")
+    + " · " + flaggedTotal + " FLAGGED";
+
+  const arrow = k => sortK===k ? ` <span class="dir">${sortDir>0?"▲":"▼"}</span>` : "";
+  // one column per selected check, plus a status column
+  const paramHeads = checks.map(c=>`<th data-k="param:${esc(c)}">${esc(c)}${arrow("param:"+c)}</th>`).join("");
+  const head = `<tr>
+    <th data-k="number">${esc(ID_LABEL)}${arrow("number")}</th>
+    <th data-k="name">Name${arrow("name")}</th>
+    <th data-k="level">Level${arrow("level")}</th>
+    ${paramHeads}
+    <th data-k="count">Status${arrow("count")}</th></tr>`;
+
+  const body = list.map(r=>{
+    const valCells = checks.map(c=>{
+      const v = elemValue(r, c);
+      if(v == null) return `<td class="val absent"></td>`;         // param not on this element
+      if(String(v).trim() === "") return `<td class="val blank"></td>`; // present but empty
+      return `<td class="val">${esc(v)}</td>`;
+    }).join("");
+    const miss = missingList(r);
+    const status = miss.length
+      ? `<span class="rowflag">${miss.length} missing</span>`
+      : `<span class="rowok">✓</span>`;
+    return `<tr>
+      <td class="mono">${esc(r.number)||"-"}</td>
+      <td>${esc(r.name)||"-"}</td>
+      <td><span class="tag">${esc(r.level)}</span></td>
+      ${valCells}
+      <td class="num">${status}</td></tr>`;
+  }).join("");
+
+  wrap.innerHTML = `<table><thead>${head}</thead><tbody>${body}</tbody></table>`;
+  wrap.querySelectorAll("th[data-k]").forEach(th=>{
+    th.onclick = ()=>{ const k = th.dataset.k;
+      sortDir = (sortK===k)? -sortDir : 1; sortK = k; renderTable(); };
+  });
+}
+
+function renderAll(){ renderHealth(); renderCards(); renderChips(); renderTable(); }
+document.getElementById("onlyIssues").addEventListener("change", renderTable);
+
+/* ---- add-parameter box with autocomplete over real parameter names ---- */
+const addInput = document.getElementById("addparam");
+const acList = document.getElementById("aclist");
+let acItems = [], acIdx = -1;
+
+function openAc(){
+  const q = addInput.value.trim().toLowerCase();
+  // suggest params not already checked; match substring
+  const pool = PARAM_NAMES.filter(p =>
+    !checks.some(c => c.toLowerCase() === p.toLowerCase()));
+  acItems = (q ? pool.filter(p => p.toLowerCase().includes(q)) : pool).slice(0, 60);
+  acIdx = -1;
+  if(!acItems.length){
+    acList.innerHTML = `<div class="none">${q ? "no matching parameter - press Enter to add anyway" : "no more parameters"}</div>`;
+  }else{
+    acList.innerHTML = acItems.map((p,i)=>`<div data-i="${i}">${esc(p)}</div>`).join("");
+    acList.querySelectorAll("[data-i]").forEach(d=>{
+      d.onmousedown = e=>{ e.preventDefault(); addCheck(acItems[+d.dataset.i]); };
+    });
+  }
+  acList.classList.add("open");
+}
+function closeAc(){ acList.classList.remove("open"); }
+function addCheck(name){
+  name = (name||"").trim();
+  if(!name) return;
+  if(!checks.some(c => c.toLowerCase() === name.toLowerCase())) checks.push(name);
+  addInput.value = ""; closeAc(); renderAll();
+}
+addInput.addEventListener("focus", openAc);
+addInput.addEventListener("input", openAc);
+addInput.addEventListener("blur", ()=>setTimeout(closeAc, 150));
+addInput.addEventListener("keydown", e=>{
+  if(e.key === "ArrowDown"){ e.preventDefault(); acIdx = Math.min(acIdx+1, acItems.length-1); hlAc(); }
+  else if(e.key === "ArrowUp"){ e.preventDefault(); acIdx = Math.max(acIdx-1, 0); hlAc(); }
+  else if(e.key === "Enter"){ e.preventDefault();
+    addCheck(acIdx>=0 && acItems[acIdx] ? acItems[acIdx] : addInput.value); }
+  else if(e.key === "Escape"){ closeAc(); }
+});
+function hlAc(){
+  acList.querySelectorAll("[data-i]").forEach((d,i)=>
+    d.classList.toggle("active", i===acIdx));
+}
+
+/* ---- export elements to .xlsx (self-contained, no library) ---- */
+const CRC_TABLE = (()=>{ const t=new Uint32Array(256);
+  for(let n=0;n<256;n++){let c=n;for(let k=0;k<8;k++)c=(c&1)?(0xEDB88320^(c>>>1)):(c>>>1);t[n]=c>>>0;}
+  return t; })();
+function crc32(b){let c=0xFFFFFFFF;for(let i=0;i<b.length;i++)c=CRC_TABLE[(c^b[i])&0xFF]^(c>>>8);return (c^0xFFFFFFFF)>>>0;}
+const encB = s => new TextEncoder().encode(s);
+function xmlEsc(s){return String(s).replace(/[<>&"']/g,m=>({"<":"&lt;",">":"&gt;","&":"&amp;",'"':"&quot;","'":"&apos;"}[m]));}
+function colRef(i){let s="";i++;while(i>0){const m=(i-1)%26;s=String.fromCharCode(65+m)+s;i=(i-m-1)/26|0;}return s;}
+function sheetXml(rowsArr){
+  let body="";
+  rowsArr.forEach((row,r)=>{ let cells="";
+    row.forEach((cell,c)=>{ const ref=colRef(c)+(r+1);
+      if(cell==null||cell.v===""||cell.v==null) return;
+      // only emit a numeric cell if the value really is a finite number
+      const numeric = cell.n && typeof cell.v==="number" && isFinite(cell.v);
+      if(numeric) cells+=`<c r="${ref}"><v>${cell.v}</v></c>`;
+      else cells+=`<c r="${ref}" t="inlineStr"><is><t xml:space="preserve">${xmlEsc(cell.v)}</t></is></c>`;
+    });
+    body+=`<row r="${r+1}">${cells}</row>`; });
+  return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetData>${body}</sheetData></worksheet>`;
+}
+function buildXlsx(sheetName, rowsArr){
+  const parts=[
+    ["[Content_Types].xml",`<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/><Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/></Types>`],
+    ["_rels/.rels",`<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/></Relationships>`],
+    ["xl/workbook.xml",`<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets><sheet name="${xmlEsc(sheetName).slice(0,31)}" sheetId="1" r:id="rId1"/></sheets></workbook>`],
+    ["xl/_rels/workbook.xml.rels",`<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/></Relationships>`],
+    ["xl/worksheets/sheet1.xml", sheetXml(rowsArr)],
+  ];
+  const chunks=[], central=[]; let offset=0;
+  const u16=n=>[n&0xFF,(n>>8)&0xFF], u32=n=>[n&0xFF,(n>>8)&0xFF,(n>>16)&0xFF,(n>>24)&0xFF];
+  parts.forEach(([name,content])=>{
+    const nameB=encB(name), dataB=encB(content), crc=crc32(dataB);
+    const local=[].concat(u32(0x04034b50),u16(20),u16(0),u16(0),u16(0),u16(0),
+      u32(crc),u32(dataB.length),u32(dataB.length),u16(nameB.length),u16(0));
+    chunks.push(new Uint8Array(local),nameB,dataB);
+    central.push({nameB,crc,size:dataB.length,offset});
+    offset+=local.length+nameB.length+dataB.length;
+  });
+  const cdStart=offset, cd=[];
+  central.forEach(e=>{ const rec=[].concat(u32(0x02014b50),u16(20),u16(20),u16(0),u16(0),u16(0),u16(0),
+    u32(e.crc),u32(e.size),u32(e.size),u16(e.nameB.length),u16(0),u16(0),u16(0),u16(0),u32(0),u32(e.offset));
+    cd.push(new Uint8Array(rec),e.nameB); });
+  const cdBytes=cd.reduce((a,b)=>a+b.length,0);
+  const end=new Uint8Array([].concat(u32(0x06054b50),u16(0),u16(0),u16(central.length),u16(central.length),
+    u32(cdBytes),u32(cdStart),u16(0)));
+  return new Blob([...chunks,...cd,end],{type:"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"});
+}
+function downloadBlob(name,blob){ const a=document.createElement("a");
+  a.href=URL.createObjectURL(blob); a.download=name; document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(()=>URL.revokeObjectURL(a.href),1500); }
+
+document.getElementById("exportBtn").onclick = ()=>{
+  if(!checks.length){ alert("Add at least one parameter to check before exporting."); return; }
+  // Export EVERY element (so the file doubles as a bulk-edit sheet), with one
+  // column per SELECTED check holding each element's current value (blank if
+  // missing). Edit any value - filled or not - and re-import to update Revit.
+  const header = [ID_COLUMN, ID_LABEL, "Name", "Level", ...checks, "Missing count"];
+  const rowsArr = [ header.map(h=>({v:h,n:false})) ];
+  elements.forEach(r=>{
+    const row = [ {v:r.id,n:true}, {v:r.number,n:false}, {v:r.name,n:false}, {v:r.level,n:false} ];
+    checks.forEach(c=>{
+      const val = elemValue(r, c);              // null = param absent; "" = present but blank
+      row.push({v: (val==null?"":String(val)), n:false});
+    });
+    row.push({v: missingList(r).length, n:true});
+    rowsArr.push(row);
+  });
+  const proj=(DATA.project||"project").replace(/\.rvt$/i,"");
+  const catTag=CATEGORY.replace(/[^A-Za-z0-9]+/g,"_");
+  downloadBlob(proj+"_qaqc_"+catTag+".xlsx", buildXlsx("QA-QC "+CATEGORY, rowsArr));
+};
+
+/* ---- save current checks so they auto-load next time (per category) ----
+   Downloads a small JSON file tagged with the current category. Save it into
+   the folder the Python script watches (shown in the ? note), and next run it
+   loads these checks for THIS category instead of the defaults. ---- */
+document.getElementById("saveChecksBtn").onclick = ()=>{
+  if(!checks.length){ alert("No checks to save - add at least one parameter first."); return; }
+  const payload = JSON.stringify({ checks: checks, category: CATEGORY, saved: new Date().toISOString() }, null, 2);
+  const blob = new Blob([payload], {type:"application/json"});
+  // fixed filename the Python side looks for
+  downloadBlob("qaqc_checks.json", blob);
+  document.getElementById("count").textContent =
+    "Saved " + checks.length + " check(s) for " + CATEGORY + " → move qaqc_checks.json into the folder in ( ? )";
+};
+
+/* ---- reset: clear the saved set and return to defaults (per category) ----
+   Resets the browser view immediately, and downloads a qaqc_checks.json marked
+   as reset + tagged with this category. The Python side sees the reset flag,
+   deletes this category's stored set, and falls back to the defaults. ---- */
+document.getElementById("resetChecksBtn").onclick = ()=>{
+  checks = DATA.defaultChecks.slice();
+  renderAll();
+  const payload = JSON.stringify({ checks: [], reset: true, category: CATEGORY, saved: new Date().toISOString() }, null, 2);
+  downloadBlob("qaqc_checks.json", new Blob([payload], {type:"application/json"}));
+  document.getElementById("count").textContent =
+    "Reset " + CATEGORY + " to defaults → move qaqc_checks.json into the folder in ( ? ) to clear the saved set";
+};
+
+renderAll();
+</script>
+</body>
+</html>
