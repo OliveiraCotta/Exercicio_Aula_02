@@ -1,9 +1,9 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="pt-BR">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Room Finish Keynotes</title>
+<title>Acabamentos por Keynote</title>
 <style>
   :root{
     --bg:#070C16; --panel:rgba(255,255,255,.028); --line:rgba(101,227,255,.22);
@@ -111,76 +111,78 @@
 <body>
 <header>
   <div>
-    <div class="eyebrow">Room Finishes // Keynote Automation</div>
+    <div class="eyebrow">Acabamentos dos ambientes // Automação por Keynote</div>
     <h1 id="proj"></h1>
   </div>
-  <div class="stamp mono">GENERATED <b id="stamp"></b><br>SOURCE <b>REVIT · PYREVIT</b></div>
+  <div class="stamp mono">GERADO EM <b id="stamp"></b><br>ORIGEM <b>REVIT · PYREVIT</b></div>
 </header>
 
 <div id="banner"></div>
 <div class="cards" id="cards"></div>
 
-<h2>Rooms</h2>
+<h2>Ambientes</h2>
 <div class="filters">
-  <div class="f wide"><label for="q">Search</label><input id="q" type="search" placeholder="number, name, keynote, element id…" autocomplete="off"></div>
-  <div class="f"><label for="fNumber">Room Number</label><input id="fNumber" type="text" placeholder="e.g. 101" autocomplete="off"></div>
-  <div class="f"><label for="fLevel">Level</label><select id="fLevel"></select></div>
-  <div class="f"><label for="fStatus">Status</label><select id="fStatus"></select></div>
-  <div class="f"><label for="f_wall">Wall Finish</label><select id="f_wall"></select></div>
-  <div class="f"><label for="f_floor">Floor Finish</label><select id="f_floor"></select></div>
-  <div class="f"><label for="f_ceiling">Ceiling Finish</label><select id="f_ceiling"></select></div>
-  <div class="f"><label for="f_base">Base Finish</label><select id="f_base"></select></div>
+  <div class="f wide"><label for="q">Buscar</label><input id="q" type="search" placeholder="número, nome, keynote, id do elemento…" autocomplete="off"></div>
+  <div class="f"><label for="fNumber">Número do ambiente</label><input id="fNumber" type="text" placeholder="ex.: 101" autocomplete="off"></div>
+  <div class="f"><label for="fLevel">Pavimento</label><select id="fLevel"></select></div>
+  <div class="f"><label for="fStatus">Situação</label><select id="fStatus"></select></div>
+  <div class="f"><label for="f_wall" title="Wall Finish">Acabamento de Parede</label><select id="f_wall"></select></div>
+  <div class="f"><label for="f_floor" title="Floor Finish">Acabamento de Piso</label><select id="f_floor"></select></div>
+  <div class="f"><label for="f_ceiling" title="Ceiling Finish">Acabamento de Forro</label><select id="f_ceiling"></select></div>
+  <div class="f"><label for="f_base" title="Base Finish">Rodapé</label><select id="f_base"></select></div>
 </div>
 <div class="toolrow">
-  <button class="btn" id="resetBtn">Reset filters</button>
+  <button class="btn" id="resetBtn">Limpar filtros</button>
   <span class="count" id="count"></span>
 </div>
 <div class="tablewrap" id="tableWrap"></div>
 
 <div id="unassigned"></div>
 <div class="meta" id="meta"></div>
-<footer>Room Finish Keynotes · generated locally · no data leaves this machine</footer>
+<footer>Acabamentos por Keynote · gerado localmente · nenhum dado sai deste computador</footer>
 
 <script>
 const DATA = __DATA__;
 const ROOMS = DATA.rooms || [];
 const FIN = ["wall","floor","ceiling","base"];
-const FIN_LABEL = {wall:"Wall Finish", floor:"Floor Finish", ceiling:"Ceiling Finish", base:"Base Finish"};
+const FIN_LABEL = {wall:"Acabamento de Parede", floor:"Acabamento de Piso", ceiling:"Acabamento de Forro", base:"Rodapé"};
+const FIN_PARAM = {wall:"Wall Finish", floor:"Floor Finish", ceiling:"Ceiling Finish", base:"Base Finish"};
+const STATUS_PT = {OK:"OK", WARNING:"Atenção", ERROR:"Erro"};
 const KN = DATA.keynotes || {};
 const esc = s => String(s==null?"":s).replace(/[&<>"]/g,m=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[m]));
-const fmt = n => n.toLocaleString();
+const fmt = n => n.toLocaleString("pt-BR");
 const natural = (a,b) => String(a).localeCompare(String(b), undefined, {numeric:true, sensitivity:"base"});
 
 document.getElementById("proj").innerHTML =
-  esc(String(DATA.project||"").replace(/\.rvt$/i,"")) + " <span>/ room finishes</span>";
+  esc(String(DATA.project||"").replace(/\.rvt$/i,"")) + " <span>/ acabamentos</span>";
 document.getElementById("stamp").textContent = DATA.generated || "";
 
 if((DATA.paramProblems||[]).length){
   document.getElementById("banner").innerHTML = `<div class="banner">${DATA.paramProblems.map(esc).join("<br>")}
-    <br>These parameters were reported but not written. Nothing is created automatically.</div>`;
+    <br>Esses parâmetros aparecem no relatório, mas não foram gravados. Nada é criado automaticamente.</div>`;
 }
 
 /* ---- stats: each is also a filter ---- */
 const hasBounds = r => r.boundary === "ok";
 const missing = k => r => hasBounds(r) && r.finishes[k].state !== "ok";
 const STATS = [
-  {k:"total",   l:"Total Rooms",                    c:"var(--cy)",     f: r => true},
-  {k:"updated", l:"Rooms updated",                  c:"var(--violet)", f: r => r.updated},
-  {k:"nobound", l:"Rooms without boundaries",       c:"var(--mag)",    f: r => !hasBounds(r)},
-  {k:"wall",    l:"Missing Wall Keynotes (RE)",     c:"var(--amber)",  f: missing("wall")},
-  {k:"floor",   l:"Missing Floor Keynotes (PI)",    c:"var(--amber)",  f: missing("floor")},
-  {k:"ceiling", l:"Missing Ceiling Keynotes (FR)",  c:"var(--amber)",  f: missing("ceiling")},
-  {k:"base",    l:"Missing Base Finish (RD)",       c:"var(--amber)",  f: missing("base")},
-  {k:"nokn",    l:"Rooms with elements without Keynote", c:"var(--mag)", f: r => hasBounds(r) && (r.issues||[]).length > 0},
-  {k:"mismatch",l:"Prefix / category mismatches",   c:"var(--mag)",    f: r => hasBounds(r) && FIN.some(k=>(r.finishes[k].mismatches||[]).length)},
-  {k:"complete",l:"Rooms with complete information",c:"var(--teal)",   f: r => r.status === "OK"},
+  {k:"total",   l:"Total de ambientes",                c:"var(--cy)",     f: r => true},
+  {k:"updated", l:"Ambientes atualizados",             c:"var(--violet)", f: r => r.updated},
+  {k:"nobound", l:"Ambientes sem contorno",            c:"var(--mag)",    f: r => !hasBounds(r)},
+  {k:"wall",    l:"Sem Keynote de parede (RE)",        c:"var(--amber)",  f: missing("wall")},
+  {k:"floor",   l:"Sem Keynote de piso (PI)",          c:"var(--amber)",  f: missing("floor")},
+  {k:"ceiling", l:"Sem Keynote de forro (FR)",         c:"var(--amber)",  f: missing("ceiling")},
+  {k:"base",    l:"Sem rodapé (RD)",                   c:"var(--amber)",  f: missing("base")},
+  {k:"nokn",    l:"Ambientes com elementos sem Keynote", c:"var(--mag)",  f: r => hasBounds(r) && (r.issues||[]).length > 0},
+  {k:"mismatch",l:"Inconsistências prefixo / categoria", c:"var(--mag)",  f: r => hasBounds(r) && FIN.some(k=>(r.finishes[k].mismatches||[]).length)},
+  {k:"complete",l:"Ambientes com informação completa", c:"var(--teal)",   f: r => r.status === "OK"},
 ];
 let statFilter = null;
 function renderCards(){
   document.getElementById("cards").innerHTML = STATS.map(s=>{
     const n = ROOMS.filter(s.f).length;
     return `<button class="card${statFilter===s.k?" on":""}" data-k="${s.k}" style="--c:${s.c}"
-      title="Click to show only these rooms"><div class="v">${fmt(n)}</div><div class="l">${esc(s.l)}</div></button>`;
+      title="Clique para mostrar só estes ambientes"><div class="v">${fmt(n)}</div><div class="l">${esc(s.l)}</div></button>`;
   }).join("");
   document.querySelectorAll(".card").forEach(b=>b.onclick=()=>{
     statFilter = (statFilter===b.dataset.k || b.dataset.k==="total") ? null : b.dataset.k;
@@ -193,11 +195,11 @@ function fillSelect(id, options){
   document.getElementById(id).innerHTML = options.map(([v,l])=>`<option value="${esc(v)}">${esc(l)}</option>`).join("");
 }
 const levels = [...new Set(ROOMS.map(r=>r.level))];         // rooms arrive sorted by elevation
-fillSelect("fLevel", [["","All levels"], ...levels.map(l=>[l,l])]);
-fillSelect("fStatus", [["","All"],["OK","OK"],["WARNING","Warning"],["ERROR","Error"]]);
+fillSelect("fLevel", [["","Todos os pavimentos"], ...levels.map(l=>[l,l])]);
+fillSelect("fStatus", [["","Todas"],["OK","OK"],["WARNING","Atenção"],["ERROR","Erro"]]);
 FIN.forEach(k=>{
   const keys = [...new Set(ROOMS.flatMap(r=>hasBounds(r)?r.finishes[k].keys:[]))].sort(natural);
-  fillSelect("f_"+k, [["","All"],["__issue","Missing"],["__diff","Differs from Revit value"],
+  fillSelect("f_"+k, [["","Todos"],["__issue","Ausente"],["__diff","Diferente do valor no Revit"],
     ...keys.map(x=>[x, x + (KN[x] ? " - " + KN[x] : "")])]);
 });
 
@@ -219,7 +221,7 @@ function matches(r){
     else if(!f.keys.includes(v)) return false;
   }
   if(q){
-    const hay = [r.number, r.name, r.level, r.status, r.id,
+    const hay = [r.number, r.name, r.level, STATUS_PT[r.status], r.id,
       ...FIN.flatMap(k=>[r.finishes[k].value, r.finishes[k].current, ...r.finishes[k].items.map(i=>i.id)]),
       ...(r.issues||[]).map(i=>i.id), ...(r.others||[]).flatMap(o=>[o.id, ...(o.kn||[])])]
       .join(" ").toLowerCase();
@@ -236,13 +238,13 @@ function finishCell(r, k){
   const f = r.finishes[k];
   let main = f.keys.length
     ? f.keys.map(x=>`<span class="kn" title="${esc(KN[x]||"")}">${esc(x)}</span>`).join("")
-    : `<span class="st missing">Missing</span>`;
+    : `<span class="st missing">Ausente</span>`;
   const flags = [...(f.mismatches||[]), ...(f.warnings||[])];
   if(flags.length) main += ` <span class="st partial" title="${esc(flags.join("\n"))}">!</span>`;
   let cur = "";
   if(f.current && f.current !== f.value){
-    cur = f.value ? `<span class="cur diff">in Revit: ${esc(f.current)}</span>`
-                  : `<span class="cur">in Revit: ${esc(f.current)} (kept)</span>`;
+    cur = f.value ? `<span class="cur diff">no Revit: ${esc(f.current)}</span>`
+                  : `<span class="cur">no Revit: ${esc(f.current)} (mantido)</span>`;
   }
   return main + cur;
 }
@@ -258,13 +260,13 @@ function renderTable(){
       return natural(x||"", y||"") * sortDir;
     });
   }
-  document.getElementById("count").textContent = `${list.length} / ${ROOMS.length} ROOMS`;
+  document.getElementById("count").textContent = `${list.length} / ${ROOMS.length} AMBIENTES`;
   const wrap = document.getElementById("tableWrap");
-  if(!list.length){ wrap.innerHTML = `<div class="empty">No room matches the filters.</div>`; return; }
+  if(!list.length){ wrap.innerHTML = `<div class="empty">Nenhum ambiente corresponde aos filtros.</div>`; return; }
   const arrow = k => sortK===k ? ` <span class="dir">${sortDir>0?"▲":"▼"}</span>` : "";
-  const cols = [["number","Room Number"],["name","Room Name"],["level","Level"],
-    ...FIN.map(k=>[k, FIN_LABEL[k]]),["status","Status"]];
-  const head = `<tr>${cols.map(([k,l])=>`<th data-k="${k}">${l}${arrow(k)}</th>`).join("")}</tr>`;
+  const cols = [["number","Número"],["name","Nome do ambiente"],["level","Pavimento"],
+    ...FIN.map(k=>[k, FIN_LABEL[k]]),["status","Situação"]];
+  const head = `<tr>${cols.map(([k,l])=>`<th data-k="${k}"${FIN_PARAM[k]?` title="Parâmetro ${FIN_PARAM[k]}"`:""}>${l}${arrow(k)}</th>`).join("")}</tr>`;
   const body = list.map(r=>{
     const open = openRows.has(r.id);
     const row = `<tr class="room${open?" open":""}" data-id="${r.id}">
@@ -272,7 +274,7 @@ function renderTable(){
       <td>${esc(r.name)||"-"}</td>
       <td><span class="tag">${esc(r.level)}</span></td>
       ${FIN.map(k=>`<td>${finishCell(r,k)}</td>`).join("")}
-      <td><span class="badge ${r.status}">${r.status}</span>${r.updated?`<span class="upd">UPDATED</span>`:""}</td></tr>`;
+      <td><span class="badge ${r.status}">${STATUS_PT[r.status]||r.status}</span>${r.updated?`<span class="upd">ATUALIZADO</span>`:""}</td></tr>`;
     return open ? row + detailRow(r, cols.length) : row;
   }).join("");
   wrap.innerHTML = `<table><thead>${head}</thead><tbody>${body}</tbody></table>`;
@@ -286,9 +288,9 @@ function renderTable(){
 function detailRow(r, span){
   let msgs = "";
   if(r.boundaryMsg) msgs += `<div class="dmsg">${esc(r.boundaryMsg)}</div>`;
-  if(r.writeError) msgs += `<div class="dmsg">Write error - ${esc(r.writeError)}</div>`;
+  if(r.writeError) msgs += `<div class="dmsg">Erro ao gravar - ${esc(r.writeError)}</div>`;
   const elLine = (i, tail) => {
-    const link = i.link ? ` <span class="src">(linked: ${esc(i.link)})</span>` : "";
+    const link = i.link ? ` <span class="src">(vínculo: ${esc(i.link)})</span>` : "";
     const rels = (i.rels||[]).length ? ` <span class="src">[${esc(i.rels.join(", "))}]</span>` : "";
     return `${esc(i.cat)} <span class="id">${i.id}</span>${link}${rels} ${tail}`;
   };
@@ -302,15 +304,15 @@ function detailRow(r, span){
     const mism = (f.mismatches||[]).map(m=>`<li class="warn">${esc(m)}</li>`);
     const warn = (f.warnings||[]).map(w=>`<li class="warn">${esc(w)}</li>`);
     const notes = (f.notes||[]).map(n=>`<li class="note">${esc(n)}</li>`);
-    const cur = `<li class="note">Written value: ${esc(f.value||"(nothing found)")} · in Revit: ${esc(f.current||"(empty)")}</li>`;
-    return `<div class="dbox"><h4>${FIN_LABEL[k]}</h4><ul>${[...items,...mism,...warn,...notes,cur].join("")}</ul></div>`;
+    const cur = `<li class="note">Valor encontrado: ${esc(f.value||"(nada encontrado)")} · no Revit: ${esc(f.current||"(vazio)")}</li>`;
+    return `<div class="dbox"><h4>${FIN_LABEL[k]} <span class="src">(${FIN_PARAM[k]})</span></h4><ul>${[...items,...mism,...warn,...notes,cur].join("")}</ul></div>`;
   }).join("") : "";
   const iss = (r.issues||[]).map(i=>`<li class="iss">${elLine(i, "- " + esc(i.msg))}</li>`);
   const oth = (r.others||[]).map(o=>`<li class="note">${elLine(o, (o.kn||[]).map(x=>`<span class="kn">${esc(x)}</span>`).join("") + " " + esc(o.msg))}</li>`);
   const otherBox = (iss.length || oth.length)
-    ? `<div class="dbox"><h4>Other elements</h4><ul>${[...iss,...oth].join("")}</ul></div>` : "";
+    ? `<div class="dbox"><h4>Outros elementos</h4><ul>${[...iss,...oth].join("")}</ul></div>` : "";
   return `<tr class="detail"><td colspan="${span}">${msgs}<div class="dgrid">${boxes}${otherBox}</div>
-    <div class="cur">Room element id ${r.id}${r.phase?" · phase "+esc(r.phase):""}</div></td></tr>`;
+    <div class="cur">Id do ambiente ${r.id}${r.phase?" · fase "+esc(r.phase):""}</div></td></tr>`;
 }
 
 /* ---- wiring ---- */
@@ -326,11 +328,11 @@ const P = DATA.params || {};
 const UN = DATA.unassigned || [];
 if(UN.length){
   document.getElementById("unassigned").innerHTML =
-    `<h2 style="margin-top:40px">Not assigned to any room · ${fmt(UN.length)}</h2>
-     <div class="tablewrap"><table><thead><tr><th>Category</th><th>Element id</th><th>Keynote</th><th>Reason</th></tr></thead><tbody>` +
-    UN.map(u=>`<tr><td>${esc(u.cat)}${u.link?` <span class="cur">linked: ${esc(u.link)}</span>`:""}</td>
+    `<h2 style="margin-top:40px">Não atribuídos a nenhum ambiente · ${fmt(UN.length)}</h2>
+     <div class="tablewrap"><table><thead><tr><th>Categoria</th><th>Id do elemento</th><th>Keynote</th><th>Motivo</th></tr></thead><tbody>` +
+    UN.map(u=>`<tr><td>${esc(u.cat)}${u.link?` <span class="cur">vínculo: ${esc(u.link)}</span>`:""}</td>
       <td class="mono">${u.id}</td>
-      <td>${u.kn?`<span class="kn">${esc(u.kn)}</span>`:`<span class="st missing">no Keynote</span>`}</td>
+      <td>${u.kn?`<span class="kn">${esc(u.kn)}</span>`:`<span class="st missing">sem Keynote</span>`}</td>
       <td class="st nd">${esc(u.reason)}</td></tr>`).join("") +
     `</tbody></table></div>`;
 }
@@ -338,13 +340,13 @@ const CS = DATA.containStats || {};
 
 const RULES = DATA.prefixRules || {};
 document.getElementById("meta").innerHTML =
-  `<b>Classification (by Keynote prefix only):</b> ` +
-    Object.keys(RULES).map(p=>`${esc(p)}… → ${esc(RULES[p])}`).join(" · ") + ` · other prefixes ignored<br>` +
-  `<b>Keynote source:</b> ${esc(DATA.keynoteSource)}<br>` +
-  `<b>Boundary location:</b> ${esc(DATA.boundaryLocation)} · <b>Separator:</b> "${esc(DATA.separator)}"<br>` +
-  `<b>Parameters:</b> ` + FIN.map(k=>`${esc((P[k]||{}).name||FIN_LABEL[k])} (${esc((P[k]||{}).kind||"not found")})`).join(" · ") +
-  `<br><b>Room containment:</b> ${fmt(CS.tested||0)} elements tested · wall sweeps ${fmt(CS.sweeps||0)} in the model, ${fmt(CS.sweeps_in_rooms||0)} inside a room · ${fmt(UN.length)} not in any room` +
-  `<br><b>Keynote file:</b> ${Object.keys(KN).length ? fmt(Object.keys(KN).length)+" keys loaded" : "not loaded - keys not validated"}`;
+  `<b>Classificação (somente pelo prefixo da Keynote):</b> ` +
+    Object.keys(RULES).map(p=>`${esc(p)}… → ${esc(RULES[p])}`).join(" · ") + ` · outros prefixos são ignorados · moldura de parede sempre vai para o Rodapé<br>` +
+  `<b>Fonte da Keynote:</b> ${esc(DATA.keynoteSource)}<br>` +
+  `<b>Contorno do ambiente:</b> ${esc(DATA.boundaryLocation)} · <b>Margem de busca do forro:</b> ${esc(String((DATA.searchAboveM!=null?DATA.searchAboveM:1).toFixed(2)).replace(".", ","))} m · <b>Separador:</b> "${esc(DATA.separator)}"<br>` +
+  `<b>Parâmetros:</b> ` + FIN.map(k=>`${esc((P[k]||{}).label||FIN_LABEL[k])} [${esc((P[k]||{}).name||FIN_PARAM[k])}] (${esc((P[k]||{}).kind||"não encontrado")})`).join(" · ") +
+  `<br><b>Ambiente por ponto:</b> ${fmt(CS.tested||0)} elementos testados · molduras de parede: ${fmt(CS.sweeps||0)} no modelo, ${fmt(CS.sweeps_in_rooms||0)} dentro de um ambiente · ${fmt(UN.length)} fora de qualquer ambiente` +
+  `<br><b>Arquivo de Keynotes:</b> ${Object.keys(KN).length ? fmt(Object.keys(KN).length)+" chaves carregadas" : "não carregado - as chaves não são validadas"}`;
 
 renderCards();
 renderTable();

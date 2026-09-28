@@ -62,9 +62,9 @@ but the WPF window relies on pyRevit's WPFWindow + DataTable binding, which is
 only exercised on IronPython.
 """
 
-__title__ = "Room Finish\nKeynotes"
-__doc__ = ("Automatically reads finish Keynotes from Room boundaries and "
-           "writes them to Room finish parameters.")
+__title__ = "Acabamentos\npor Keynote"
+__doc__ = ("Lê automaticamente as Keynotes dos elementos ao redor de cada ambiente "
+           "e grava nos parâmetros de acabamento do ambiente (Rodapé, Forro, Parede e Piso).")
 
 import os
 import re
@@ -90,7 +90,7 @@ except NameError:          # IronPython 3 / CPython
 doc = revit.doc
 BIP = DB.BuiltInParameter
 output = script.get_output()
-output.set_title("Room Finish Keynotes - log")
+output.set_title(u"Acabamentos por Keynote - log")
 
 
 # ==================================================================
@@ -129,10 +129,24 @@ PREFIX_RULES = OrderedDict([
 CEILING_FULL_COVERAGE = 0.98
 
 KEYNOTE_SOURCES = [
-    ("auto", u"Element/Type Keynote, then room-facing material Keynote (recommended)"),
-    ("type", u"Element/Type Keynote only"),
-    ("material", u"Room-facing material Keynote only"),
+    ("auto", u"Keynote do elemento/tipo e, se não houver, do material voltado ao ambiente (recomendado)"),
+    ("type", u"Somente Keynote do elemento/tipo"),
+    ("material", u"Somente Keynote do material voltado ao ambiente"),
 ]
+
+# Portuguese labels for the UI / report. The Revit parameter names in
+# FINISH_PARAMS are NOT translated - they are the real names in the model.
+FINISH_LABELS = OrderedDict([
+    ("wall", u"Acabamento de Parede"),
+    ("floor", u"Acabamento de Piso"),
+    ("ceiling", u"Acabamento de Forro"),
+    ("base", u"Rodapé"),
+])
+
+
+def finish_label(key):
+    """'Acabamento de Parede (Wall Finish)'"""
+    return u"{} ({})".format(FINISH_LABELS[key], FINISH_PARAMS[key])
 
 
 def _bic(name):
@@ -225,7 +239,7 @@ def cat_name(elem):
     try:
         return to_unicode(elem.Category.Name)
     except Exception:
-        return u"(no category)"
+        return u"(sem categoria)"
 
 
 def param_str(p):
@@ -277,7 +291,7 @@ class ModelIndex(object):
         ldoc = None
         try:
             inst = self.host.GetElement(DB.ElementId(doc_key))
-            self._link_names[doc_key] = to_unicode(inst.Name) if inst else u"link"
+            self._link_names[doc_key] = to_unicode(inst.Name) if inst else u"vínculo"
             ldoc = inst.GetLinkDocument() if inst else None   # None when unloaded
         except Exception:
             ldoc = None
@@ -288,7 +302,7 @@ class ModelIndex(object):
         if not doc_key:
             return u""
         self.doc_for(doc_key)
-        return self._link_names.get(doc_key, u"link")
+        return self._link_names.get(doc_key, u"vínculo")
 
     def element(self, doc_key, eid):
         if not is_valid_id(eid):
@@ -307,7 +321,7 @@ class ModelIndex(object):
         result = (u"", None)
         kn = param_str(elem.get_Parameter(BIP.KEYNOTE_PARAM))
         if kn:
-            result = (kn, "element")
+            result = (kn, u"elemento")
         else:
             try:
                 tid = elem.GetTypeId()
@@ -319,7 +333,7 @@ class ModelIndex(object):
                     typ = self.element(doc_key, tid)
                     self._type_kn[tk] = param_str(typ.get_Parameter(BIP.KEYNOTE_PARAM)) if typ else u""
                 if self._type_kn[tk]:
-                    result = (self._type_kn[tk], "type")
+                    result = (self._type_kn[tk], u"tipo")
         self._elem_kn[k] = result
         return result
 
@@ -401,6 +415,9 @@ class ParamTarget(object):
         return param_str(self.get(room))
 
 
+KIND_LABELS = {"built-in": u"nativo", "shared": u"compartilhado", "project": u"de projeto"}
+
+
 def param_kind(p):
     try:
         bip = p.Definition.BuiltInParameter
@@ -432,12 +449,12 @@ def resolve_targets(candidates, prefer_builtin):
     for key, name in FINISH_PARAMS.items():
         cands = [p for p in candidates.get(key, [])]
         if not cands:
-            problems.append(u"Parameter '{}' was not found.".format(name))
+            problems.append(u"Parâmetro '{}' não foi encontrado.".format(name))
             continue
         usable = [p for p in cands
                   if p.StorageType == DB.StorageType.String and not p.IsReadOnly]
         if not usable:
-            problems.append(u"Parameter '{}' exists but is not a writable text parameter.".format(name))
+            problems.append(u"Parâmetro '{}' existe, mas não é um parâmetro de texto editável.".format(name))
             continue
         builtin = [p for p in usable if param_kind(p) == "built-in"]
         custom = [p for p in usable if param_kind(p) != "built-in"]
@@ -667,15 +684,15 @@ def wall_side_facing(wall, normal):
 
 
 REL_LABEL = {
-    "boundary": u"room boundary",
-    "side": u"side of room volume",
-    "top": u"above the room",
-    "bottom": u"below the room",
-    "sweep": u"sweep on bounding wall",
-    "inside": u"family instance in room",
-    "surface": u"on the room surfaces (geometry)",
-    "flush": u"flush with the room faces (geometry)",
-    "contained": u"inside the room (room at point)",
+    "boundary": u"contorno do ambiente",
+    "side": u"lateral do volume do ambiente",
+    "top": u"acima do ambiente",
+    "bottom": u"abaixo do ambiente",
+    "sweep": u"moldura na parede delimitadora",
+    "inside": u"família dentro do ambiente",
+    "surface": u"nas superfícies do ambiente (geometria)",
+    "flush": u"faceando o ambiente (geometria)",
+    "contained": u"dentro do ambiente (ponto no ambiente)",
 }
 
 
@@ -698,9 +715,10 @@ def _subface_rel(stype):
 #    afterwards, to report prefix/category mismatches.
 # ==================================================================
 class Scanner(object):
-    def __init__(self, d, mode):
+    def __init__(self, d, mode, search_above_m=None):
         self.doc = d
         self.mode = mode
+        self.search_above_m = SEARCH_ABOVE_M if search_above_m is None else search_above_m
         self.idx = ModelIndex(d)
         self.seg_opts = DB.SpatialElementBoundaryOptions()
         self.seg_opts.SpatialElementBoundaryLocation = BOUNDARY_LOCATION
@@ -798,7 +816,7 @@ class Scanner(object):
         outside. None if the outline cannot be extruded."""
         base, top = zrange
         z0 = base - SEARCH_BELOW_M / 0.3048
-        z1 = top + SEARCH_ABOVE_M / 0.3048
+        z1 = top + self.search_above_m / 0.3048
         curve_loops = []
         for loop in loops:
             curves = [seg.GetCurve() for seg in loop]
@@ -1052,12 +1070,12 @@ class Scanner(object):
         #    computation height, non-bounding finish walls / ceilings,
         #    ceilings above a low room Limit Offset
         if raw["zrange"] is None:
-            raw["search_error"] = u"room has no volume bounding box"
+            raw["search_error"] = u"o ambiente não tem caixa de volume"
         else:
             try:
                 zone = self.search_zone(loops, raw["zrange"])
                 if zone is None:
-                    raw["search_error"] = u"could not build the room search zone from its boundary"
+                    raw["search_error"] = u"não foi possível montar a zona de busca a partir do contorno"
                 else:
                     for dk, el, flush_only in self.elements_on_surfaces(zone):
                         touch(dk, el, "flush" if flush_only else "surface")
@@ -1081,17 +1099,17 @@ class Scanner(object):
                     return found, u""
             else:
                 tname = self.idx.type_name(dk, el)
-                why.append(u"type '{}' has no Keynote".format(tname) if tname else u"no type Keynote")
+                why.append(u"o tipo '{}' não tem Keynote".format(tname) if tname else u"tipo sem Keynote")
                 if self.mode == "type":
                     return [], u"; ".join(why)
         for mid in sorted(mats or [], key=eid_int):
             kn = self.idx.material_keynote(dk, mid)
             if kn:
-                found.append((kn, "material"))
+                found.append((kn, u"material"))
             else:
-                why.append(u"material '{}' has no Keynote".format(self.idx.material_name(dk, mid)))
+                why.append(u"o material '{}' não tem Keynote".format(self.idx.material_name(dk, mid)))
         if not mats and self.mode == "material":
-            why.append(u"no room-facing material found")
+            why.append(u"nenhum material voltado ao ambiente encontrado")
         return found, u"; ".join(why)
 
     def _base_item(self, dk, el, rels, cat=None):
@@ -1114,42 +1132,42 @@ class Scanner(object):
         def height_reject(fk, zr, rels):
             """Why this element can't carry finish fk for THIS room, or None."""
             if rels == set(["flush"]) and fk != "ceiling":
-                return u"it only touches the room from outside (flush) - accepted for Ceiling Finish only"
+                return u"apenas faceia o ambiente pelo lado de fora - aceito somente para o forro"
             if zr is not None and room_z is not None:
                 base, top = room_z
                 mid, tol = (base + top) / 2.0, 0.03     # tol ~ 1 cm
                 lo, hi = zr
                 if fk == "floor" and lo >= mid:
-                    return u"it is above the room (floor of the storey above)"
+                    return u"está acima do ambiente (piso do pavimento de cima)"
                 if fk == "ceiling" and hi <= base + tol:
-                    return u"it is below the room floor (ceiling of the storey below)"
+                    return u"está abaixo do piso do ambiente (forro do pavimento de baixo)"
                 if fk in ("wall", "base") and (lo >= top - tol or hi <= base + tol):
-                    return u"it is outside the room height (belongs to another storey)"
+                    return u"está fora da altura do ambiente (pertence a outro pavimento)"
                 return None
             pos = POSITION_GUARD.get(fk)
             if pos and rels == set([pos]):
-                return u"it only bounds the room from {}".format(u"above" if pos == "top" else u"below")
+                return u"só delimita o ambiente por {}".format(u"cima" if pos == "top" else u"baixo")
             return None
 
         def route(norm, fk, item, cat_id, rels, zr=None, forced=False):
             """Put one classified keynote into its finish; returns True if used."""
             why = height_reject(fk, zr, rels)
             if why:
-                fins[fk]["notes"].append(u"{} on {} {} is ignored: {}.".format(
+                fins[fk]["notes"].append(u"{} em {} {} foi ignorada: {}.".format(
                     norm, item["cat"], item["id"], why))
                 return False
             fins[fk]["keys"].append(norm)
             if forced:
                 prefix_fk = classify(norm)[1]
-                msg = u"{} on {} {} - wall sweeps always fill Base Finish".format(norm, item["cat"], item["id"])
+                msg = u"{} em {} {} - moldura de parede sempre vai para o Rodapé".format(norm, item["cat"], item["id"])
                 if prefix_fk and prefix_fk != "base":
-                    fins[fk]["mismatches"].append(msg + u" (its prefix points to {}).".format(FINISH_PARAMS[prefix_fk]))
+                    fins[fk]["mismatches"].append(msg + u" (o prefixo indica {}).".format(FINISH_LABELS[prefix_fk]))
                 elif not prefix_fk:
                     fins[fk]["notes"].append(msg + u".")
             elif cat_id not in EXPECTED_CATEGORIES[fk]:
                 fins[fk]["mismatches"].append(
-                    u"{} found on a {} element ({}) - classified as {} by the prefix rule.".format(
-                        norm, item["cat"], item["id"], FINISH_PARAMS[fk]))
+                    u"{} encontrada em elemento da categoria {} ({}) - classificada como {} conforme a regra do prefixo.".format(
+                        norm, item["cat"], item["id"], FINISH_LABELS[fk]))
             return True
 
         for key in sorted(raw["elements"]):
@@ -1168,7 +1186,7 @@ class Scanner(object):
             found, why = self.element_keys(dk, el, mats)
             if not found:
                 if bounding or cid in ALWAYS_SEARCH:
-                    issues.append(dict(item, msg=u"Keynote missing ({})".format(why)))
+                    issues.append(dict(item, msg=u"Keynote ausente ({})".format(why)))
                 continue
             zr = self.elem_zrange(dk, el)
             used = OrderedDict()
@@ -1187,22 +1205,22 @@ class Scanner(object):
                     fr_keys.add(key)
             if ignored and not used and (bounding or cid in ALWAYS_SEARCH):
                 others.append(dict(item, kn=unique_sorted(ignored),
-                                   msg=u"prefix is not RD / FR / RE / PI - ignored"))
+                                   msg=u"prefixo não é RD / FR / RE / PI - ignorada"))
 
         # sweeps built into wall types: the only Keynote they can carry is
         # their material's
         for it in raw["integral"]:
             wall = it["wall"]
-            item = {"id": eid_int(wall.Id), "cat": u"Wall type sweep", "link": u"",
-                    "rels": [u"sweep in wall type"]}
+            item = {"id": eid_int(wall.Id), "cat": u"Moldura do tipo de parede", "link": u"",
+                    "rels": [u"moldura no tipo de parede"]}
             kn = self.idx.material_keynote(0, it["mat"])
             if not kn:
-                issues.append(dict(item, msg=u"Keynote missing (sweep material '{}' has no Keynote)".format(
+                issues.append(dict(item, msg=u"Keynote ausente (o material da moldura '{}' não tem Keynote)".format(
                     self.idx.material_name(0, it["mat"]))))
                 continue
             norm, fk, forced = classify_element(kn, CAT_CORNICES)
             if route(norm, fk, item, CAT_CORNICES, set(["sweep"]), None, forced):
-                fins[fk]["items"].append(dict(item, kn=[norm], src=["integral sweep material"]))
+                fins[fk]["items"].append(dict(item, kn=[norm], src=[u"material da moldura do tipo de parede"]))
 
         for fk, fin in fins.items():
             fin["keys"] = unique_sorted(fin["keys"])
@@ -1212,7 +1230,7 @@ class Scanner(object):
             if self.keynote_texts:
                 for k in fin["keys"]:
                     if k not in self.keynote_texts:
-                        fin["warnings"].append(u"'{}' is not in the loaded keynote file.".format(k))
+                        fin["warnings"].append(u"'{}' não existe no arquivo de Keynotes carregado.".format(k))
         self._diagnose(raw, fins, fr_top_area, fr_keys)
         return fins, issues, others
 
@@ -1224,52 +1242,52 @@ class Scanner(object):
         err = raw["calc_error"]
         if err:
             for fk in ("floor", "ceiling", "base"):
-                fins[fk]["notes"].append(u"Room geometry could not be calculated: " + err)
+                fins[fk]["notes"].append(u"Não foi possível calcular a geometria do ambiente: " + err)
         if raw["search_error"]:
             for fk in FINISH_PARAMS:
                 if fins[fk]["state"] == "missing":
-                    fins[fk]["notes"].append(u"Geometric search of the room surfaces failed: " + raw["search_error"])
+                    fins[fk]["notes"].append(u"A busca geométrica nas superfícies do ambiente falhou: " + raw["search_error"])
         if fins["wall"]["state"] == "missing":
             if not raw["walls"]:
-                fins["wall"]["notes"].append(u"No Wall bounds this room{}.".format(
-                    u" (Room Separation Lines only)" if raw["separation_lines"] else u""))
+                fins["wall"]["notes"].append(u"Nenhuma parede delimita este ambiente{}.".format(
+                    u" (somente Room Separation Lines)" if raw["separation_lines"] else u""))
             else:
-                fins["wall"]["notes"].append(u"No Keynote starting with RE on the elements around this room.")
+                fins["wall"]["notes"].append(u"Nenhuma Keynote começando com RE nos elementos ao redor do ambiente.")
         if fins["floor"]["state"] == "missing" and not err:
             below = cats_with("bottom")
             fins["floor"]["notes"].append(
-                u"No Keynote starting with PI. Below the room: {}.".format(u", ".join(below))
+                u"Nenhuma Keynote começando com PI. Abaixo do ambiente: {}.".format(u", ".join(below))
                 if below else
-                u"Room bottom is not bounded by any element. Check the floor is Room Bounding "
-                u"and its top is not below the room base.")
+                u"O fundo do ambiente não é delimitado por nenhum elemento. Verifique se o piso é "
+                u"Room Bounding e se o topo dele não está abaixo da base do ambiente.")
         if not err:
             total = raw["top_total"]
             if fins["ceiling"]["state"] == "missing":
                 above = cats_with("top")
                 fins["ceiling"]["notes"].append(
-                    u"No Keynote starting with FR on the room surfaces or up to {:.2f} m above the room top "
-                    u"(room top bounded by: {}). If the ceiling is higher, raise the room Upper Limit / "
-                    u"Limit Offset or SEARCH_ABOVE_M.".format(SEARCH_ABOVE_M, u", ".join(above) or u"nothing"))
+                    u"Nenhuma Keynote começando com FR nas superfícies do ambiente nem até {} m acima do "
+                    u"topo (topo delimitado por: {}). Se o forro estiver mais alto, aumente o Limit Offset do "
+                    u"ambiente ou a margem de busca do forro.".format(fmt_m(self.search_above_m), u", ".join(above) or u"nada"))
             elif fr_top_area > 0 and total > 0 and fr_top_area / total < CEILING_FULL_COVERAGE:
                 rest = []
                 other_top = cats_with("top", fr_keys)
                 if other_top:
                     rest.append(u", ".join(other_top))
                 if raw["top_free"] > 0:
-                    rest.append(u"unbounded (room top below the ceiling)")
+                    rest.append(u"sem delimitação (topo do ambiente abaixo do forro)")
                 fins["ceiling"]["warnings"].append(
-                    u"FR elements cover {:.0f}% of the room top; the rest is {}.".format(
-                        100.0 * fr_top_area / total, u" / ".join(rest) or u"other elements"))
+                    u"Elementos FR cobrem {:.0f}% do topo do ambiente; o restante é {}.".format(
+                        100.0 * fr_top_area / total, u" / ".join(rest) or u"outros elementos"))
         if fins["base"]["state"] == "missing":
             fins["base"]["notes"].append(
-                u"No Keynote starting with RD (checked: bounding elements, sweeps on the room-facing "
-                u"side of the bounding walls, sweeps in wall types, family instances in the room, "
-                u"elements on the room surfaces).")
+                u"Nenhuma Keynote começando com RD (verificados: elementos delimitadores, molduras no lado "
+                u"das paredes voltado ao ambiente, molduras dos tipos de parede, famílias dentro do ambiente "
+                u"e elementos nas superfícies do ambiente).")
         linked = len([1 for (dk, _) in raw["walls"] if dk])
         if linked:
-            fins["base"]["notes"].append(u"{} linked wall(s): their sweeps are not evaluated.".format(linked))
+            fins["base"]["notes"].append(u"{} parede(s) de vínculo: as molduras delas não são avaliadas.".format(linked))
         if raw["separation_lines"] and raw["walls"]:
-            fins["wall"]["notes"].append(u"{} boundary segment(s) are Room Separation Lines (no finish).".format(
+            fins["wall"]["notes"].append(u"{} trecho(s) do contorno são Room Separation Lines (sem acabamento).".format(
                 raw["separation_lines"]))
 
     # ---------------- one room ----------------
@@ -1366,8 +1384,8 @@ class Scanner(object):
                 stats["unassigned"].append({
                     "id": eid_int(el.Id), "cat": cat_name(el), "link": self.idx.link_name(dk),
                     "kn": classify(kn)[0] if kn else u"",
-                    "reason": (u"no sampled point is inside a room" if pts
-                               else u"element has no solid geometry"),
+                    "reason": (u"nenhum ponto amostrado está dentro de um ambiente" if pts
+                               else u"o elemento não tem geometria sólida"),
                 })
         stats["unassigned"].sort(key=lambda u: (u["cat"], u["id"]))
         return stats
@@ -1378,10 +1396,10 @@ class Scanner(object):
 # ==================================================================
 def room_info(room):
     try:
-        level = to_unicode(room.Level.Name) if room.Level else u"(unplaced)"
+        level = to_unicode(room.Level.Name) if room.Level else u"(não colocado)"
         elev = room.Level.Elevation if room.Level else 0.0
     except Exception:
-        level, elev = u"(unplaced)", 0.0
+        level, elev = u"(não colocado)", 0.0
     phase = u""
     try:
         phase = to_unicode(room.get_Parameter(BIP.ROOM_PHASE).AsValueString())
@@ -1450,18 +1468,18 @@ def worksharing_block(room):
                 owner = to_unicode(DB.WorksharingUtils.GetWorksharingTooltipInfo(doc, room.Id).Owner)
             except Exception:
                 pass
-            return u"Owned by {}".format(owner or u"another user")
+            return u"Em uso por {}".format(owner or u"outro usuário")
         upd = DB.WorksharingUtils.GetModelUpdatesStatus(doc, room.Id)
         if upd == DB.ModelUpdatesStatus.UpdatedInCentral:
-            return u"Updated in central - reload latest first"
+            return u"Alterado no central - faça Reload Latest antes"
         if upd == DB.ModelUpdatesStatus.DeletedInCentral:
-            return u"Deleted in central"
+            return u"Excluído no central"
     except Exception:
         pass
     return u""
 
 
-def build_json(records, targets, mode, keynote_texts, problems, contain_stats=None):
+def build_json(records, targets, mode, keynote_texts, problems, contain_stats=None, search_above_m=SEARCH_ABOVE_M):
     rooms = []
     for rec in records:
         info = rec["info"]
@@ -1481,10 +1499,10 @@ def build_json(records, targets, mode, keynote_texts, problems, contain_stats=No
                 "mismatches": fin["mismatches"],
             }
         boundary_msg = {
-            "unplaced": u"Room is not placed.",
-            "unenclosed": u"Room is not enclosed or is redundant (area = 0).",
-            "no_segments": u"Room has no bounding elements.",
-            "error": u"Scan failed: {}".format(rec.get("error") or u""),
+            "unplaced": u"Ambiente não colocado.",
+            "unenclosed": u"Ambiente não fechado ou redundante (área = 0).",
+            "no_segments": u"O ambiente não tem elementos delimitadores.",
+            "error": u"A análise falhou: {}".format(rec.get("error") or u""),
         }.get(rec["boundary"], u"")
         rooms.append({
             "id": info["id"], "number": info["number"], "name": info["name"],
@@ -1498,10 +1516,11 @@ def build_json(records, targets, mode, keynote_texts, problems, contain_stats=No
         "project": to_unicode(doc.Title),
         "generated": datetime.now().strftime("%Y-%m-%d %H:%M"),
         "keynoteSource": dict(KEYNOTE_SOURCES).get(mode, mode),
-        "boundaryLocation": to_unicode(BOUNDARY_LOCATION),
+        "boundaryLocation": u"face de acabamento" if BOUNDARY_LOCATION == DB.SpatialElementBoundaryLocation.Finish else to_unicode(BOUNDARY_LOCATION),
+        "searchAboveM": search_above_m,
         "separator": SEPARATOR,
-        "prefixRules": OrderedDict((p, FINISH_PARAMS[f]) for p, f in PREFIX_RULES.items()),
-        "params": OrderedDict((k, {"name": n, "kind": targets[k].kind if k in targets else None})
+        "prefixRules": OrderedDict((p, finish_label(f)) for p, f in PREFIX_RULES.items()),
+        "params": OrderedDict((k, {"name": n, "label": FINISH_LABELS[k], "kind": KIND_LABELS.get(targets[k].kind) if k in targets else None})
                               for k, n in FINISH_PARAMS.items()),
         "paramProblems": problems,
         "keynotes": keynote_texts,
@@ -1546,11 +1565,46 @@ def open_in_browser(path):
 def log_link(item):
     """Clickable element id in the output window (host elements only)."""
     if item.get("link"):
-        return u"{} (linked: {})".format(item["id"], item["link"])
+        return u"{} (vínculo: {})".format(item["id"], item["link"])
     try:
         return output.linkify(DB.ElementId(item["id"]))
     except Exception:
         return to_unicode(item["id"])
+
+
+STATUS_LABELS = {"OK": u"OK", "WARNING": u"ATENÇÃO", "ERROR": u"ERRO"}
+CHANGE_LABELS = {"Fill": u"Preencher", "Overwrite": u"Sobrescrever"}
+BOUNDARY_LABELS = {
+    "unplaced": u"não colocado",
+    "unenclosed": u"não fechado ou redundante",
+    "no_segments": u"sem elementos delimitadores",
+    "error": u"erro na análise",
+}
+
+
+def fmt_m(value):
+    """1.0 -> u'1,00'"""
+    return u"{:.2f}".format(value).replace(u".", u",")
+
+
+def parse_m(text):
+    """u'1,5' / u'1.5' -> 1.5 ; None if invalid or outside 0-10 m."""
+    try:
+        v = float(to_unicode(text).strip().replace(u",", u"."))
+    except Exception:
+        return None
+    return v if 0.0 <= v <= 10.0 else None
+
+
+def help_rules_text():
+    lines = [u"{}…  →  {}".format(p, finish_label(f)) for p, f in PREFIX_RULES.items()]
+    lines.append(u"")
+    lines.append(u"Keynotes com outros prefixos são ignoradas. Maiúsculas e minúsculas não importam; "
+                 u"o valor é gravado em maiúsculas, sem repetições e em ordem (ex.: RE01 / RE02).")
+    lines.append(u"")
+    lines.append(u"Exceção: toda moldura de parede (Wall Sweep) vai para o Rodapé, qualquer que seja "
+                 u"o prefixo da Keynote dela.")
+    return u"\n".join(lines)
 
 
 # ==================================================================
@@ -1559,13 +1613,38 @@ def log_link(item):
 XAML = u"""
 <Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="Room Finish Keynote Automation" Width="1120" Height="760"
-        MinWidth="860" MinHeight="560" WindowStartupLocation="CenterScreen"
+        Title="Acabamentos por Keynote" Width="1160" Height="800"
+        MinWidth="900" MinHeight="600" WindowStartupLocation="CenterScreen"
         Background="#0E1526">
   <Window.Resources>
     <Style TargetType="TextBlock">
       <Setter Property="Foreground" Value="#CFE3FF"/>
       <Setter Property="FontFamily" Value="Segoe UI"/>
+    </Style>
+    <Style x:Key="Label" TargetType="TextBlock">
+      <Setter Property="Foreground" Value="#CFE3FF"/>
+      <Setter Property="FontFamily" Value="Segoe UI"/>
+      <Setter Property="Margin" Value="0,0,0,4"/>
+    </Style>
+    <Style x:Key="Hint" TargetType="TextBlock">
+      <Setter Property="Foreground" Value="#7A8FA9"/>
+      <Setter Property="FontFamily" Value="Segoe UI"/>
+      <Setter Property="FontSize" Value="11"/>
+      <Setter Property="TextWrapping" Value="Wrap"/>
+    </Style>
+    <Style x:Key="HelpTitle" TargetType="TextBlock">
+      <Setter Property="Foreground" Value="#65E3FF"/>
+      <Setter Property="FontFamily" Value="Segoe UI"/>
+      <Setter Property="FontWeight" Value="SemiBold"/>
+      <Setter Property="FontSize" Value="13"/>
+      <Setter Property="Margin" Value="0,16,0,6"/>
+    </Style>
+    <Style x:Key="HelpBody" TargetType="TextBlock">
+      <Setter Property="Foreground" Value="#CFE3FF"/>
+      <Setter Property="FontFamily" Value="Segoe UI"/>
+      <Setter Property="FontSize" Value="12"/>
+      <Setter Property="TextWrapping" Value="Wrap"/>
+      <Setter Property="LineHeight" Value="19"/>
     </Style>
     <Style TargetType="CheckBox">
       <Setter Property="Foreground" Value="#CFE3FF"/>
@@ -1575,11 +1654,64 @@ XAML = u"""
       <Setter Property="Height" Value="26"/>
       <Setter Property="Padding" Value="4,2,4,2"/>
     </Style>
+    <Style TargetType="TextBox">
+      <Setter Property="Height" Value="26"/>
+      <Setter Property="Padding" Value="6,3,6,3"/>
+      <Setter Property="Background" Value="#0B1120"/>
+      <Setter Property="Foreground" Value="#CFE3FF"/>
+      <Setter Property="BorderBrush" Value="#2A4A6E"/>
+      <Setter Property="CaretBrush" Value="#65E3FF"/>
+      <Setter Property="FontFamily" Value="Segoe UI"/>
+    </Style>
     <Style TargetType="Button">
-      <Setter Property="Height" Value="30"/>
-      <Setter Property="MinWidth" Value="120"/>
+      <Setter Property="Height" Value="32"/>
+      <Setter Property="MinWidth" Value="140"/>
       <Setter Property="Margin" Value="0,0,10,0"/>
-      <Setter Property="Padding" Value="12,0,12,0"/>
+      <Setter Property="Foreground" Value="#65E3FF"/>
+      <Setter Property="Background" Value="#101B30"/>
+      <Setter Property="BorderBrush" Value="#2A4A6E"/>
+      <Setter Property="FontFamily" Value="Segoe UI"/>
+      <Setter Property="Cursor" Value="Hand"/>
+      <Setter Property="Template">
+        <Setter.Value>
+          <ControlTemplate TargetType="Button">
+            <Border x:Name="bd" Background="{TemplateBinding Background}" BorderBrush="{TemplateBinding BorderBrush}"
+                    BorderThickness="1" CornerRadius="3" Padding="14,0">
+              <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+            </Border>
+            <ControlTemplate.Triggers>
+              <Trigger Property="IsMouseOver" Value="True">
+                <Setter TargetName="bd" Property="BorderBrush" Value="#65E3FF"/>
+                <Setter TargetName="bd" Property="Background" Value="#16304A"/>
+              </Trigger>
+              <Trigger Property="IsEnabled" Value="False">
+                <Setter TargetName="bd" Property="Opacity" Value="0.4"/>
+              </Trigger>
+            </ControlTemplate.Triggers>
+          </ControlTemplate>
+        </Setter.Value>
+      </Setter>
+    </Style>
+    <Style TargetType="TabItem">
+      <Setter Property="Foreground" Value="#7A8FA9"/>
+      <Setter Property="FontFamily" Value="Segoe UI"/>
+      <Setter Property="FontSize" Value="12"/>
+      <Setter Property="Template">
+        <Setter.Value>
+          <ControlTemplate TargetType="TabItem">
+            <Border x:Name="bd" Background="Transparent" BorderBrush="#23324F" BorderThickness="1,1,1,0"
+                    Padding="16,7" Margin="0,0,4,0" CornerRadius="3,3,0,0">
+              <ContentPresenter ContentSource="Header" TextElement.Foreground="{TemplateBinding Foreground}"/>
+            </Border>
+            <ControlTemplate.Triggers>
+              <Trigger Property="IsSelected" Value="True">
+                <Setter TargetName="bd" Property="Background" Value="#16233B"/>
+                <Setter Property="Foreground" Value="#65E3FF"/>
+              </Trigger>
+            </ControlTemplate.Triggers>
+          </ControlTemplate>
+        </Setter.Value>
+      </Setter>
     </Style>
     <Style TargetType="DataGridColumnHeader">
       <Setter Property="Background" Value="#141E33"/>
@@ -1592,7 +1724,7 @@ XAML = u"""
       <Setter Property="Background" Value="#0E1526"/>
       <Setter Property="Foreground" Value="#D9E8F5"/>
       <Style.Triggers>
-        <DataTrigger Binding="{Binding Change}" Value="Overwrite">
+        <DataTrigger Binding="{Binding Kind}" Value="Overwrite">
           <Setter Property="Foreground" Value="#FFB454"/>
         </DataTrigger>
         <DataTrigger Binding="{Binding Editable}" Value="False">
@@ -1601,75 +1733,133 @@ XAML = u"""
       </Style.Triggers>
     </Style>
   </Window.Resources>
+
   <Grid Margin="18">
     <Grid.RowDefinitions>
-      <RowDefinition Height="Auto"/>
-      <RowDefinition Height="Auto"/>
       <RowDefinition Height="Auto"/>
       <RowDefinition Height="Auto"/>
       <RowDefinition Height="*"/>
       <RowDefinition Height="Auto"/>
     </Grid.RowDefinitions>
 
-    <TextBlock Grid.Row="0" Text="ROOM FINISH KEYNOTE AUTOMATION" FontSize="16"
+    <TextBlock Grid.Row="0" Text="AUTOMAÇÃO DE ACABAMENTOS POR KEYNOTE" FontSize="16"
                FontWeight="SemiBold" Foreground="#65E3FF"/>
-    <TextBlock Grid.Row="1" TextWrapping="Wrap" FontSize="11" Foreground="#7A8FA9" Margin="0,4,0,12"
-               Text="Automatically reads finish Keynotes from Room boundaries and writes them to Room finish parameters."/>
+    <TextBlock Grid.Row="1" Style="{StaticResource Hint}" Margin="0,4,0,12"
+               Text="Lê automaticamente as Keynotes dos elementos ao redor de cada ambiente e grava nos parâmetros de acabamento do ambiente."/>
 
-    <Grid Grid.Row="2" Margin="0,0,0,10">
-      <Grid.ColumnDefinitions>
-        <ColumnDefinition Width="*"/>
-        <ColumnDefinition Width="18"/>
-        <ColumnDefinition Width="*"/>
-      </Grid.ColumnDefinitions>
-      <StackPanel Grid.Column="0">
-        <TextBlock Text="Keynote source" Margin="0,0,0,3"/>
-        <ComboBox x:Name="cb_source"/>
-        <TextBlock Text="If a Room has two parameters with the same name" Margin="0,10,0,3"/>
-        <ComboBox x:Name="cb_dup"/>
-      </StackPanel>
-      <StackPanel Grid.Column="2">
-        <TextBlock Text="Room parameters" Margin="0,0,0,3"/>
-        <TextBlock x:Name="tb_params" TextWrapping="Wrap" FontSize="11" Foreground="#7A8FA9"/>
-        <CheckBox x:Name="chk_overwrite" Margin="0,10,0,0"
-                  Content="Allow overwriting existing values that differ (otherwise only empty parameters are filled)"/>
-      </StackPanel>
-    </Grid>
+    <TabControl Grid.Row="2" Background="Transparent" BorderBrush="#23324F" BorderThickness="1" Padding="14">
 
-    <TextBlock Grid.Row="3" x:Name="tb_status" TextWrapping="Wrap" FontSize="12"
-               Foreground="#3DDCB4" Margin="0,4,0,8" Text="Click Scan Model to start. Nothing is written until you click Update Rooms."/>
+      <!-- ============ TAB 1: update ============ -->
+      <TabItem Header="Atualizar ambientes">
+        <Grid>
+          <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+          </Grid.RowDefinitions>
 
-    <DataGrid Grid.Row="4" x:Name="grid" AutoGenerateColumns="False" CanUserAddRows="False"
-              CanUserDeleteRows="False" HeadersVisibility="Column" GridLinesVisibility="Horizontal"
-              HorizontalGridLinesBrush="#1B2740" Background="#0B1120" BorderBrush="#23324F"
-              RowHeaderWidth="0" SelectionMode="Extended">
-      <DataGrid.Columns>
-        <DataGridTemplateColumn Header="Apply" Width="56">
-          <DataGridTemplateColumn.CellTemplate>
-            <DataTemplate>
-              <CheckBox HorizontalAlignment="Center" VerticalAlignment="Center"
-                        IsChecked="{Binding Apply, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
-                        IsEnabled="{Binding Editable}"/>
-            </DataTemplate>
-          </DataGridTemplateColumn.CellTemplate>
-        </DataGridTemplateColumn>
-        <DataGridTextColumn Header="Room" Binding="{Binding Room}" IsReadOnly="True" Width="70"/>
-        <DataGridTextColumn Header="Name" Binding="{Binding Name}" IsReadOnly="True" Width="150"/>
-        <DataGridTextColumn Header="Level" Binding="{Binding Level}" IsReadOnly="True" Width="100"/>
-        <DataGridTextColumn Header="Parameter" Binding="{Binding Parameter}" IsReadOnly="True" Width="105"/>
-        <DataGridTextColumn Header="Current" Binding="{Binding Current}" IsReadOnly="True" Width="*"/>
-        <DataGridTextColumn Header="New" Binding="{Binding New}" IsReadOnly="True" Width="*"/>
-        <DataGridTextColumn Header="Change" Binding="{Binding Change}" IsReadOnly="True" Width="85"/>
-        <DataGridTextColumn Header="Note" Binding="{Binding Note}" IsReadOnly="True" Width="160"/>
-      </DataGrid.Columns>
-    </DataGrid>
+          <Grid Grid.Row="0" Margin="0,0,0,10">
+            <Grid.ColumnDefinitions>
+              <ColumnDefinition Width="*"/>
+              <ColumnDefinition Width="22"/>
+              <ColumnDefinition Width="*"/>
+            </Grid.ColumnDefinitions>
+            <StackPanel Grid.Column="0">
+              <TextBlock Style="{StaticResource Label}" Text="Fonte da Keynote"/>
+              <ComboBox x:Name="cb_source" ToolTipService.ShowDuration="20000"
+                        ToolTip="De onde a Keynote é lida. Recomendado: a Keynote do tipo do elemento; se o tipo não tiver uma Keynote de acabamento, usa a do material da face voltada para o ambiente."/>
 
-    <StackPanel Grid.Row="5" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,14,0,0">
-      <Button x:Name="btn_scan" Content="Scan Model"/>
-      <Button x:Name="btn_preview" Content="Preview Changes" IsEnabled="False"/>
-      <Button x:Name="btn_update" Content="Update Rooms" IsEnabled="False"/>
-      <Button x:Name="btn_report" Content="Open HTML Report" IsEnabled="False"/>
-      <Button x:Name="btn_cancel" Content="Cancel" Margin="0"/>
+              <TextBlock Style="{StaticResource Label}" Margin="0,12,0,4" Text="Parâmetros com o mesmo nome no ambiente"/>
+              <ComboBox x:Name="cb_dup" ToolTipService.ShowDuration="20000"
+                        ToolTip="Só fica ativo quando o ambiente tem dois parâmetros com o mesmo nome (o nativo do Revit e um criado no projeto). Escolha em qual deles gravar."/>
+
+              <TextBlock Style="{StaticResource Label}" Margin="0,12,0,4" Text="Margem de busca do forro acima do ambiente (m)"/>
+              <StackPanel Orientation="Horizontal">
+                <TextBox x:Name="tb_margin" Width="80" ToolTipService.ShowDuration="20000"
+                         ToolTip="Até quantos metros acima do topo do ambiente a ferramenta procura o forro. Aumente se o forro estiver acima do Limit Offset do ambiente. Depois de alterar, clique em Analisar Modelo de novo."/>
+                <TextBlock x:Name="tb_margin_hint" Style="{StaticResource Hint}" VerticalAlignment="Center" Margin="10,0,0,0"/>
+              </StackPanel>
+            </StackPanel>
+
+            <StackPanel Grid.Column="2">
+              <TextBlock Style="{StaticResource Label}" Text="Parâmetros do ambiente"/>
+              <TextBlock x:Name="tb_params" Style="{StaticResource Hint}" LineHeight="18"/>
+              <CheckBox x:Name="chk_overwrite" Margin="0,14,0,0" ToolTipService.ShowDuration="20000"
+                        ToolTip="Desmarcado: só preenche parâmetros vazios. Marcado: também substitui valores diferentes já existentes (linhas em âmbar na pré-visualização). Valores existentes nunca são apagados.">
+                <TextBlock TextWrapping="Wrap" Text="Permitir sobrescrever valores existentes diferentes (senão, só os parâmetros vazios são preenchidos)"/>
+              </CheckBox>
+            </StackPanel>
+          </Grid>
+
+          <TextBlock Grid.Row="1" x:Name="tb_status" TextWrapping="Wrap" FontSize="12" Foreground="#3DDCB4" Margin="0,4,0,8"
+                     Text="Clique em Analisar Modelo para começar. Nada é gravado até você clicar em Atualizar Ambientes."/>
+
+          <DataGrid Grid.Row="2" x:Name="grid" AutoGenerateColumns="False" CanUserAddRows="False"
+                    CanUserDeleteRows="False" HeadersVisibility="Column" GridLinesVisibility="Horizontal"
+                    HorizontalGridLinesBrush="#1B2740" Background="#0B1120" BorderBrush="#23324F"
+                    RowHeaderWidth="0" SelectionMode="Extended" ToolTipService.ShowDuration="20000"
+                    ToolTip="Pré-visualização: desmarque uma linha para não gravar aquele valor. Linhas em âmbar substituem um valor existente.">
+            <DataGrid.Columns>
+              <DataGridTemplateColumn Header="Aplicar" Width="60">
+                <DataGridTemplateColumn.CellTemplate>
+                  <DataTemplate>
+                    <CheckBox HorizontalAlignment="Center" VerticalAlignment="Center"
+                              IsChecked="{Binding Apply, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                              IsEnabled="{Binding Editable}"/>
+                  </DataTemplate>
+                </DataGridTemplateColumn.CellTemplate>
+              </DataGridTemplateColumn>
+              <DataGridTextColumn Header="Ambiente" Binding="{Binding Room}" IsReadOnly="True" Width="75"/>
+              <DataGridTextColumn Header="Nome" Binding="{Binding Name}" IsReadOnly="True" Width="140"/>
+              <DataGridTextColumn Header="Pavimento" Binding="{Binding Level}" IsReadOnly="True" Width="100"/>
+              <DataGridTextColumn Header="Parâmetro" Binding="{Binding Parameter}" IsReadOnly="True" Width="190"/>
+              <DataGridTextColumn Header="Valor atual" Binding="{Binding Current}" IsReadOnly="True" Width="*"/>
+              <DataGridTextColumn Header="Novo valor" Binding="{Binding New}" IsReadOnly="True" Width="*"/>
+              <DataGridTextColumn Header="Alteração" Binding="{Binding Change}" IsReadOnly="True" Width="95"/>
+              <DataGridTextColumn Header="Observação" Binding="{Binding Note}" IsReadOnly="True" Width="170"/>
+            </DataGrid.Columns>
+          </DataGrid>
+        </Grid>
+      </TabItem>
+
+      <!-- ============ TAB 2: help ============ -->
+      <TabItem Header="Como funciona">
+        <ScrollViewer VerticalScrollBarVisibility="Auto">
+          <StackPanel Margin="4,0,12,12" MaxWidth="900" HorizontalAlignment="Left">
+            <TextBlock Style="{StaticResource HelpTitle}" Margin="0,0,0,6" Text="O QUE A FERRAMENTA FAZ"/>
+            <TextBlock Style="{StaticResource HelpBody}" Text="Para cada ambiente do modelo, encontra os elementos construtivos ao redor (paredes, pisos, forros, rodapés e molduras), lê a Keynote de cada um e grava os códigos nos quatro parâmetros de acabamento do ambiente. A Keynote dos elementos só é lida, nunca alterada."/>
+
+            <TextBlock Style="{StaticResource HelpTitle}" Text="REGRA DE CLASSIFICAÇÃO (PELO PREFIXO DA KEYNOTE)"/>
+            <TextBlock x:Name="tb_help_rules" Style="{StaticResource HelpBody}"/>
+
+            <TextBlock Style="{StaticResource HelpTitle}" Text="ONDE OS ELEMENTOS SÃO PROCURADOS"/>
+            <TextBlock x:Name="tb_help_search" Style="{StaticResource HelpBody}"/>
+
+            <TextBlock Style="{StaticResource HelpTitle}" Text="PROTEÇÕES"/>
+            <TextBlock Style="{StaticResource HelpBody}" Text="• Piso, rodapé e parede do pavimento de cima ou de baixo não entram no ambiente.&#10;• Nada é gravado até você clicar em Atualizar Ambientes.&#10;• Parâmetros vazios são preenchidos; valores diferentes só são substituídos com a opção de sobrescrever marcada.&#10;• Se nada for encontrado para um parâmetro, o valor atual é mantido - nunca é apagado.&#10;• Tudo é gravado em uma única transação: Ctrl+Z no Revit desfaz a atualização inteira.&#10;• Ambientes em uso por outro usuário (workset) aparecem bloqueados na pré-visualização."/>
+
+            <TextBlock Style="{StaticResource HelpTitle}" Text="PASSO A PASSO"/>
+            <TextBlock Style="{StaticResource HelpBody}" Text="1. Analisar Modelo - lê todos os ambientes. Não altera nada.&#10;2. Pré-visualizar Alterações - confira o valor atual e o novo valor de cada parâmetro. Linhas em âmbar substituem um valor existente.&#10;3. Atualizar Ambientes - grava as linhas marcadas.&#10;4. Abrir Relatório HTML - resumo, filtros e o detalhe de onde veio cada Keynote."/>
+
+            <TextBlock Style="{StaticResource HelpTitle}" Text="QUANDO ALGO NÃO APARECE"/>
+            <TextBlock Style="{StaticResource HelpBody}" Text="• Forro não encontrado: aumente a margem de busca do forro ou o Limit Offset do ambiente e analise de novo.&#10;• Elemento sem Keynote: aparece no relatório como &quot;Keynote ausente&quot;.&#10;• Elemento com Keynote de acabamento fora de qualquer ambiente: seção &quot;Não atribuídos a nenhum ambiente&quot; no relatório.&#10;• Prefixo que não combina com a categoria (ex.: RE01 num piso): aparece como inconsistência, mas o valor é gravado pela regra do prefixo.&#10;• No relatório, clique num ambiente para ver cada elemento encontrado, a Keynote e o motivo de cada valor ignorado."/>
+          </StackPanel>
+        </ScrollViewer>
+      </TabItem>
+    </TabControl>
+
+    <StackPanel Grid.Row="3" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,14,0,0">
+      <Button x:Name="btn_scan" Content="Analisar Modelo" ToolTipService.ShowDuration="20000"
+              ToolTip="Lê o modelo e analisa todos os ambientes. Não altera nada."/>
+      <Button x:Name="btn_preview" Content="Pré-visualizar Alterações" IsEnabled="False" ToolTipService.ShowDuration="20000"
+              ToolTip="Mostra, ambiente por ambiente, o valor atual e o novo valor de cada parâmetro."/>
+      <Button x:Name="btn_update" Content="Atualizar Ambientes" IsEnabled="False" Foreground="#3DDCB4" BorderBrush="#2F7F6B"
+              ToolTipService.ShowDuration="20000"
+              ToolTip="Grava as linhas marcadas na pré-visualização, em uma única transação (Ctrl+Z desfaz)."/>
+      <Button x:Name="btn_report" Content="Abrir Relatório HTML" IsEnabled="False" ToolTipService.ShowDuration="20000"
+              ToolTip="Abre o relatório com todos os ambientes, filtros e o detalhe de onde veio cada Keynote."/>
+      <Button x:Name="btn_cancel" Content="Cancelar" Margin="0" MinWidth="110"
+              ToolTip="Fecha a janela sem gravar nada."/>
     </StackPanel>
   </Grid>
 </Window>
@@ -1684,14 +1874,19 @@ class RoomFinishWindow(forms.WPFWindow):
         self.row_keys = []          # table row index -> (record, finish key)
         self.table = None
         self.mode = "auto"
+        self.search_above_m = SEARCH_ABOVE_M
         self.keynote_texts = {}
         self.contain_stats = {"tested": 0, "sweeps": 0, "sweeps_in_rooms": 0, "unassigned": []}
 
         self.cb_source.ItemsSource = [label for _, label in KEYNOTE_SOURCES]
         self.cb_source.SelectedIndex = 0
-        self.cb_dup.ItemsSource = [u"Write to the built-in Room parameter",
-                                   u"Write to the project / shared parameter"]
+        self.cb_dup.ItemsSource = [u"Gravar no parâmetro nativo do ambiente",
+                                   u"Gravar no parâmetro de projeto / compartilhado"]
         self.cb_dup.SelectedIndex = 0
+        self.tb_margin.Text = fmt_m(SEARCH_ABOVE_M)
+        self.tb_margin_hint.Text = u"padrão: {} m".format(fmt_m(SEARCH_ABOVE_M))
+        self.tb_help_rules.Text = help_rules_text()
+        self._fill_help_search()
 
         self.candidates = inspect_room_params(rooms[0])
         self.dups = has_duplicates(self.candidates)
@@ -1706,6 +1901,21 @@ class RoomFinishWindow(forms.WPFWindow):
         self.chk_overwrite.Checked += self.on_overwrite_toggle
         self.chk_overwrite.Unchecked += self.on_overwrite_toggle
         self.cb_dup.SelectionChanged += self.on_dup_changed
+        self.cb_source.SelectionChanged += self.on_settings_changed
+        self.tb_margin.TextChanged += self.on_settings_changed
+
+    def _fill_help_search(self):
+        m = parse_m(self.tb_margin.Text)
+        self.tb_help_search.Text = (
+            u"• Contorno do ambiente: os elementos que delimitam o ambiente em planta (face de acabamento).\n"
+            u"• Volume do ambiente: o piso abaixo, o forro ou a laje acima e as faces laterais.\n"
+            u"• Superfícies do ambiente: tudo o que estiver dentro do ambiente, de 2 cm abaixo do piso "
+            u"até {} m acima do topo (margem de busca do forro).\n"
+            u"• Elementos que apenas faceiam o ambiente pelo lado de fora contam somente para o forro.\n"
+            u"• Molduras de parede e demais elementos com Keynote de acabamento: pelo ambiente que contém "
+            u"o elemento. Uma moldura que passa por vários ambientes entra em todos.\n"
+            u"• Paredes de acabamento que não são Room Bounding também são encontradas, pela busca nas "
+            u"superfícies.".format(fmt_m(m if m is not None else SEARCH_ABOVE_M)))
 
     # ---------------- parameters ----------------
     def _resolve_params(self):
@@ -1715,14 +1925,23 @@ class RoomFinishWindow(forms.WPFWindow):
             t = self.targets.get(key)
             if t is None:
                 continue
-            dup = u" - duplicated name!" if name in self.dups else u""
-            lines.append(u"{}: {} parameter{}".format(name, t.kind, dup))
+            dup = u" - nome duplicado!" if name in self.dups else u""
+            lines.append(u"{}: parâmetro {}{}".format(finish_label(key), KIND_LABELS.get(t.kind, t.kind), dup))
         lines.extend(self.problems)
         self.tb_params.Text = u"\n".join(lines)
 
     def on_dup_changed(self, sender, args):
         self._resolve_params()
         self._invalidate_preview()
+
+    def on_settings_changed(self, sender, args):
+        """Keynote source or ceiling margin changed: the scan is out of date."""
+        self._fill_help_search()
+        if self.records:
+            self.records = []
+            self._invalidate_preview()
+            self.btn_preview.IsEnabled = False
+            self.tb_status.Text = u"Configuração alterada - clique em Analisar Modelo novamente."
 
     def _invalidate_preview(self):
         self.grid.ItemsSource = None
@@ -1732,20 +1951,26 @@ class RoomFinishWindow(forms.WPFWindow):
 
     # ---------------- READ + ANALYZE ----------------
     def on_scan(self, sender, args):
+        margin = parse_m(self.tb_margin.Text)
+        if margin is None:
+            forms.alert(u"Margem de busca do forro inválida: '{}'.\n\nUse um valor em metros entre 0 e 10 "
+                        u"(ex.: 1,00).".format(to_unicode(self.tb_margin.Text)))
+            return
+        self.search_above_m = margin
         self.mode = KEYNOTE_SOURCES[max(0, self.cb_source.SelectedIndex)][0]
         self._invalidate_preview()
-        output.print_md(u"**[2/6] Rooms collected:** {} room(s).".format(len(self.rooms)))
+        output.print_md(u"**[2/6] Ambientes coletados:** {} ambiente(s).".format(len(self.rooms)))
         try:
-            scanner = Scanner(doc, self.mode)
+            scanner = Scanner(doc, self.mode, margin)
         except Exception as ex:
-            output.print_md(u"**ERROR:** could not start the scan: `{}`".format(to_unicode(ex)))
-            forms.alert(u"Could not start the scan:\n\n{}".format(to_unicode(ex)))
+            output.print_md(u"**ERRO:** não foi possível iniciar a análise: `{}`".format(to_unicode(ex)))
+            forms.alert(u"Não foi possível iniciar a análise:\n\n{}".format(to_unicode(ex)))
             return
         self.keynote_texts = scanner.keynote_texts
         records = []
         cancelled = False
         n = len(self.rooms)
-        with forms.ProgressBar(title="Scanning rooms ({value} of {max_value})", cancellable=True) as pb:
+        with forms.ProgressBar(title=u"Analisando ambientes ({value} de {max_value})", cancellable=True) as pb:
             for i, room in enumerate(self.rooms):
                 if pb.cancelled:
                     cancelled = True
@@ -1758,7 +1983,7 @@ class RoomFinishWindow(forms.WPFWindow):
         if not cancelled:
             # every element with a finish Keynote (and every wall sweep) that no
             # room claimed yet: which room contains it?
-            with forms.ProgressBar(title="Assigning elements to rooms ({value} of {max_value})",
+            with forms.ProgressBar(title=u"Associando elementos aos ambientes ({value} de {max_value})",
                                    cancellable=True) as pb:
                 def progress(i, total):
                     if pb.cancelled:
@@ -1769,28 +1994,30 @@ class RoomFinishWindow(forms.WPFWindow):
                 self.contain_stats = scanner.contain_pass(records, progress)
                 cancelled = pb.cancelled
         if cancelled:
-            output.print_md(u"Scan cancelled - nothing was reported.")
-            self.tb_status.Text = u"Scan cancelled."
+            output.print_md(u"Análise cancelada - nenhum relatório foi gerado.")
+            self.tb_status.Text = u"Análise cancelada."
             return
         for rec in records:
             scanner.finish_room(rec)
         cs = self.contain_stats
-        output.print_md(u"**Room containment:** {} element(s) tested with GetRoomAtPoint; wall sweeps: {} in the "
-                        u"model, {} inside a room. **{} element(s) with a finish Keynote are not in any room.**".format(
+        output.print_md(u"**Ambiente por ponto:** {} elemento(s) testados com GetRoomAtPoint; molduras de parede: "
+                        u"{} no modelo, {} dentro de um ambiente. **{} elemento(s) com Keynote de acabamento não "
+                        u"estão em nenhum ambiente.**".format(
                             cs["tested"], cs["sweeps"], cs["sweeps_in_rooms"], len(cs["unassigned"])))
         for u in cs["unassigned"][:40]:
-            output.print_md(u"- {} {} `{}` - {}".format(u["cat"], log_link(u), u["kn"] or u"(no Keynote)", u["reason"]))
+            output.print_md(u"- {} {} `{}` - {}".format(u["cat"], log_link(u), u["kn"] or u"(sem Keynote)", u["reason"]))
         if len(cs["unassigned"]) > 40:
-            output.print_md(u"- ... and {} more (see the HTML report).".format(len(cs["unassigned"]) - 40))
+            output.print_md(u"- ... e mais {} (veja o relatório HTML).".format(len(cs["unassigned"]) - 40))
 
         self.records = sort_records(records)
         no_bound = [r for r in self.records if r["boundary"] != "ok"]
-        output.print_md(u"**[3/6] Room boundaries analyzed:** {} room(s) with boundaries, {} without "
-                        u"(boundary location: {}).".format(len(self.records) - len(no_bound), len(no_bound),
-                                                           to_unicode(BOUNDARY_LOCATION)))
+        output.print_md(u"**[3/6] Contornos analisados:** {} ambiente(s) com contorno, {} sem contorno "
+                        u"(contorno na face de acabamento; margem de busca do forro: {} m).".format(
+                            len(self.records) - len(no_bound), len(no_bound), fmt_m(margin)))
         for r in no_bound[:30]:
-            output.print_md(u"- Room {} `{}` - {}".format(
-                log_link({"id": r["info"]["id"], "link": u""}), r["info"]["number"], r["boundary"]))
+            output.print_md(u"- Ambiente {} `{}` - {}".format(
+                log_link({"id": r["info"]["id"], "link": u""}), r["info"]["number"],
+                BOUNDARY_LABELS.get(r["boundary"], r["boundary"])))
 
         compute_changes(self.records, self.targets)
         for r in self.records:
@@ -1804,37 +2031,36 @@ class RoomFinishWindow(forms.WPFWindow):
     def _log_keynotes(self):
         issues = [(r, iss) for r in self.records for iss in r.get("issues", [])]
         mismatches = [(r, m) for r in self.records for f in r["finishes"].values() for m in f["mismatches"]]
-        output.print_md(u"**[4/6] Keynotes collected** (source: {}; classified by prefix: {}). "
-                        u"{} element(s) without Keynote, {} prefix/category mismatch(es).".format(
+        output.print_md(u"**[4/6] Keynotes coletadas** (fonte: {}; classificação pelo prefixo: {}). "
+                        u"{} elemento(s) sem Keynote, {} inconsistência(s) de prefixo/categoria.".format(
                             dict(KEYNOTE_SOURCES)[self.mode],
-                            u", ".join(u"{} = {}".format(p, FINISH_PARAMS[f]) for p, f in PREFIX_RULES.items()),
+                            u", ".join(u"{} = {}".format(p, finish_label(f)) for p, f in PREFIX_RULES.items()),
                             len(issues), len(mismatches)))
         if not self.keynote_texts:
-            output.print_md(u"_Keynote file not loaded or empty - keys are not validated against it._")
+            output.print_md(u"_Arquivo de Keynotes não carregado ou vazio - as chaves não são validadas._")
         for r, iss in issues[:60]:
-            output.print_md(u"- Room `{}`: {} {} - {}".format(
+            output.print_md(u"- Ambiente `{}`: {} {} - {}".format(
                 r["info"]["number"], iss["cat"], log_link(iss), iss["msg"]))
         if len(issues) > 60:
-            output.print_md(u"- ... and {} more (see the HTML report).".format(len(issues) - 60))
+            output.print_md(u"- ... e mais {} (veja o relatório HTML).".format(len(issues) - 60))
         for r, m in mismatches[:40]:
-            output.print_md(u"- **Mismatch** Room `{}`: {}".format(r["info"]["number"], m))
+            output.print_md(u"- **Inconsistência** Ambiente `{}`: {}".format(r["info"]["number"], m))
         if len(mismatches) > 40:
-            output.print_md(u"- ... and {} more mismatches (see the HTML report).".format(len(mismatches) - 40))
+            output.print_md(u"- ... e mais {} inconsistências (veja o relatório HTML).".format(len(mismatches) - 40))
 
     def _summary(self):
-        recs = self.records
-        st = [r["status"] for r in recs]
-        return (u"Scanned {} rooms - {} OK, {} warning, {} error. "
-                u"Review, then click Preview Changes.".format(
-                    len(recs), st.count("OK"), st.count("WARNING"), st.count("ERROR")))
+        st = [r["status"] for r in self.records]
+        return (u"{} ambientes analisados - {} OK, {} com atenção, {} com erro. "
+                u"Revise e clique em Pré-visualizar Alterações.".format(
+                    len(st), st.count("OK"), st.count("WARNING"), st.count("ERROR")))
 
     def _write_report(self):
         try:
             data = build_json(self.records, self.targets, self.mode, self.keynote_texts, self.problems,
-                              self.contain_stats)
+                              self.contain_stats, self.search_above_m)
             write_report(data)
         except Exception as ex:
-            output.print_md(u"**ERROR:** could not write the HTML report: `{}`".format(to_unicode(ex)))
+            output.print_md(u"**ERRO:** não foi possível gerar o relatório HTML: `{}`".format(to_unicode(ex)))
 
     # ---------------- PREVIEW ----------------
     def on_preview(self, sender, args):
@@ -1843,9 +2069,9 @@ class RoomFinishWindow(forms.WPFWindow):
         compute_changes(self.records, self.targets)       # re-read current values
         allow_ow = bool(self.chk_overwrite.IsChecked)
         t = DataTable("preview")
-        for col, typ in (("Apply", Boolean), ("Editable", Boolean), ("Room", String), ("Name", String),
-                         ("Level", String), ("Parameter", String), ("Current", String), ("New", String),
-                         ("Change", String), ("Note", String)):
+        for col, typ in (("Apply", Boolean), ("Editable", Boolean), ("Kind", String), ("Room", String),
+                         ("Name", String), ("Level", String), ("Parameter", String), ("Current", String),
+                         ("New", String), ("Change", String), ("Note", String)):
             t.Columns.Add(col, clr.GetClrType(typ))
         self.row_keys = []
         counts = {"Fill": 0, "Overwrite": 0, "Keep": 0}
@@ -1863,30 +2089,31 @@ class RoomFinishWindow(forms.WPFWindow):
                 editable = not block
                 row["Editable"] = editable
                 row["Apply"] = editable and (ch["kind"] == "Fill" or allow_ow)
+                row["Kind"] = ch["kind"]
                 row["Room"] = rec["info"]["number"]
                 row["Name"] = rec["info"]["name"]
                 row["Level"] = rec["info"]["level"]
-                row["Parameter"] = FINISH_PARAMS[key]
+                row["Parameter"] = finish_label(key)
                 row["Current"] = ch["current"]
                 row["New"] = ch["new"]
-                row["Change"] = ch["kind"]
+                row["Change"] = CHANGE_LABELS.get(ch["kind"], ch["kind"])
                 note = block or u""
                 if rec["finishes"][key]["mismatches"]:
-                    note = (note + u"; " if note else u"") + u"prefix/category mismatch - see report"
+                    note = (note + u"; " if note else u"") + u"inconsistência de prefixo/categoria - veja o relatório"
                 row["Note"] = note
                 t.Rows.Add(row)
                 self.row_keys.append((rec, key))
         self.table = t
         self.grid.ItemsSource = t.DefaultView
         self.btn_update.IsEnabled = t.Rows.Count > 0
-        output.print_md(u"**[5/6] Preview generated:** {} to fill, {} would overwrite a different value, "
-                        u"{} existing value(s) kept where nothing was detected.".format(
+        output.print_md(u"**[5/6] Pré-visualização gerada:** {} a preencher, {} substituiriam um valor diferente, "
+                        u"{} valor(es) existentes mantidos onde nada foi encontrado.".format(
                             counts["Fill"], counts["Overwrite"], counts["Keep"]))
         if t.Rows.Count == 0:
-            self.tb_status.Text = u"Nothing to update - every detected value is already in the rooms."
+            self.tb_status.Text = u"Nada a atualizar - todos os valores encontrados já estão nos ambientes."
         else:
-            self.tb_status.Text = (u"{} value(s) to fill, {} overwrite(s) (amber - ticked only if overwriting "
-                                   u"is allowed). Existing values are never cleared.".format(
+            self.tb_status.Text = (u"{} valor(es) a preencher, {} a sobrescrever (em âmbar - marcados só se a opção "
+                                   u"de sobrescrever estiver ativa). Valores existentes nunca são apagados.".format(
                                        counts["Fill"], counts["Overwrite"]))
 
     def on_overwrite_toggle(self, sender, args):
@@ -1894,7 +2121,7 @@ class RoomFinishWindow(forms.WPFWindow):
             return
         allow = bool(self.chk_overwrite.IsChecked)
         for row in self.table.Rows:
-            if row["Change"] == "Overwrite" and row["Editable"]:
+            if row["Kind"] == "Overwrite" and row["Editable"]:
                 row["Apply"] = allow
 
     # ---------------- CONFIRM + TRANSACTION + WRITE ----------------
@@ -1912,18 +2139,18 @@ class RoomFinishWindow(forms.WPFWindow):
                 rec, key = self.row_keys[i]
                 todo.append((rec, key, rec["changes"][key]["new"], rec["changes"][key]["kind"]))
         if not todo:
-            forms.alert(u"No rows are ticked in the preview.")
+            forms.alert(u"Nenhuma linha está marcada na pré-visualização.")
             return
         n_rooms = len(set(eid_int(r["room"].Id) for r, _, _, _ in todo))
         n_ow = len([1 for _, _, _, k in todo if k == "Overwrite"])
-        msg = u"Write {} value(s) to {} room(s)?".format(len(todo), n_rooms)
+        msg = u"Gravar {} valor(es) em {} ambiente(s)?".format(len(todo), n_rooms)
         if n_ow:
-            msg += u"\n\n{} of them REPLACE an existing different value.".format(n_ow)
+            msg += u"\n\n{} deles SUBSTITUEM um valor existente diferente.".format(n_ow)
         if not forms.alert(msg, yes=True, no=True):
             return
 
         written, errors = [], []
-        tx = DB.Transaction(doc, "Room Finish Keynotes - update rooms")
+        tx = DB.Transaction(doc, u"Acabamentos por Keynote - atualizar ambientes")
         try:
             tx.Start()
             for rec, key, value, kind in todo:
@@ -1931,21 +2158,21 @@ class RoomFinishWindow(forms.WPFWindow):
                 try:
                     p = target.get(rec["room"])
                     if p is None or p.IsReadOnly:
-                        errors.append((rec, key, u"parameter missing or read-only on this room"))
+                        errors.append((rec, key, u"parâmetro ausente ou somente leitura neste ambiente"))
                     elif p.Set(value):
                         written.append((rec, key))
                     else:
-                        errors.append((rec, key, u"Revit refused the value"))
+                        errors.append((rec, key, u"o Revit recusou o valor"))
                 except Exception as ex:
                     errors.append((rec, key, to_unicode(ex)))
             status = tx.Commit()
             if status != DB.TransactionStatus.Committed:
-                raise Exception(u"Transaction ended with status {}".format(status))
+                raise Exception(u"A transação terminou com status {}".format(status))
         except Exception as ex:
             if tx.HasStarted() and not tx.HasEnded():
                 tx.RollBack()
-            output.print_md(u"**ERROR:** update rolled back - nothing was written. `{}`".format(to_unicode(ex)))
-            forms.alert(u"The update failed and was rolled back. Nothing was written.\n\n{}".format(to_unicode(ex)))
+            output.print_md(u"**ERRO:** atualização desfeita - nada foi gravado. `{}`".format(to_unicode(ex)))
+            forms.alert(u"A atualização falhou e foi desfeita. Nada foi gravado.\n\n{}".format(to_unicode(ex)))
             return
         finally:
             tx.Dispose()
@@ -1953,27 +2180,27 @@ class RoomFinishWindow(forms.WPFWindow):
         for rec, key in written:
             rec["updated"] = True
         for rec, key, err in errors:
-            rec["write_error"] = (rec.get("write_error") or u"") + u"{}: {}. ".format(FINISH_PARAMS[key], err)
-        output.print_md(u"**[6/6] Rooms updated:** {} value(s) written to {} room(s), {} error(s).".format(
+            rec["write_error"] = (rec.get("write_error") or u"") + u"{}: {}. ".format(finish_label(key), err)
+        output.print_md(u"**[6/6] Ambientes atualizados:** {} valor(es) gravados em {} ambiente(s), {} erro(s).".format(
             len(written), len(set(eid_int(r["room"].Id) for r, _ in written)), len(errors)))
         for rec, key, err in errors[:40]:
-            output.print_md(u"- **ERROR** Room {} `{}` {}: {}".format(
-                log_link({"id": rec["info"]["id"], "link": u""}), rec["info"]["number"], FINISH_PARAMS[key], err))
+            output.print_md(u"- **ERRO** Ambiente {} `{}` {}: {}".format(
+                log_link({"id": rec["info"]["id"], "link": u""}), rec["info"]["number"], finish_label(key), err))
 
         compute_changes(self.records, self.targets)      # read back what is in Revit now
         for r in self.records:
             r["status"] = room_status(r)
         self._write_report()
         self._invalidate_preview()
-        self.tb_status.Text = u"Updated {} value(s){}. Open the HTML report to review.".format(
-            len(written), u" - {} error(s), see the log".format(len(errors)) if errors else u"")
+        self.tb_status.Text = u"{} valor(es) gravados{}. Abra o relatório HTML para conferir.".format(
+            len(written), u" - {} erro(s), veja o log".format(len(errors)) if errors else u"")
 
     # ---------------- report / close ----------------
     def on_report(self, sender, args):
         if not os.path.exists(REPORT_PATH):
             self._write_report()
         if not open_in_browser(REPORT_PATH):
-            forms.alert(u"Report saved but could not be opened automatically:\n\n{}".format(REPORT_PATH))
+            forms.alert(u"O relatório foi salvo, mas não abriu automaticamente:\n\n{}".format(REPORT_PATH))
 
     def on_cancel(self, sender, args):
         self.Close()
@@ -1993,19 +2220,19 @@ def collect_rooms():
 
 
 def main():
-    output.print_md(u"**[1/6] Script started.** Document: `{}`".format(to_unicode(doc.Title)))
+    output.print_md(u"**[1/6] Script iniciado.** Documento: `{}`".format(to_unicode(doc.Title)))
     if doc.IsFamilyDocument:
-        forms.alert(u"Open a project, not a family.", exitscript=True)
+        forms.alert(u"Abra um projeto, não uma família.", exitscript=True)
     rooms = collect_rooms()
     if not rooms:
-        forms.alert(u"No Rooms found in this project.", exitscript=True)
+        forms.alert(u"Nenhum ambiente encontrado neste projeto.", exitscript=True)
     win = RoomFinishWindow(rooms)
     for msg in win.problems:
-        output.print_md(u"**ERROR:** {}".format(msg))
+        output.print_md(u"**ERRO:** {}".format(msg))
     if win.problems:
         forms.alert(u"\n".join(win.problems) +
-                    u"\n\nThese parameters will be reported but not written. "
-                    u"Nothing is created automatically.")
+                    u"\n\nEsses parâmetros aparecem no relatório, mas não serão gravados. "
+                    u"Nada é criado automaticamente.")
     win.ShowDialog()
 
 
