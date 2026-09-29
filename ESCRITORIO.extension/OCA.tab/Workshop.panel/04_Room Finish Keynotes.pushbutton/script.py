@@ -1784,10 +1784,6 @@ XAML = u"""
             <StackPanel Grid.Column="2">
               <TextBlock Style="{StaticResource Label}" Text="Parâmetros do ambiente"/>
               <TextBlock x:Name="tb_params" Style="{StaticResource Hint}" LineHeight="18"/>
-              <CheckBox x:Name="chk_overwrite" Margin="0,14,0,0" ToolTipService.ShowDuration="20000"
-                        ToolTip="Desmarcado: só preenche parâmetros vazios. Marcado: também substitui valores diferentes já existentes (linhas em âmbar na pré-visualização). Valores existentes nunca são apagados.">
-                <TextBlock TextWrapping="Wrap" Text="Permitir sobrescrever valores existentes diferentes (senão, só os parâmetros vazios são preenchidos)"/>
-              </CheckBox>
             </StackPanel>
           </Grid>
 
@@ -1798,7 +1794,7 @@ XAML = u"""
                     CanUserDeleteRows="False" HeadersVisibility="Column" GridLinesVisibility="Horizontal"
                     HorizontalGridLinesBrush="#1B2740" Background="#0B1120" BorderBrush="#23324F"
                     RowHeaderWidth="0" SelectionMode="Extended" ToolTipService.ShowDuration="20000"
-                    ToolTip="Pré-visualização: desmarque uma linha para não gravar aquele valor. Linhas em âmbar substituem um valor existente.">
+                    ToolTip="Pré-visualização: todas as linhas vêm marcadas. Desmarque uma linha para não gravar aquele valor. Linhas em âmbar substituem um valor existente.">
             <DataGrid.Columns>
               <DataGridTemplateColumn Header="Aplicar" Width="60">
                 <DataGridTemplateColumn.CellTemplate>
@@ -1836,10 +1832,10 @@ XAML = u"""
             <TextBlock x:Name="tb_help_search" Style="{StaticResource HelpBody}"/>
 
             <TextBlock Style="{StaticResource HelpTitle}" Text="PROTEÇÕES"/>
-            <TextBlock Style="{StaticResource HelpBody}" Text="• Piso, rodapé e parede do pavimento de cima ou de baixo não entram no ambiente.&#10;• Nada é gravado até você clicar em Atualizar Ambientes.&#10;• Parâmetros vazios são preenchidos; valores diferentes só são substituídos com a opção de sobrescrever marcada.&#10;• Se nada for encontrado para um parâmetro, o valor atual é mantido - nunca é apagado.&#10;• Tudo é gravado em uma única transação: Ctrl+Z no Revit desfaz a atualização inteira.&#10;• Ambientes em uso por outro usuário (workset) aparecem bloqueados na pré-visualização."/>
+            <TextBlock Style="{StaticResource HelpBody}" Text="• Piso, rodapé e parede do pavimento de cima ou de baixo não entram no ambiente.&#10;• Nada é gravado até você clicar em Atualizar Ambientes.&#10;• Valores diferentes dos atuais aparecem em âmbar na pré-visualização e na confirmação antes de gravar; desmarque a linha para manter o valor atual.&#10;• Se nada for encontrado para um parâmetro, o valor atual é mantido - nunca é apagado.&#10;• Tudo é gravado em uma única transação: Ctrl+Z no Revit desfaz a atualização inteira.&#10;• Ambientes em uso por outro usuário (workset) aparecem bloqueados na pré-visualização."/>
 
             <TextBlock Style="{StaticResource HelpTitle}" Text="PASSO A PASSO"/>
-            <TextBlock Style="{StaticResource HelpBody}" Text="1. Analisar Modelo - lê todos os ambientes. Não altera nada.&#10;2. Pré-visualizar Alterações - confira o valor atual e o novo valor de cada parâmetro. Linhas em âmbar substituem um valor existente.&#10;3. Atualizar Ambientes - grava as linhas marcadas.&#10;4. Abrir Relatório HTML - resumo, filtros e o detalhe de onde veio cada Keynote."/>
+            <TextBlock Style="{StaticResource HelpBody}" Text="1. Analisar Modelo - lê todos os ambientes e já mostra a pré-visualização: valor atual e novo valor de cada parâmetro. Não altera nada.&#10;2. Confira a lista. Todas as linhas vêm marcadas; desmarque as que não quer gravar. Linhas em âmbar substituem um valor existente.&#10;3. Atualizar Ambientes - grava as linhas marcadas.&#10;4. Abrir Relatório HTML - resumo, filtros e o detalhe de onde veio cada Keynote."/>
 
             <TextBlock Style="{StaticResource HelpTitle}" Text="QUANDO ALGO NÃO APARECE"/>
             <TextBlock Style="{StaticResource HelpBody}" Text="• Forro não encontrado: aumente a margem de busca do forro ou o Limit Offset do ambiente e analise de novo.&#10;• Elemento sem Keynote: aparece no relatório como &quot;Keynote ausente&quot;.&#10;• Elemento com Keynote de acabamento fora de qualquer ambiente: seção &quot;Não atribuídos a nenhum ambiente&quot; no relatório.&#10;• Prefixo que não combina com a categoria (ex.: RE01 num piso): aparece como inconsistência, mas o valor é gravado pela regra do prefixo.&#10;• No relatório, clique num ambiente para ver cada elemento encontrado, a Keynote e o motivo de cada valor ignorado."/>
@@ -1850,9 +1846,7 @@ XAML = u"""
 
     <StackPanel Grid.Row="3" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,14,0,0">
       <Button x:Name="btn_scan" Content="Analisar Modelo" ToolTipService.ShowDuration="20000"
-              ToolTip="Lê o modelo e analisa todos os ambientes. Não altera nada."/>
-      <Button x:Name="btn_preview" Content="Pré-visualizar Alterações" IsEnabled="False" ToolTipService.ShowDuration="20000"
-              ToolTip="Mostra, ambiente por ambiente, o valor atual e o novo valor de cada parâmetro."/>
+              ToolTip="Lê o modelo, analisa todos os ambientes e mostra a pré-visualização com o valor atual e o novo valor de cada parâmetro. Não altera nada."/>
       <Button x:Name="btn_update" Content="Atualizar Ambientes" IsEnabled="False" Foreground="#3DDCB4" BorderBrush="#2F7F6B"
               ToolTipService.ShowDuration="20000"
               ToolTip="Grava as linhas marcadas na pré-visualização, em uma única transação (Ctrl+Z desfaz)."/>
@@ -1894,12 +1888,9 @@ class RoomFinishWindow(forms.WPFWindow):
         self._resolve_params()
 
         self.btn_scan.Click += self.on_scan
-        self.btn_preview.Click += self.on_preview
         self.btn_update.Click += self.on_update
         self.btn_report.Click += self.on_report
         self.btn_cancel.Click += self.on_cancel
-        self.chk_overwrite.Checked += self.on_overwrite_toggle
-        self.chk_overwrite.Unchecked += self.on_overwrite_toggle
         self.cb_dup.SelectionChanged += self.on_dup_changed
         self.cb_source.SelectionChanged += self.on_settings_changed
         self.tb_margin.TextChanged += self.on_settings_changed
@@ -1940,7 +1931,6 @@ class RoomFinishWindow(forms.WPFWindow):
         if self.records:
             self.records = []
             self._invalidate_preview()
-            self.btn_preview.IsEnabled = False
             self.tb_status.Text = u"Configuração alterada - clique em Analisar Modelo novamente."
 
     def _invalidate_preview(self):
@@ -2024,9 +2014,9 @@ class RoomFinishWindow(forms.WPFWindow):
             r["status"] = room_status(r)
         self._log_keynotes()
         self._write_report()
-        self.btn_preview.IsEnabled = True
         self.btn_report.IsEnabled = True
-        self.tb_status.Text = self._summary()
+        self.show_preview()
+        self.tb_status.Text = self._summary() + u" " + self.tb_status.Text
 
     def _log_keynotes(self):
         issues = [(r, iss) for r in self.records for iss in r.get("issues", [])]
@@ -2050,8 +2040,7 @@ class RoomFinishWindow(forms.WPFWindow):
 
     def _summary(self):
         st = [r["status"] for r in self.records]
-        return (u"{} ambientes analisados - {} OK, {} com atenção, {} com erro. "
-                u"Revise e clique em Pré-visualizar Alterações.".format(
+        return (u"{} ambientes analisados - {} OK, {} com atenção, {} com erro.".format(
                     len(st), st.count("OK"), st.count("WARNING"), st.count("ERROR")))
 
     def _write_report(self):
@@ -2063,11 +2052,12 @@ class RoomFinishWindow(forms.WPFWindow):
             output.print_md(u"**ERRO:** não foi possível gerar o relatório HTML: `{}`".format(to_unicode(ex)))
 
     # ---------------- PREVIEW ----------------
-    def on_preview(self, sender, args):
+    def show_preview(self, log=True):
+        """Fill the preview grid. Every Fill / Overwrite row starts ticked;
+        overwrites are shown in amber and counted in the confirmation."""
         if not self.records:
             return
         compute_changes(self.records, self.targets)       # re-read current values
-        allow_ow = bool(self.chk_overwrite.IsChecked)
         t = DataTable("preview")
         for col, typ in (("Apply", Boolean), ("Editable", Boolean), ("Kind", String), ("Room", String),
                          ("Name", String), ("Level", String), ("Parameter", String), ("Current", String),
@@ -2088,7 +2078,7 @@ class RoomFinishWindow(forms.WPFWindow):
                 row = t.NewRow()
                 editable = not block
                 row["Editable"] = editable
-                row["Apply"] = editable and (ch["kind"] == "Fill" or allow_ow)
+                row["Apply"] = editable
                 row["Kind"] = ch["kind"]
                 row["Room"] = rec["info"]["number"]
                 row["Name"] = rec["info"]["name"]
@@ -2106,23 +2096,16 @@ class RoomFinishWindow(forms.WPFWindow):
         self.table = t
         self.grid.ItemsSource = t.DefaultView
         self.btn_update.IsEnabled = t.Rows.Count > 0
-        output.print_md(u"**[5/6] Pré-visualização gerada:** {} a preencher, {} substituiriam um valor diferente, "
-                        u"{} valor(es) existentes mantidos onde nada foi encontrado.".format(
-                            counts["Fill"], counts["Overwrite"], counts["Keep"]))
+        if log:
+            output.print_md(u"**[5/6] Pré-visualização gerada:** {} a preencher, {} substituem um valor diferente, "
+                            u"{} valor(es) existentes mantidos onde nada foi encontrado.".format(
+                                counts["Fill"], counts["Overwrite"], counts["Keep"]))
         if t.Rows.Count == 0:
             self.tb_status.Text = u"Nada a atualizar - todos os valores encontrados já estão nos ambientes."
         else:
-            self.tb_status.Text = (u"{} valor(es) a preencher, {} a sobrescrever (em âmbar - marcados só se a opção "
-                                   u"de sobrescrever estiver ativa). Valores existentes nunca são apagados.".format(
+            self.tb_status.Text = (u"{} valor(es) a preencher e {} a substituir (em âmbar). Desmarque o que não "
+                                   u"quiser gravar e clique em Atualizar Ambientes.".format(
                                        counts["Fill"], counts["Overwrite"]))
-
-    def on_overwrite_toggle(self, sender, args):
-        if self.table is None:
-            return
-        allow = bool(self.chk_overwrite.IsChecked)
-        for row in self.table.Rows:
-            if row["Kind"] == "Overwrite" and row["Editable"]:
-                row["Apply"] = allow
 
     # ---------------- CONFIRM + TRANSACTION + WRITE ----------------
     def on_update(self, sender, args):
@@ -2191,7 +2174,7 @@ class RoomFinishWindow(forms.WPFWindow):
         for r in self.records:
             r["status"] = room_status(r)
         self._write_report()
-        self._invalidate_preview()
+        self.show_preview(log=False)                     # what is left (unticked / blocked rows)
         self.tb_status.Text = u"{} valor(es) gravados{}. Abra o relatório HTML para conferir.".format(
             len(written), u" - {} erro(s), veja o log".format(len(errors)) if errors else u"")
 
