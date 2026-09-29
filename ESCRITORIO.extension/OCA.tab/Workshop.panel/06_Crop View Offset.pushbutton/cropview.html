@@ -114,7 +114,7 @@ const nErr = results.filter(r => r.status === "error").length;
 document.getElementById("cards").innerHTML = [
   {v: esc(DATA.mode), l: "Ação", c: "var(--cy)", txt: true},
   {v: num(DATA.margin, 2) + ' <small>m</small>', l: "Margem", c: "var(--amber)"},
-  {v: nOk + nWarn, l: "Vistas ajustadas", c: "var(--teal)"},
+  {v: nOk + nWarn, l: "Vista ajustada", c: "var(--teal)"},
   {v: nErr, l: "Falhas", c: nErr ? "var(--mag)" : "var(--dim)"},
   {v: (DATA.warnings || []).length, l: "Avisos", c: (DATA.warnings||[]).length ? "var(--amber)" : "var(--dim)"},
 ].map(k => `<div class="card" style="--c:${k.c}"><div class="v${k.txt ? " txt" : ""}">${k.v}</div><div class="l">${k.l}</div></div>`).join("");
@@ -143,6 +143,7 @@ document.getElementById("views").innerHTML = results.length ? results.map(r => {
       ["Elementos", r.elements.map(esc).join("<br>")],
     ] : [
       ["Elementos", r.elements.map(esc).join("<br>")],
+      ["Title on Sheet (EN)", r.titleEn ? esc(r.titleEn) : "—"],
       ["Recorte", num(r.width,2) + " × " + num(r.height,2) + " m"],
       ["Inclinação", num(r.angle,2) + "° em relação à vista"],
       ["Método", esc(r.method)],

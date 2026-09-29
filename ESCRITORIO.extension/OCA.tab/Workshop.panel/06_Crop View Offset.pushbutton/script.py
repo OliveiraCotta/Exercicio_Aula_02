@@ -4,17 +4,20 @@
 Fluxo:
   1. Usa a seleção atual (ou pede para selecionar) Linhas, Terreno, Pisos,
      Paredes ou Ambientes.
-  2. Pergunta a margem (m) e o que fazer:
-       - criar novas vistas de planta (Piso, Forro, Estrutural, Área);
-       - criar vistas de chamada (Callout) na vista ativa;
+  2. Pergunta a margem (m) e o que fazer - sempre UMA vista para toda a seleção:
+       - criar nova vista de planta (Piso, Forro, Estrutural, Área);
+       - criar vista de chamada (Callout) na vista ativa;
        - recortar a vista ativa.
      Antes de abrir o diálogo, cada modo é validado contra a vista ativa e o
      modelo; modos inválidos ficam desabilitados com o motivo exibido.
-  3. Calcula o retângulo ORIENTADO ao elemento (as 4 quinas, paralelo e
+  3. VIEW NAME escolhido na lista do padrão do escritório; o parâmetro
+     "Title on Sheet - English" é preenchido automaticamente com o par em
+     inglês. Vistas novas ficam sem view template.
+  4. Calcula o retângulo ORIENTADO ao elemento (as 4 quinas, paralelo e
      perpendicular à direção predominante do elemento) + margem. A vista
      nunca é girada: o recorte é sempre aplicado como forma de 4 lados
      (crop region shape), inclinada quando o elemento está girado.
-  4. Gera um relatório HTML com o desenho de cada recorte aplicado.
+  5. Gera um relatório HTML com o desenho do recorte aplicado.
 """
 
 __title__ = "Crop View\nOffset"
@@ -417,7 +420,7 @@ def apply_crop(view, calc):
 
 
 # ------------------------------------------------------------------
-# 5. Níveis, tipos de vista e nomes
+# 5. Níveis e tipos de vista
 # ------------------------------------------------------------------
 LEVELS = sorted(DB.FilteredElementCollector(doc).OfClass(DB.Level),
                 key=lambda l: l.ProjectElevation)
@@ -442,10 +445,29 @@ def element_level_id(el):
     return None
 
 
+def pick_plan_level(geoms):
+    """Uma única planta: nível da vista ativa se algum elemento estiver nele,
+    senão o nível mais baixo entre os elementos. Devolve (Level, outros nomes)."""
+    found = {}
+    for g in geoms:
+        lid = element_level_id(g.el)
+        if lid is not None:
+            found[eid_int(lid)] = doc.GetElement(lid)
+    if not found:
+        return None, []
+    gl = getattr(active_view, "GenLevel", None)
+    if gl is not None and eid_int(gl.Id) in found:
+        chosen = found[eid_int(gl.Id)]
+    else:
+        chosen = min(found.values(), key=lambda l: l.ProjectElevation)
+    others = [to_unicode(l.Name) for k, l in found.items() if k != eid_int(chosen.Id)]
+    return chosen, others
+
+
 PLAN_FAMILIES = (
-    (DB.ViewFamily.FloorPlan, u"Planta de Piso", u"PLANTA"),
-    (DB.ViewFamily.CeilingPlan, u"Planta de Forro", u"FORRO"),
-    (DB.ViewFamily.StructuralPlan, u"Planta Estrutural", u"ESTRUTURAL"),
+    (DB.ViewFamily.FloorPlan, u"Planta de Piso"),
+    (DB.ViewFamily.CeilingPlan, u"Planta de Forro"),
+    (DB.ViewFamily.StructuralPlan, u"Planta Estrutural"),
 )
 PLAN_VIEWTYPES = (VT.FloorPlan, VT.CeilingPlan, VT.EngineeringPlan)
 CROPPABLE_VIEWTYPES = PLAN_VIEWTYPES + (VT.AreaPlan, VT.Section, VT.Elevation, VT.Detail)
@@ -460,15 +482,15 @@ def _vft_name(vft):
 
 def plan_type_items():
     items = []
-    for fam, label, prefix in PLAN_FAMILIES:
+    for fam, label in PLAN_FAMILIES:
         for vft in VIEW_FAMILY_TYPES:
             if vft.ViewFamily == fam:
                 items.append({"label": u"{}: {}".format(label, _vft_name(vft)),
-                              "kind": "plan", "id": vft.Id, "prefix": prefix})
+                              "kind": "plan", "id": vft.Id})
     if any(v.ViewFamily == DB.ViewFamily.AreaPlan for v in VIEW_FAMILY_TYPES):
         for scheme in DB.FilteredElementCollector(doc).OfClass(DB.AreaScheme):
             items.append({"label": u"Planta de Área: {}".format(to_unicode(scheme.Name)),
-                          "kind": "area", "id": scheme.Id, "prefix": u"ÁREA"})
+                          "kind": "area", "id": scheme.Id})
     return items
 
 
@@ -486,23 +508,8 @@ def callout_type_items(parent):
             if vft.ViewFamily == fam:
                 kind = u"Detalhe" if fam == DB.ViewFamily.Detail else u"Planta"
                 items.append({"label": u"Chamada ({}): {}".format(kind, _vft_name(vft)),
-                              "kind": "callout", "id": vft.Id, "prefix": u"CHAMADA"})
+                              "kind": "callout", "id": vft.Id})
     return items
-
-
-VIEW_NAMES = set(to_unicode(v.Name) for v in
-                 DB.FilteredElementCollector(doc).OfClass(DB.View))
-_BAD_NAME_CHARS = re.compile(u"[\\\\:{}\\[\\]|;<>?`~]")
-
-
-def unique_view_name(base):
-    base = _BAD_NAME_CHARS.sub(u"-", base).strip()
-    name, n = base, 2
-    while name in VIEW_NAMES:
-        name = u"{} ({})".format(base, n)
-        n += 1
-    VIEW_NAMES.add(name)
-    return name
 
 
 def view_type_label(view):
@@ -513,21 +520,171 @@ def view_type_label(view):
 
 
 # ------------------------------------------------------------------
-# 6. Validação prévia dos modos (antes de abrir o diálogo)
+# 6. Nomenclatura: VIEW NAME (PT) + Title on Sheet - English (automático)
+# ------------------------------------------------------------------
+EN_TITLE_PARAM = u"Title on Sheet - English"
+ROOM_EN_PARAM = u"Room Name English"
+EN_DASH = u" – "
+
+# (chave, VIEW NAME, Title on Sheet - English, leva complemento PAV./AMPLIAÇÃO)
+PLAN_TITLES = (
+    ("cobertura", u"PLANTA DE COBERTURA", u"ROOF PLAN", False),
+    ("civil", u"PLANTA CIVIL", u"FLOOR PLAN", True),
+    ("layout", u"PLANTA DE LAYOUT", u"LAYOUT PLAN", True),
+    ("piso", u"PLANTA DE PISO", u"FLOOR FINISH PLAN", True),
+    ("forro", u"PLANTA DE FORRO", u"REFLECTED CEILING PLAN", True),
+)
+VERTICAL_TITLES = (
+    ("corte", u"CORTE", u"SECTION", False),
+    ("elevacao", u"ELEVAÇÃO", u"ELEVATION", False),
+)
+SUFFIXES = (("pav", u"PAV. + nome do nível  /  LEVEL"),
+            ("amp", u"AMPLIAÇÃO  /  ENLARGED"))
+MANUAL_KEY = "manual"
+
+
+def name_options(target, has_room):
+    """Opções na ordem do padrão do escritório (1..11) para o tipo de vista."""
+    if target == "plan":
+        base, room_base = PLAN_TITLES, PLAN_TITLES[1:]   # cobertura não tem versão por ambiente
+    else:
+        base, room_base = VERTICAL_TITLES, VERTICAL_TITLES
+    opts = []
+
+    def add(key, pt, en, suffix, room):
+        label = (u"Nº - AMBIENTE - " if room else u"") + pt
+        if suffix:
+            label += u" - PAV. (OU AMPLIAÇÃO)"
+        opts.append({"key": key, "label": label, "pt": pt, "en": en,
+                     "suffix": suffix, "room": room})
+
+    for key, pt, en, suf in base:
+        add(key, pt, en, suf, False)
+    if has_room:   # depois dos simples, as versões "Nº - AMBIENTE - ..."
+        for key, pt, en, suf in room_base:
+            add("room_" + key, pt, en, suf, True)
+    opts.append({"key": MANUAL_KEY, "label": u"Sem nome (manual ou sequência)",
+                 "pt": u"", "en": u"", "suffix": False, "room": False})
+    return opts
+
+
+def level_text(level):
+    if level is None:
+        return u""
+    name = to_unicode(level.Name).strip().upper()
+    return re.sub(u"^PAV\\.?\\s*", u"", name)   # evita "PAV. PAV. TÉRREO"
+
+
+def room_info(room):
+    """(número, nome, nome em inglês) - inglês cai no nome PT se vazio."""
+    def text(p):
+        return to_unicode(p.AsString()).strip() if p is not None and p.HasValue else u""
+    number = text(room.get_Parameter(BIP.ROOM_NUMBER))
+    name = text(room.get_Parameter(BIP.ROOM_NAME))
+    name_en = text(room.LookupParameter(ROOM_EN_PARAM))
+    return number, name, name_en
+
+
+def compose_names(opt, suffix_key, level, room, manual):
+    """Devolve (VIEW NAME, Title on Sheet - English)."""
+    if opt["key"] == MANUAL_KEY:
+        return manual.strip(), u""
+    pt, en = opt["pt"], opt["en"]
+    if opt["suffix"]:
+        if suffix_key == "pav":
+            lv = level_text(level)
+            pt += u" - PAV." + (u" " + lv if lv else u"")
+            en += EN_DASH + u"LEVEL" + (u" " + lv if lv else u"")
+        else:
+            pt += u" - AMPLIAÇÃO"
+            en += EN_DASH + u"ENLARGED"
+    if opt["room"] and room is not None:
+        number, name, name_en = room_info(room)
+        pt = u"{} - {} - {}".format(number, name, pt)
+        en = u"{} - {} - {}".format(number, name_en or name, en)
+    return pt, en
+
+
+VIEW_NAMES = set(to_unicode(v.Name) for v in
+                 DB.FilteredElementCollector(doc).OfClass(DB.View))
+_BAD_NAME_CHARS = re.compile(u"[\\\\:{}\\[\\]|;<>?`~]")
+
+
+def clean_name(name):
+    return _BAD_NAME_CHARS.sub(u"-", name).strip()
+
+
+def sequence_name(pattern):
+    """'AMPLIAÇÃO #' -> 'AMPLIAÇÃO 01', 02... (primeiro livre)."""
+    pattern = clean_name(pattern)
+    if u"#" not in pattern:
+        return pattern
+    n = 1
+    while pattern.replace(u"#", u"{:02d}".format(n)) in VIEW_NAMES:
+        n += 1
+    return pattern.replace(u"#", u"{:02d}".format(n))
+
+
+def unique_view_name(base):
+    base = clean_name(base)
+    name, n = base, 2
+    while name in VIEW_NAMES:
+        name = u"{} ({})".format(base, n)
+        n += 1
+    VIEW_NAMES.add(name)
+    return name
+
+
+def en_param_bound():
+    """O parâmetro compartilhado está vinculado à categoria Vistas?"""
+    views_cat = eid_int(DB.Category.GetCategory(doc, DB.BuiltInCategory.OST_Views).Id)
+    it = doc.ParameterBindings.ForwardIterator()
+    while it.MoveNext():
+        if to_unicode(it.Key.Name) == EN_TITLE_PARAM:
+            binding = it.Current
+            if isinstance(binding, DB.InstanceBinding):
+                return any(eid_int(c.Id) == views_cat for c in binding.Categories)
+    return False
+
+
+def apply_names(view, pt, en, notes):
+    if pt and pt != to_unicode(view.Name):
+        final = unique_view_name(pt)
+        if final != clean_name(pt):
+            notes.append(u"Já existia uma vista '{}'; usado '{}'.".format(clean_name(pt), final))
+        view.Name = final
+    if en:
+        p = view.LookupParameter(EN_TITLE_PARAM)
+        if p is None or p.IsReadOnly:
+            notes.append(u"Parâmetro '{}' indisponível na vista; título em inglês não gravado."
+                         .format(EN_TITLE_PARAM))
+        else:
+            p.Set(en)
+
+
+# ------------------------------------------------------------------
+# 7. Validação prévia dos modos (antes de abrir o diálogo)
 # ------------------------------------------------------------------
 MODES = ("plans", "callout", "current")
-MODE_LABELS = {"plans": u"Novas vistas de planta",
-               "callout": u"Novas vistas de chamada (Callout)",
+MODE_LABELS = {"plans": u"Nova vista de planta",
+               "callout": u"Nova vista de chamada (Callout)",
                "current": u"Recortar a vista atual"}
 
 
-def check_modes(plan_items, callout_items):
+def target_kind(mode):
+    """Tipo da vista resultante: define quais nomes fazem sentido."""
+    if mode == "plans":
+        return "plan"
+    return "plan" if active_view.ViewType in PLAN_VIEWTYPES + (VT.AreaPlan,) else "vertical"
+
+
+def check_modes(plan_items, callout_items, plan_level):
     reasons = {}
     av_name = to_unicode(active_view.Name)
     if not plan_items:
         reasons["plans"] = u"Nenhum tipo de vista de planta/área no modelo."
-    elif not LEVELS:
-        reasons["plans"] = u"O modelo não tem níveis."
+    elif plan_level is None:
+        reasons["plans"] = u"Não foi possível identificar o nível dos elementos."
     if active_view.IsTemplate or active_view.ViewType not in CALLOUT_PARENTS:
         reasons["callout"] = (u"A vista ativa '{}' não aceita chamadas "
                               u"(use planta, corte, elevação ou detalhe).".format(av_name))
@@ -549,12 +706,12 @@ def parse_margin(text):
 
 
 # ------------------------------------------------------------------
-# 7. Diálogo (mesmo tema dos outros botões)
+# 8. Diálogo (mesmo tema dos outros botões)
 # ------------------------------------------------------------------
 CROP_XAML = u"""
 <Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="Crop View Offset" Height="Auto" Width="460"
+        Title="Crop View Offset" Height="Auto" Width="480"
         SizeToContent="Height" WindowStartupLocation="CenterScreen"
         ResizeMode="NoResize" Background="#0E1526">
   <Window.Resources>
@@ -579,7 +736,7 @@ CROP_XAML = u"""
     <Style TargetType="CheckBox">
       <Setter Property="Foreground" Value="#CFE3FF"/>
       <Setter Property="FontFamily" Value="Segoe UI"/>
-      <Setter Property="Margin" Value="0,8,0,0"/>
+      <Setter Property="Margin" Value="0,10,0,0"/>
     </Style>
   </Window.Resources>
   <StackPanel Margin="18">
@@ -593,9 +750,9 @@ CROP_XAML = u"""
 
     <TextBlock Text="O que fazer" Margin="0,14,0,0"/>
     <RadioButton x:Name="rb_plans" GroupName="mode"
-                 Content="Criar novas vistas de planta (Piso, Forro, Estrutural, Área)"/>
+                 Content="Criar nova vista de planta (Piso, Forro, Estrutural, Área)"/>
     <RadioButton x:Name="rb_callout" GroupName="mode"
-                 Content="Criar vistas de chamada (Callout) na vista ativa"/>
+                 Content="Criar vista de chamada (Callout) na vista ativa"/>
     <RadioButton x:Name="rb_current" GroupName="mode"
                  Content="Recortar a vista ativa"/>
     <TextBlock x:Name="reasons" TextWrapping="Wrap" FontSize="11"
@@ -603,7 +760,29 @@ CROP_XAML = u"""
 
     <TextBlock x:Name="vtype_lbl" Text="Tipo de vista"/>
     <ComboBox x:Name="vtype"/>
-    <CheckBox x:Name="per_elem" Content="Uma vista por elemento (desmarcado: uma vista para toda a seleção)"/>
+
+    <TextBlock Text="VIEW NAME" FontSize="12" FontWeight="SemiBold"
+               Foreground="#65E3FF" Margin="0,18,0,3"/>
+    <ComboBox x:Name="vname"/>
+    <TextBlock x:Name="suffix_lbl" Text="Complemento"/>
+    <ComboBox x:Name="vsuffix"/>
+    <TextBlock x:Name="manual_lbl"
+               Text="Nome manual (vazio = mantém o nome do Revit;  # = sequência 01, 02...)"/>
+    <TextBox x:Name="manual"/>
+
+    <Border Background="#131D33" BorderBrush="#26405F" BorderThickness="1"
+            Padding="10,6,10,8" Margin="0,12,0,0">
+      <StackPanel>
+        <TextBlock Text="VIEW NAME" FontSize="10" Foreground="#7A8FA9" Margin="0"/>
+        <TextBlock x:Name="pv_pt" FontWeight="SemiBold" TextWrapping="Wrap" Margin="0,2,0,8"/>
+        <TextBlock Text="TITLE ON SHEET - ENGLISH  (automático)" FontSize="10"
+                   Foreground="#7A8FA9" Margin="0"/>
+        <TextBlock x:Name="pv_en" FontWeight="SemiBold" TextWrapping="Wrap" Margin="0,2,0,0"/>
+      </StackPanel>
+    </Border>
+    <TextBlock x:Name="name_hint" TextWrapping="Wrap" FontSize="11"
+               Foreground="#FFB454" Margin="0,6,0,0"/>
+
     <CheckBox x:Name="report" Content="Abrir relatório HTML ao final"/>
 
     <TextBlock x:Name="error" TextWrapping="Wrap" FontSize="11"
@@ -618,25 +797,31 @@ CROP_XAML = u"""
 
 
 class CropWindow(forms.WPFWindow):
-    def __init__(self, xaml, info, items, reasons, cfg):
+    def __init__(self, xaml, info, ctx, reasons, cfg):
         forms.WPFWindow.__init__(self, xaml, literal_string=True)
         self.confirmed = False
-        self._items = items
-        self._saved_type = cfg["vtype"]
+        self.ctx = ctx
+        self._saved = cfg
         self._radios = {"plans": self.rb_plans, "callout": self.rb_callout,
                         "current": self.rb_current}
 
         self.info.Text = info
         self.margin.Text = u"{:.2f}".format(cfg["margin"])
-        self.per_elem.IsChecked = cfg["per_element"]
         self.report.IsChecked = cfg["report"]
         self.reasons.Text = u"\n".join(
             u"• {}: {}".format(MODE_LABELS[k], reasons[k]) for k in MODES if k in reasons)
+        self.name_hint.Text = u"\n".join(ctx["hints"])
+        self.vsuffix.ItemsSource = [s[1] for s in SUFFIXES]
+        self.vsuffix.SelectedIndex = next(
+            (i for i, s in enumerate(SUFFIXES) if s[0] == cfg["suffix"]), 0)
 
         enabled = [k for k in MODES if k not in reasons]
         for key, rb in self._radios.items():
             rb.IsEnabled = key in enabled
             rb.Checked += self._on_mode
+        self.vname.SelectionChanged += self._on_name
+        self.vsuffix.SelectionChanged += self._on_name
+        self.manual.TextChanged += self._on_name
         start = cfg["mode"] if cfg["mode"] in enabled else enabled[0]
         self._radios[start].IsChecked = True
         self._refresh()
@@ -654,17 +839,58 @@ class CropWindow(forms.WPFWindow):
     def _on_mode(self, sender, args):
         self._refresh()
 
+    def _on_name(self, sender, args):
+        self._update_names()
+
     def _refresh(self):
-        items = self._items.get(self.mode, [])
-        labels = [i["label"] for i in items]
+        mode = self.mode
+        types = self.ctx["types"].get(mode, [])
+        labels = [i["label"] for i in types]
         self.vtype.ItemsSource = labels
         if labels:
-            self.vtype.SelectedItem = (self._saved_type if self._saved_type in labels
+            self.vtype.SelectedItem = (self._saved["vtype"] if self._saved["vtype"] in labels
                                        else labels[0])
-        has_types = bool(labels)
-        self.vtype.IsEnabled = has_types
-        self.vtype_lbl.Opacity = 1.0 if has_types else 0.4
-        self.per_elem.IsEnabled = self.mode != "current"
+        self.vtype.IsEnabled = bool(labels)
+        self.vtype_lbl.Opacity = 1.0 if labels else 0.4
+
+        # nomes dependem do tipo da vista resultante (planta x corte/elevação)
+        self._names = self.ctx["names"][mode]
+        keys = [o["key"] for o in self._names]
+        self.vname.ItemsSource = [o["label"] for o in self._names]
+        self.vname.SelectedIndex = (keys.index(self._saved["vname"])
+                                    if self._saved["vname"] in keys else 0)
+        self._update_names()
+
+    @property
+    def name_opt(self):
+        idx = self.vname.SelectedIndex
+        return self._names[idx] if 0 <= idx < len(self._names) else self._names[-1]
+
+    @property
+    def suffix_key(self):
+        idx = self.vsuffix.SelectedIndex
+        return SUFFIXES[idx if idx >= 0 else 0][0]
+
+    def names(self):
+        opt = self.name_opt
+        manual = to_unicode(self.manual.Text)
+        pt, en = compose_names(opt, self.suffix_key, self.ctx["level"][self.mode],
+                               self.ctx["room"], manual)
+        if opt["key"] == MANUAL_KEY:
+            pt = sequence_name(pt) if pt else u""
+        return pt, en
+
+    def _update_names(self):
+        opt = self.name_opt
+        is_manual = opt["key"] == MANUAL_KEY
+        self.vsuffix.IsEnabled = opt["suffix"]
+        self.suffix_lbl.Opacity = 1.0 if opt["suffix"] else 0.4
+        self.manual.IsEnabled = is_manual
+        self.manual_lbl.Opacity = 1.0 if is_manual else 0.4
+        pt, en = self.names()
+        keep = u"(mantém o nome atual)" if self.mode == "current" else u"(nome padrão do Revit)"
+        self.pv_pt.Text = clean_name(pt) if pt else keep
+        self.pv_en.Text = en or u"—"
 
     def _ok(self, sender, args):
         try:
@@ -680,16 +906,18 @@ class CropWindow(forms.WPFWindow):
 
     @property
     def result(self):
-        items = self._items.get(self.mode, [])
+        types = self.ctx["types"].get(self.mode, [])
         sel = self.vtype.SelectedItem
-        chosen = next((i for i in items if i["label"] == sel), None)
-        return {"mode": self.mode, "margin": self.margin_m, "type": chosen,
-                "per_element": bool(self.per_elem.IsChecked),
+        pt, en = self.names()
+        return {"mode": self.mode, "margin": self.margin_m,
+                "type": next((i for i in types if i["label"] == sel), None),
+                "vname": self.name_opt["key"], "suffix": self.suffix_key,
+                "name_pt": pt, "name_en": en,
                 "report": bool(self.report.IsChecked)}
 
 
 # ------------------------------------------------------------------
-# 8. Execução
+# 9. Execução
 # ------------------------------------------------------------------
 warnings = []
 
@@ -711,24 +939,47 @@ for el in elements:
 if not geoms:
     forms.alert(u"Nenhum elemento válido selecionado.\n\n" + u"\n".join(warnings), exitscript=True)
 
+plan_level, other_levels = pick_plan_level(geoms)
 plan_items = plan_type_items()
 callout_items = callout_type_items(active_view)
-reasons = check_modes(plan_items, callout_items)
+reasons = check_modes(plan_items, callout_items, plan_level)
 if len(reasons) == len(MODES):
     forms.alert(u"Nenhuma ação disponível:\n\n" + u"\n".join(reasons.values()), exitscript=True)
+
+# ambiente usado nas opções "Nº - AMBIENTE - ...": exatamente 1 na seleção
+rooms = [g.el for g in geoms if isinstance(g.el, Room)]
+the_room = rooms[0] if len(rooms) == 1 else None
+name_hints = []
+if len(rooms) > 1:
+    name_hints.append(u"Opções com número/nome do ambiente exigem exatamente 1 ambiente "
+                      u"na seleção (há {}).".format(len(rooms)))
+if the_room is not None and not room_info(the_room)[2]:
+    name_hints.append(u"'{}' vazio neste ambiente: o título em inglês usará o nome em português."
+                      .format(ROOM_EN_PARAM))
+if not en_param_bound():
+    name_hints.append(u"'{}' não está vinculado à categoria Vistas: o título em inglês "
+                      u"não será gravado.".format(EN_TITLE_PARAM))
+
+active_level = getattr(active_view, "GenLevel", None)
+dialog_ctx = {
+    "types": {"plans": plan_items, "callout": callout_items, "current": []},
+    "names": dict((m, name_options(target_kind(m), the_room is not None)) for m in MODES),
+    "level": {"plans": plan_level, "callout": active_level, "current": active_level},
+    "room": the_room,
+    "hints": name_hints,
+}
 
 config = script.get_config()
 cfg = {"margin": config.get_option("margin_m", 0.5),
        "mode": config.get_option("mode", "current"),
        "vtype": config.get_option("vtype", u""),
-       "per_element": config.get_option("per_element", True),
+       "vname": config.get_option("vname", MANUAL_KEY),
+       "suffix": config.get_option("vsuffix", "amp"),
        "report": config.get_option("open_report", True)}
 
-info = u"{} elemento(s) · vista ativa: {} ({})".format(
+info = u"{} elemento(s) → 1 vista · vista ativa: {} ({})".format(
     len(geoms), to_unicode(active_view.Name), view_type_label(active_view))
-win = CropWindow(CROP_XAML, info,
-                 {"plans": plan_items, "callout": callout_items, "current": []},
-                 reasons, cfg)
+win = CropWindow(CROP_XAML, info, dialog_ctx, reasons, cfg)
 win.ShowDialog()
 if not win.confirmed:
     script.exit()
@@ -737,7 +988,8 @@ opts = win.result
 config.margin_m = opts["margin"]
 config.mode = opts["mode"]
 config.vtype = opts["type"]["label"] if opts["type"] else cfg["vtype"]
-config.per_element = opts["per_element"]
+config.vname = opts["vname"]
+config.vsuffix = opts["suffix"]
 config.open_report = opts["report"]
 script.save_config()
 
@@ -764,40 +1016,10 @@ if mode in ("current", "callout"):
         if eid_int(g.el.Id) not in visible:
             warnings.append(u"{}: não está visível na vista ativa (recorte calculado mesmo assim).".format(g.label))
 
-level_of = {}
-if mode == "plans":
-    kept = []
-    for g in geoms:
-        lid = element_level_id(g.el)
-        if lid is None:
-            warnings.append(u"{}: nível não identificado - ignorado.".format(g.label))
-            continue
-        level_of[eid_int(g.el.Id)] = lid
-        kept.append(g)
-    geoms = kept
-    if not geoms:
-        forms.alert(u"Nenhum elemento com nível identificável.\n\n" + u"\n".join(warnings),
-                    exitscript=True)
-
-
-def build_groups():
-    if mode == "current" or not opts["per_element"]:
-        groups = [geoms]
-    else:
-        groups = [[g] for g in geoms]
-    if mode != "plans":
-        return groups
-    split = []   # plantas: uma vista por nível
-    for grp in groups:
-        by_level = {}
-        for g in grp:
-            by_level.setdefault(eid_int(level_of[eid_int(g.el.Id)]), []).append(g)
-        split.extend(by_level.values())
-    return split
-
-
-def group_label(grp):
-    return grp[0].label if len(grp) == 1 else u"Seleção ({} elementos)".format(len(grp))
+if mode == "plans" and other_levels:
+    warnings.append(u"Elementos em mais de um nível: planta criada no nível '{}' "
+                    u"(também havia: {}).".format(to_unicode(plan_level.Name),
+                                                  u", ".join(other_levels)))
 
 
 def _m2(pt):
@@ -822,22 +1044,24 @@ def drawing(calc):
             "tight": [_m2(p) for p in calc.tight]}
 
 
-def record(view, action, grp, calc, method, warn):
+def record(view, action, calc, method, notes):
+    en_p = view.LookupParameter(EN_TITLE_PARAM)
     rec = {"view": to_unicode(view.Name), "viewId": eid_int(view.Id),
            "viewType": view_type_label(view), "action": action,
-           "elements": [g.label for g in grp],
+           "titleEn": to_unicode(en_p.AsString()) if en_p is not None and en_p.HasValue else u"",
+           "elements": [g.label for g in geoms],
            "angle": round(math.degrees(calc.angle), 2),
            "width": round(ft_to_m(calc.width), 3),
            "height": round(ft_to_m(calc.height), 3),
            "method": method, "source": calc.source,
-           "status": "warn" if warn else "ok", "msg": warn or u""}
+           "status": "warn" if notes else "ok", "msg": u" ".join(notes)}
     rec.update(drawing(calc))
     return rec
 
 
-def error_record(grp, exc):
+def error_record(exc):
     return {"view": u"-", "viewId": None, "viewType": u"", "action": u"Falhou",
-            "elements": [g.label for g in grp], "status": "error",
+            "titleEn": u"", "elements": [g.label for g in geoms], "status": "error",
             "msg": to_unicode(exc), "segs": [], "crop": [], "tight": []}
 
 
@@ -849,40 +1073,44 @@ with revit.Transaction(u"OCA - Crop View Offset"):
         active_view.get_Parameter(BIP.VIEWER_VOLUME_OF_INTEREST_CROP).Set(INVALID_ID)
         doc.Regenerate()
 
-    for grp in build_groups():
-        try:
-            if mode == "current":
-                view, action = active_view, u"Recortada"
-            elif mode == "callout":
-                parent_calc = CropCalc(grp, Frame(active_view), margin_ft)
-                u0, v0, u1, v1 = parent_calc.envelope()
-                f = parent_calc.frame
-                view = DB.ViewSection.CreateCallout(doc, active_view.Id, vtype["id"],
-                                                    f.to3d((u0, v0)), f.to3d((u1, v1)))
-                action = u"Criada"
+    try:
+        if mode == "current":
+            view, action = active_view, u"Recortada"
+        elif mode == "callout":
+            parent_calc = CropCalc(geoms, Frame(active_view), margin_ft)
+            u0, v0, u1, v1 = parent_calc.envelope()
+            f = parent_calc.frame
+            view = DB.ViewSection.CreateCallout(doc, active_view.Id, vtype["id"],
+                                                f.to3d((u0, v0)), f.to3d((u1, v1)))
+            action = u"Criada"
+        else:
+            if vtype["kind"] == "area":
+                view = DB.ViewPlan.CreateAreaPlan(doc, vtype["id"], plan_level.Id)
             else:
-                lid = level_of[eid_int(grp[0].el.Id)]
-                if vtype["kind"] == "area":
-                    view = DB.ViewPlan.CreateAreaPlan(doc, vtype["id"], lid)
-                else:
-                    view = DB.ViewPlan.Create(doc, vtype["id"], lid)
-                action = u"Criada"
+                view = DB.ViewPlan.Create(doc, vtype["id"], plan_level.Id)
+            action = u"Criada"
 
-            if action == u"Criada":
-                view.Name = unique_view_name(u"{} - {}".format(vtype["prefix"], group_label(grp)))
-                doc.Regenerate()
+        if action == u"Criada":
+            # o tipo de vista pode ter template padrão para vistas novas: remover
+            view.ViewTemplateId = INVALID_ID
 
-            # recalcula no sistema da vista-alvo: a orientação relativa pode
-            # mudar (ex.: planta nova sem a rotação de recorte da vista ativa)
-            calc = CropCalc(grp, Frame(view), margin_ft)
-            method, warn = apply_crop(view, calc)
-            results.append(record(view, action, grp, calc, method, warn))
-        except Exception as exc:
-            results.append(error_record(grp, exc))
+        notes = []
+        apply_names(view, opts["name_pt"], opts["name_en"], notes)
+        doc.Regenerate()
+
+        # recalcula no sistema da vista-alvo: a orientação relativa pode
+        # mudar (ex.: planta nova sem a rotação de recorte da vista ativa)
+        calc = CropCalc(geoms, Frame(view), margin_ft)
+        method, warn = apply_crop(view, calc)
+        if warn:
+            notes.append(warn)
+        results.append(record(view, action, calc, method, notes))
+    except Exception as exc:
+        results.append(error_record(exc))
 
 
 # ------------------------------------------------------------------
-# 9. Relatório HTML
+# 10. Relatório HTML
 # ------------------------------------------------------------------
 n_err = sum(1 for r in results if r["status"] == "error")
 
