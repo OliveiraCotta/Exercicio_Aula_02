@@ -503,7 +503,7 @@ def classify(keynote):
 
 def classify_element(keynote, cat_id):
     """classify() plus the category exception: a Keynote on a BASE_CATEGORIES
-    element (wall sweep) always goes to Base Finish.
+    element (wall sweep) goes to Rodapé unless its prefix is RT or RD.
     -> (normalised keynote, finish key or None, forced)"""
     norm, finish = classify(keynote)
     if norm and cat_id in BASE_CATEGORIES and finish not in ("base", "crown"):
