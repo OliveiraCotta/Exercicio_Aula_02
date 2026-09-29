@@ -121,15 +121,11 @@
 <div class="cards" id="cards"></div>
 
 <h2>Ambientes</h2>
-<div class="filters">
+<div class="filters" id="filters">
   <div class="f wide"><label for="q">Buscar</label><input id="q" type="search" placeholder="número, nome, keynote, id do elemento…" autocomplete="off"></div>
   <div class="f"><label for="fNumber">Número do ambiente</label><input id="fNumber" type="text" placeholder="ex.: 101" autocomplete="off"></div>
   <div class="f"><label for="fLevel">Pavimento</label><select id="fLevel"></select></div>
   <div class="f"><label for="fStatus">Situação</label><select id="fStatus"></select></div>
-  <div class="f"><label for="f_wall" title="Wall Finish">Acabamento de Parede</label><select id="f_wall"></select></div>
-  <div class="f"><label for="f_floor" title="Floor Finish">Acabamento de Piso</label><select id="f_floor"></select></div>
-  <div class="f"><label for="f_ceiling" title="Ceiling Finish">Acabamento de Forro</label><select id="f_ceiling"></select></div>
-  <div class="f"><label for="f_base" title="Base Finish">Rodapé</label><select id="f_base"></select></div>
 </div>
 <div class="toolrow">
   <button class="btn" id="resetBtn">Limpar filtros</button>
@@ -144,9 +140,12 @@
 <script>
 const DATA = __DATA__;
 const ROOMS = DATA.rooms || [];
-const FIN = ["wall","floor","ceiling","base"];
-const FIN_LABEL = {wall:"Acabamento de Parede", floor:"Acabamento de Piso", ceiling:"Acabamento de Forro", base:"Rodapé"};
-const FIN_PARAM = {wall:"Wall Finish", floor:"Floor Finish", ceiling:"Ceiling Finish", base:"Base Finish"};
+// finishes come from the script: key, label, prefixes and numbered fields
+const GROUPS = DATA.groups || [];
+const FIN = GROUPS.map(g=>g.key);
+const FIN_LABEL = Object.fromEntries(GROUPS.map(g=>[g.key, g.label]));
+const FIN_PREFIX = Object.fromEntries(GROUPS.map(g=>[g.key, g.prefixes.join("/")]));
+const FIN_FIELDS = Object.fromEntries(GROUPS.map(g=>[g.key, g.slots.map(s=>s.name)]));
 const STATUS_PT = {OK:"OK", WARNING:"Atenção", ERROR:"Erro"};
 const KN = DATA.keynotes || {};
 const esc = s => String(s==null?"":s).replace(/[&<>"]/g,m=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[m]));
@@ -169,10 +168,8 @@ const STATS = [
   {k:"total",   l:"Total de ambientes",                c:"var(--cy)",     f: r => true},
   {k:"updated", l:"Ambientes atualizados",             c:"var(--violet)", f: r => r.updated},
   {k:"nobound", l:"Ambientes sem contorno",            c:"var(--mag)",    f: r => !hasBounds(r)},
-  {k:"wall",    l:"Sem Keynote de parede (RE)",        c:"var(--amber)",  f: missing("wall")},
-  {k:"floor",   l:"Sem Keynote de piso (PI)",          c:"var(--amber)",  f: missing("floor")},
-  {k:"ceiling", l:"Sem Keynote de forro (FR)",         c:"var(--amber)",  f: missing("ceiling")},
-  {k:"base",    l:"Sem rodapé (RD)",                   c:"var(--amber)",  f: missing("base")},
+  ...GROUPS.map(g=>({k:g.key, l:`Sem ${g.label.toLowerCase()} (${g.prefixes.join("/")})`, c:"var(--amber)", f: missing(g.key)})),
+  {k:"overflow",l:"Keynotes sem campo livre",          c:"var(--mag)",    f: r => hasBounds(r) && FIN.some(k=>(r.finishes[k].overflow||[]).length)},
   {k:"nokn",    l:"Ambientes com elementos sem Keynote", c:"var(--mag)",  f: r => hasBounds(r) && (r.issues||[]).length > 0},
   {k:"mismatch",l:"Inconsistências prefixo / categoria", c:"var(--mag)",  f: r => hasBounds(r) && FIN.some(k=>(r.finishes[k].mismatches||[]).length)},
   {k:"complete",l:"Ambientes com informação completa", c:"var(--teal)",   f: r => r.status === "OK"},
@@ -189,6 +186,10 @@ function renderCards(){
     renderCards(); renderTable();
   });
 }
+
+// one dropdown per finish, after the fixed filters
+document.getElementById("filters").insertAdjacentHTML("beforeend", GROUPS.map(g=>
+  `<div class="f"><label for="f_${g.key}" title="${esc(g.slots.map(s=>s.name).join(", "))}">${esc(g.label)} (${esc(g.prefixes.join("/"))})</label><select id="f_${g.key}"></select></div>`).join(""));
 
 /* ---- filter dropdowns ---- */
 function fillSelect(id, options){
@@ -239,7 +240,8 @@ function finishCell(r, k){
   let main = f.keys.length
     ? f.keys.map(x=>`<span class="kn" title="${esc(KN[x]||"")}">${esc(x)}</span>`).join("")
     : `<span class="st missing">Ausente</span>`;
-  const flags = [...(f.mismatches||[]), ...(f.warnings||[])];
+  const flags = [...(f.mismatches||[]), ...(f.warnings||[]),
+    ...((f.overflow||[]).length ? [`Sem campo livre para: ${f.overflow.join(", ")}`] : [])];
   if(flags.length) main += ` <span class="st partial" title="${esc(flags.join("\n"))}">!</span>`;
   let cur = "";
   if(f.current && f.current !== f.value){
@@ -266,7 +268,7 @@ function renderTable(){
   const arrow = k => sortK===k ? ` <span class="dir">${sortDir>0?"▲":"▼"}</span>` : "";
   const cols = [["number","Número"],["name","Nome do ambiente"],["level","Pavimento"],
     ...FIN.map(k=>[k, FIN_LABEL[k]]),["status","Situação"]];
-  const head = `<tr>${cols.map(([k,l])=>`<th data-k="${k}"${FIN_PARAM[k]?` title="Parâmetro ${FIN_PARAM[k]}"`:""}>${l}${arrow(k)}</th>`).join("")}</tr>`;
+  const head = `<tr>${cols.map(([k,l])=>`<th data-k="${k}"${FIN_FIELDS[k]?` title="${esc(FIN_FIELDS[k].join(", "))}"`:""}>${l}${arrow(k)}</th>`).join("")}</tr>`;
   const body = list.map(r=>{
     const open = openRows.has(r.id);
     const row = `<tr class="room${open?" open":""}" data-id="${r.id}">
@@ -304,8 +306,12 @@ function detailRow(r, span){
     const mism = (f.mismatches||[]).map(m=>`<li class="warn">${esc(m)}</li>`);
     const warn = (f.warnings||[]).map(w=>`<li class="warn">${esc(w)}</li>`);
     const notes = (f.notes||[]).map(n=>`<li class="note">${esc(n)}</li>`);
-    const cur = `<li class="note">Valor encontrado: ${esc(f.value||"(nada encontrado)")} · no Revit: ${esc(f.current||"(vazio)")}</li>`;
-    return `<div class="dbox"><h4>${FIN_LABEL[k]} <span class="src">(${FIN_PARAM[k]})</span></h4><ul>${[...items,...mism,...warn,...notes,cur].join("")}</ul></div>`;
+    const over = (f.overflow||[]).length
+      ? [`<li class="warn">Sem campo livre para ${esc(f.overflow.join(", "))} - só há ${(FIN_FIELDS[k]||[]).length} campos.</li>`] : [];
+    const fields = (f.slots||[]).map(sl=>`<li class="note">${esc(sl.name)}: <b style="color:var(--ink)">${esc(sl.new||"-")}</b>`
+      + (sl.current && sl.current!==sl.new ? ` · no Revit: ${esc(sl.current)}` : "")
+      + (sl.change ? ` <span class="src">[${esc(sl.change)}]</span>` : "") + `</li>`);
+    return `<div class="dbox"><h4>${FIN_LABEL[k]} <span class="src">(${FIN_PREFIX[k]})</span></h4><ul>${[...items,...mism,...warn,...over,...notes,...fields].join("")}</ul></div>`;
   }).join("") : "";
   const iss = (r.issues||[]).map(i=>`<li class="iss">${elLine(i, "- " + esc(i.msg))}</li>`);
   const oth = (r.others||[]).map(o=>`<li class="note">${elLine(o, (o.kn||[]).map(x=>`<span class="kn">${esc(x)}</span>`).join("") + " " + esc(o.msg))}</li>`);
@@ -323,7 +329,6 @@ document.getElementById("resetBtn").onclick = ()=>{
   statFilter = null; renderCards(); renderTable();
 };
 
-const P = DATA.params || {};
 /* ---- elements with a finish Keynote that no room claimed ---- */
 const UN = DATA.unassigned || [];
 if(UN.length){
@@ -341,10 +346,11 @@ const CS = DATA.containStats || {};
 const RULES = DATA.prefixRules || {};
 document.getElementById("meta").innerHTML =
   `<b>Classificação (somente pelo prefixo da Keynote):</b> ` +
-    Object.keys(RULES).map(p=>`${esc(p)}… → ${esc(RULES[p])}`).join(" · ") + ` · outros prefixos são ignorados · moldura de parede sempre vai para o Rodapé<br>` +
+    Object.keys(RULES).map(p=>`${esc(p)}… → ${esc(RULES[p])}`).join(" · ") + ` · outros prefixos são ignorados · cada Keynote diferente ocupa um campo, em ordem (01, 02, …) · moldura de parede sem prefixo RT/RD vai para o Rodapé<br>` +
   `<b>Fonte da Keynote:</b> ${esc(DATA.keynoteSource)}<br>` +
   `<b>Contorno do ambiente:</b> ${esc(DATA.boundaryLocation)} · <b>Margem de busca do forro:</b> ${esc(String((DATA.searchAboveM!=null?DATA.searchAboveM:1).toFixed(2)).replace(".", ","))} m · <b>Separador:</b> "${esc(DATA.separator)}"<br>` +
-  `<b>Parâmetros:</b> ` + FIN.map(k=>`${esc((P[k]||{}).label||FIN_LABEL[k])} [${esc((P[k]||{}).name||FIN_PARAM[k])}] (${esc((P[k]||{}).kind||"não encontrado")})`).join(" · ") +
+  `<b>Campos:</b> ` + GROUPS.map(g=>{ const miss = g.slots.filter(x=>!x.found).map(x=>x.name);
+    return `${esc(g.label)}: ${g.slots.length - miss.length}/${g.slots.length}` + (miss.length ? ` <span style="color:var(--mag)">(faltando: ${esc(miss.join(", "))})</span>` : ""); }).join(" · ") +
   `<br><b>Ambiente por ponto:</b> ${fmt(CS.tested||0)} elementos testados · molduras de parede: ${fmt(CS.sweeps||0)} no modelo, ${fmt(CS.sweeps_in_rooms||0)} dentro de um ambiente · ${fmt(UN.length)} fora de qualquer ambiente` +
   `<br><b>Arquivo de Keynotes:</b> ${Object.keys(KN).length ? fmt(Object.keys(KN).length)+" chaves carregadas" : "não carregado - as chaves não são validadas"}`;
 
