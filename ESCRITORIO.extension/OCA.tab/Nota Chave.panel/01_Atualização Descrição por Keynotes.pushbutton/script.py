@@ -1579,14 +1579,14 @@ data = {
     "skipped": [dict((k, v) for k, v in s.items() if k != "eid") for s in skipped],
 }
 
-# o template pode se chamar script.html (repositório) ou keynotes.html
+# modelo do relatório: keynotes.html (aceita script.html por compatibilidade)
 template_path = None
-for _name in ("script.html", "keynotes.html"):
+for _name in ("keynotes.html", "script.html"):
     if os.path.isfile(os.path.join(HERE, _name)):
         template_path = os.path.join(HERE, _name)
         break
 if template_path is None:
-    forms.alert(u"Modelo do relatório não encontrado (script.html) na pasta do botão:\n"
+    forms.alert(u"Modelo do relatório não encontrado (keynotes.html) na pasta do botão:\n"
                 u"{}".format(HERE), exitscript=True)
 with codecs.open(template_path, "r", encoding="utf-8") as f:
     html = f.read()
