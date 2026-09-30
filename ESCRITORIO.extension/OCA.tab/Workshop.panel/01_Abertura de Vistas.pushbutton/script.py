@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Crop View Offset - ajusta o recorte (CropView) de vistas a partir de elementos.
+"""Abertura de Vistas - ajusta o recorte (CropView) de vistas a partir de elementos.
 
 Fluxo:
   1. Usa a seleção atual (ou pede para selecionar) Linhas, Terreno, Pisos,
@@ -12,24 +12,21 @@ Fluxo:
      modelo; modos inválidos ficam desabilitados com o motivo exibido.
   3. VIEW NAME escolhido na lista do padrão do escritório; o parâmetro
      "Title on Sheet - English" é preenchido automaticamente com o par em
-     inglês. Vistas novas ficam sem view template.
+     inglês. O complemento (- PAV. / - AMPLIAÇÃO + nível) é um campo à
+     parte, usado só pelas plantas. Vistas novas ficam sem view template.
   4. Calcula o retângulo ORIENTADO ao elemento (as 4 quinas, paralelo e
      perpendicular à direção predominante do elemento) + margem. A vista
      nunca é girada: o recorte é sempre aplicado como forma de 4 lados
      (crop region shape), inclinada quando o elemento está girado.
-  5. Gera um relatório HTML com o desenho do recorte aplicado.
+  5. Ao final, avisa apenas se houve algo a revisar (sem relatório HTML).
 """
 
-__title__ = "Crop View\nOffset"
+__title__ = "Abertura\nde Vistas"
 __doc__ = ("Recorta a vista ativa, cria plantas ou chamadas ajustadas ao "
            "elemento selecionado, com margem em metros.")
 
-import os
 import re
-import json
 import math
-import codecs
-from datetime import datetime
 
 from pyrevit import revit, DB, script, forms
 from Autodesk.Revit.DB.Architecture import Room
@@ -70,10 +67,6 @@ def m_to_ft(meters):
     return DB.UnitUtils.ConvertToInternalUnits(meters, DB.UnitTypeId.Meters)
 
 
-def ft_to_m(feet):
-    return DB.UnitUtils.ConvertFromInternalUnits(feet, DB.UnitTypeId.Meters)
-
-
 HALF_PI = math.pi / 2.0
 QUARTER_PI = math.pi / 4.0
 ANGLE_BIN = math.radians(0.5)             # resolução do histograma de direções
@@ -82,7 +75,6 @@ ANGLE_SNAP = math.radians(0.01)           # abaixo disso o elemento está "alinh
 MIN_SEG = m_to_ft(0.001)                  # ignora arestas < 1 mm na projeção
 MIN_CROP = m_to_ft(0.01)                  # recorte mínimo de 1 cm por lado
 LOCATION_WEIGHT = 10.0                    # peso extra do eixo de paredes retas
-MAX_SVG_SEGS = 2500                       # limite de arestas desenhadas no HTML
 
 
 # ------------------------------------------------------------------
@@ -355,12 +347,9 @@ class CropCalc(object):
         if (x1 - x0) + 2 * m < MIN_CROP or (y1 - y0) + 2 * m < MIN_CROP:
             raise ValueError(u"Recorte com largura/altura nula - use margem > 0 "
                              u"para elementos lineares.")
-        self.tight = self._corners(x0, y0, x1, y1)
         self.corners = self._corners(x0 - m, y0 - m, x1 + m, y1 + m)
         self.width = (x1 - x0) + 2 * m
         self.height = (y1 - y0) + 2 * m
-        self.segs = segs
-        self.hull = convex_hull(pts) if not segs else []
 
     def _corners(self, x0, y0, x1, y1):
         c, s = math.cos(self.angle), math.sin(self.angle)
@@ -538,41 +527,10 @@ VERTICAL_TITLES = (
     ("corte", u"CORTE", u"SECTION", False),
     ("elevacao", u"ELEVAÇÃO", u"ELEVATION", False),
 )
-SUFFIXES = (("pav", u"PAV. + nome do nível  /  LEVEL"),
-            ("amp", u"AMPLIAÇÃO  /  ENLARGED"))
+# complemento das plantas 2..6: (chave, texto PT, texto EN) + nome do nível
+SUFFIXES = (("pav", u"- PAV.", u"LEVEL"),
+            ("amp", u"- AMPLIAÇÃO", u"ENLARGED"))
 MANUAL_KEY = "manual"
-
-
-def name_options(target, has_room):
-    """Opções na ordem do padrão do escritório (1..11) para o tipo de vista."""
-    if target == "plan":
-        base, room_base = PLAN_TITLES, PLAN_TITLES[1:]   # cobertura não tem versão por ambiente
-    else:
-        base, room_base = VERTICAL_TITLES, VERTICAL_TITLES
-    opts = []
-
-    def add(key, pt, en, suffix, room):
-        label = (u"Nº - AMBIENTE - " if room else u"") + pt
-        if suffix:
-            label += u" - PAV. (OU AMPLIAÇÃO)"
-        opts.append({"key": key, "label": label, "pt": pt, "en": en,
-                     "suffix": suffix, "room": room})
-
-    for key, pt, en, suf in base:
-        add(key, pt, en, suf, False)
-    if has_room:   # depois dos simples, as versões "Nº - AMBIENTE - ..."
-        for key, pt, en, suf in room_base:
-            add("room_" + key, pt, en, suf, True)
-    opts.append({"key": MANUAL_KEY, "label": u"Sem nome (manual ou sequência)",
-                 "pt": u"", "en": u"", "suffix": False, "room": False})
-    return opts
-
-
-def level_text(level):
-    if level is None:
-        return u""
-    name = to_unicode(level.Name).strip().upper()
-    return re.sub(u"^PAV\\.?\\s*", u"", name)   # evita "PAV. PAV. TÉRREO"
 
 
 def room_info(room):
@@ -585,19 +543,51 @@ def room_info(room):
     return number, name, name_en
 
 
+def room_prefix(room):
+    number, name, _en = room_info(room)
+    return u"{} - {} - ".format(number, name)
+
+
+def name_options(target, room):
+    """VIEW NAME na ordem do padrão do escritório (1..11) para o tipo de vista."""
+    if target == "plan":
+        base, room_base = PLAN_TITLES, PLAN_TITLES[1:]   # cobertura não tem versão por ambiente
+    else:
+        base, room_base = VERTICAL_TITLES, VERTICAL_TITLES
+    opts = [{"key": key, "label": pt, "pt": pt, "en": en, "suffix": suf, "room": False}
+            for key, pt, en, suf in base]
+    if room is not None:   # depois dos simples, as versões "Nº - AMBIENTE - ..."
+        prefix = room_prefix(room)
+        opts.extend({"key": "room_" + key, "label": prefix + pt, "pt": pt, "en": en,
+                     "suffix": suf, "room": True} for key, pt, en, suf in room_base)
+    opts.append({"key": MANUAL_KEY, "label": u"Sem nome (manual ou sequência)",
+                 "pt": u"", "en": u"", "suffix": False, "room": False})
+    return opts
+
+
+def level_text(level):
+    if level is None:
+        return u""
+    name = to_unicode(level.Name).strip().upper()
+    return re.sub(u"^PAV\\.?\\s*", u"", name)   # evita "PAV. PAV. TÉRREO"
+
+
+def suffix_labels(level):
+    """Itens do combo Complemento, já com o nome do nível."""
+    lv = level_text(level)
+    return [(pt + u" " + lv).strip() for _k, pt, _en in SUFFIXES]
+
+
 def compose_names(opt, suffix_key, level, room, manual):
     """Devolve (VIEW NAME, Title on Sheet - English)."""
     if opt["key"] == MANUAL_KEY:
         return manual.strip(), u""
     pt, en = opt["pt"], opt["en"]
     if opt["suffix"]:
-        if suffix_key == "pav":
-            lv = level_text(level)
-            pt += u" - PAV." + (u" " + lv if lv else u"")
-            en += EN_DASH + u"LEVEL" + (u" " + lv if lv else u"")
-        else:
-            pt += u" - AMPLIAÇÃO"
-            en += EN_DASH + u"ENLARGED"
+        lv = level_text(level)
+        _k, suf_pt, suf_en = next(s for s in SUFFIXES if s[0] == suffix_key)
+        pt = u" ".join(x for x in (pt, suf_pt, lv) if x)
+        en = en + EN_DASH + u" ".join(x for x in (suf_en, lv) if x)
     if opt["room"] and room is not None:
         number, name, name_en = room_info(room)
         pt = u"{} - {} - {}".format(number, name, pt)
@@ -783,8 +773,6 @@ CROP_XAML = u"""
     <TextBlock x:Name="name_hint" TextWrapping="Wrap" FontSize="11"
                Foreground="#FFB454" Margin="0,6,0,0"/>
 
-    <CheckBox x:Name="report" Content="Abrir relatório HTML ao final"/>
-
     <TextBlock x:Name="error" TextWrapping="Wrap" FontSize="11"
                Foreground="#FF4F9A" Margin="0,10,0,0"/>
     <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,14,0,0">
@@ -807,12 +795,10 @@ class CropWindow(forms.WPFWindow):
 
         self.info.Text = info
         self.margin.Text = u"{:.2f}".format(cfg["margin"])
-        self.report.IsChecked = cfg["report"]
         self.reasons.Text = u"\n".join(
             u"• {}: {}".format(MODE_LABELS[k], reasons[k]) for k in MODES if k in reasons)
         self.name_hint.Text = u"\n".join(ctx["hints"])
-        self.vsuffix.ItemsSource = [s[1] for s in SUFFIXES]
-        self.vsuffix.SelectedIndex = next(
+        self._suffix_idx = next(
             (i for i, s in enumerate(SUFFIXES) if s[0] == cfg["suffix"]), 0)
 
         enabled = [k for k in MODES if k not in reasons]
@@ -859,6 +845,12 @@ class CropWindow(forms.WPFWindow):
         self.vname.ItemsSource = [o["label"] for o in self._names]
         self.vname.SelectedIndex = (keys.index(self._saved["vname"])
                                     if self._saved["vname"] in keys else 0)
+
+        # complemento traz o nome do nível da vista resultante
+        if self.vsuffix.SelectedIndex >= 0:
+            self._suffix_idx = self.vsuffix.SelectedIndex
+        self.vsuffix.ItemsSource = suffix_labels(self.ctx["level"][mode])
+        self.vsuffix.SelectedIndex = self._suffix_idx
         self._update_names()
 
     @property
@@ -912,8 +904,7 @@ class CropWindow(forms.WPFWindow):
         return {"mode": self.mode, "margin": self.margin_m,
                 "type": next((i for i in types if i["label"] == sel), None),
                 "vname": self.name_opt["key"], "suffix": self.suffix_key,
-                "name_pt": pt, "name_en": en,
-                "report": bool(self.report.IsChecked)}
+                "name_pt": pt, "name_en": en}
 
 
 # ------------------------------------------------------------------
@@ -963,7 +954,7 @@ if not en_param_bound():
 active_level = getattr(active_view, "GenLevel", None)
 dialog_ctx = {
     "types": {"plans": plan_items, "callout": callout_items, "current": []},
-    "names": dict((m, name_options(target_kind(m), the_room is not None)) for m in MODES),
+    "names": dict((m, name_options(target_kind(m), the_room)) for m in MODES),
     "level": {"plans": plan_level, "callout": active_level, "current": active_level},
     "room": the_room,
     "hints": name_hints,
@@ -974,8 +965,7 @@ cfg = {"margin": config.get_option("margin_m", 0.5),
        "mode": config.get_option("mode", "current"),
        "vtype": config.get_option("vtype", u""),
        "vname": config.get_option("vname", MANUAL_KEY),
-       "suffix": config.get_option("vsuffix", "amp"),
-       "report": config.get_option("open_report", True)}
+       "suffix": config.get_option("vsuffix", "amp")}
 
 info = u"{} elemento(s) → 1 vista · vista ativa: {} ({})".format(
     len(geoms), to_unicode(active_view.Name), view_type_label(active_view))
@@ -990,7 +980,6 @@ config.mode = opts["mode"]
 config.vtype = opts["type"]["label"] if opts["type"] else cfg["vtype"]
 config.vname = opts["vname"]
 config.vsuffix = opts["suffix"]
-config.open_report = opts["report"]
 script.save_config()
 
 mode = opts["mode"]
@@ -1022,146 +1011,52 @@ if mode == "plans" and other_levels:
                                                   u", ".join(other_levels)))
 
 
-def _m2(pt):
-    return [round(ft_to_m(pt[0]), 3), round(ft_to_m(pt[1]), 3)]
-
-
-def drawing(calc):
-    seen, segs = set(), []
-    for a, b, _w in calc.segs:
-        key = tuple(_m2(a) + _m2(b))
-        if key in seen or (key[0] == key[2] and key[1] == key[3]):
-            continue
-        seen.add(key)
-        segs.append(list(key))
-        if len(segs) >= MAX_SVG_SEGS:
-            break
-    hull = [_m2(p) for p in calc.hull]
-    if hull:
-        segs.extend(hull[i] + hull[(i + 1) % len(hull)] for i in range(len(hull)))
-    return {"segs": segs,
-            "crop": [_m2(p) for p in calc.corners],
-            "tight": [_m2(p) for p in calc.tight]}
-
-
-def record(view, action, calc, method, notes):
-    en_p = view.LookupParameter(EN_TITLE_PARAM)
-    rec = {"view": to_unicode(view.Name), "viewId": eid_int(view.Id),
-           "viewType": view_type_label(view), "action": action,
-           "titleEn": to_unicode(en_p.AsString()) if en_p is not None and en_p.HasValue else u"",
-           "elements": [g.label for g in geoms],
-           "angle": round(math.degrees(calc.angle), 2),
-           "width": round(ft_to_m(calc.width), 3),
-           "height": round(ft_to_m(calc.height), 3),
-           "method": method, "source": calc.source,
-           "status": "warn" if notes else "ok", "msg": u" ".join(notes)}
-    rec.update(drawing(calc))
-    return rec
-
-
-def error_record(exc):
-    return {"view": u"-", "viewId": None, "viewType": u"", "action": u"Falhou",
-            "titleEn": u"", "elements": [g.label for g in geoms], "status": "error",
-            "msg": to_unicode(exc), "segs": [], "crop": [], "tight": []}
-
-
-results = []
 vtype = opts["type"]
+notes = []
+error = None
 
-with revit.Transaction(u"OCA - Crop View Offset"):
+with revit.Transaction(u"OCA - Abertura de Vistas"):
     if remove_scope_box:
         active_view.get_Parameter(BIP.VIEWER_VOLUME_OF_INTEREST_CROP).Set(INVALID_ID)
         doc.Regenerate()
 
     try:
         if mode == "current":
-            view, action = active_view, u"Recortada"
+            view = active_view
         elif mode == "callout":
             parent_calc = CropCalc(geoms, Frame(active_view), margin_ft)
             u0, v0, u1, v1 = parent_calc.envelope()
             f = parent_calc.frame
             view = DB.ViewSection.CreateCallout(doc, active_view.Id, vtype["id"],
                                                 f.to3d((u0, v0)), f.to3d((u1, v1)))
-            action = u"Criada"
+        elif vtype["kind"] == "area":
+            view = DB.ViewPlan.CreateAreaPlan(doc, vtype["id"], plan_level.Id)
         else:
-            if vtype["kind"] == "area":
-                view = DB.ViewPlan.CreateAreaPlan(doc, vtype["id"], plan_level.Id)
-            else:
-                view = DB.ViewPlan.Create(doc, vtype["id"], plan_level.Id)
-            action = u"Criada"
+            view = DB.ViewPlan.Create(doc, vtype["id"], plan_level.Id)
 
-        if action == u"Criada":
+        if mode != "current":
             # o tipo de vista pode ter template padrão para vistas novas: remover
             view.ViewTemplateId = INVALID_ID
 
-        notes = []
         apply_names(view, opts["name_pt"], opts["name_en"], notes)
         doc.Regenerate()
 
         # recalcula no sistema da vista-alvo: a orientação relativa pode
         # mudar (ex.: planta nova sem a rotação de recorte da vista ativa)
         calc = CropCalc(geoms, Frame(view), margin_ft)
-        method, warn = apply_crop(view, calc)
+        _method, warn = apply_crop(view, calc)
         if warn:
             notes.append(warn)
-        results.append(record(view, action, calc, method, notes))
     except Exception as exc:
-        results.append(error_record(exc))
+        error = to_unicode(exc)
 
 
 # ------------------------------------------------------------------
-# 10. Relatório HTML
+# 10. Resumo: só aparece se houver falha ou algo a revisar
 # ------------------------------------------------------------------
-n_err = sum(1 for r in results if r["status"] == "error")
-
-if opts["report"]:
-    data = {
-        "project": to_unicode(doc.Title),
-        "generated": datetime.now().strftime("%Y-%m-%d %H:%M"),
-        "activeView": to_unicode(active_view.Name),
-        "mode": MODE_LABELS[mode],
-        "viewType": vtype["label"] if vtype else u"",
-        "margin": opts["margin"],
-        "results": results,
-        "warnings": warnings,
-    }
-
-    template_path = os.path.join(os.path.dirname(__file__), "cropview.html")
-    with codecs.open(template_path, "r", encoding="utf-8") as f:
-        html = f.read()
-    html = html.replace("__DATA__", json.dumps(data, ensure_ascii=False,
-                                                default=lambda o: int(o)))
-
-    out_path = script.get_document_data_file("crop_view_offset", "html")
-    with codecs.open(out_path, "w", encoding="utf-8") as f:
-        f.write(html)
-
-    def open_in_browser(path):
-        try:
-            from System.Diagnostics import Process, ProcessStartInfo
-            psi = ProcessStartInfo(path)
-            psi.UseShellExecute = True
-            Process.Start(psi)
-            return True
-        except Exception:
-            pass
-        try:
-            from System.Diagnostics import Process
-            Process.Start("explorer.exe", '"{}"'.format(path))
-            return True
-        except Exception:
-            pass
-        try:
-            import webbrowser
-            return webbrowser.open("file:///" + path.replace("\\", "/"))
-        except Exception:
-            return False
-
-    if not open_in_browser(out_path):
-        forms.alert(u"Relatório gerado, mas não foi possível abri-lo.\n\n{}".format(out_path))
-
-elif n_err:
-    forms.alert(u"{} de {} vista(s) falharam:\n\n{}".format(
-        n_err, len(results),
-        u"\n".join(u"- {}: {}".format(u", ".join(r["elements"]), r["msg"])
-                   for r in results if r["status"] == "error")))
+if error:
+    forms.alert(u"Não foi possível concluir: {}".format(error),
+                sub_msg=u"\n".join(warnings) or None)
+elif warnings or notes:
+    forms.alert(u"Vista '{}' ajustada, com avisos:".format(to_unicode(view.Name)),
+                sub_msg=u"\n".join(u"- " + w for w in warnings + notes))
