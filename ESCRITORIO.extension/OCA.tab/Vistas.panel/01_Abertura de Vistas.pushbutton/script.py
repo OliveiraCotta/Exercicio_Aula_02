@@ -2,8 +2,10 @@
 """Abertura de Vistas - ajusta o recorte (CropView) de vistas a partir de elementos.
 
 Fluxo:
-  1. Usa a seleção atual (ou pede para selecionar) Linhas, Terreno, Pisos,
-     Paredes ou Ambientes.
+  1. Usa a seleção atual (ou pede para selecionar) - qualquer elemento do
+     modelo ou da vista: paredes, pisos, ambientes, colunas, property lines,
+     linhas, terreno, famílias, grupos, anotações... Elementos sem geometria
+     legível entram pela caixa envolvente (bounding box).
   2. Pergunta a margem (m) e o que fazer - sempre UMA vista para toda a seleção:
        - criar nova vista de planta (Piso, Forro, Estrutural, Área);
        - criar vista de chamada (Callout) na vista ativa;
@@ -74,45 +76,24 @@ N_BINS = int(round(HALF_PI / ANGLE_BIN))  # 180 bins cobrindo 0..90°
 ANGLE_SNAP = math.radians(0.01)           # abaixo disso o elemento está "alinhado"
 MIN_SEG = m_to_ft(0.001)                  # ignora arestas < 1 mm na projeção
 MIN_CROP = m_to_ft(0.01)                  # recorte mínimo de 1 cm por lado
-LOCATION_WEIGHT = 10.0                    # peso extra do eixo de paredes retas
+LOCATION_WEIGHT = 10.0                    # peso extra do eixo de elementos lineares retos
 
 
 # ------------------------------------------------------------------
-# 1. Categorias aceitas + seleção
+# 1. Seleção: qualquer elemento com categoria (exceto vistas e tipos)
 # ------------------------------------------------------------------
-def _bic_int(name):
-    bic = getattr(DB.BuiltInCategory, name, None)   # OST_Toposolid: Revit 2024+
-    if bic is None:
-        return None
+def is_target(el):
     try:
-        return int(bic)
+        if el is None or el.Category is None:
+            return False
     except Exception:
-        return None
+        return False
+    return not isinstance(el, (DB.View, DB.Viewport, DB.ElementType))
 
 
-ALLOWED_CATS = {}
-for _name, _label in (("OST_Lines", u"Linha"),
-                      ("OST_Topography", u"Terreno"),
-                      ("OST_Toposolid", u"Terreno"),
-                      ("OST_Floors", u"Piso"),
-                      ("OST_Walls", u"Parede"),
-                      ("OST_Rooms", u"Ambiente")):
-    _v = _bic_int(_name)
-    if _v is not None:
-        ALLOWED_CATS[_v] = _label
-
-
-def elem_cat_int(el):
-    try:
-        cat = el.Category
-        return eid_int(cat.Id) if cat is not None else None
-    except Exception:
-        return None
-
-
-class AllowedFilter(ISelectionFilter):
+class TargetFilter(ISelectionFilter):
     def AllowElement(self, el):
-        return elem_cat_int(el) in ALLOWED_CATS
+        return is_target(el)
 
     def AllowReference(self, ref, point):
         return False
@@ -121,14 +102,14 @@ class AllowedFilter(ISelectionFilter):
 def get_target_elements():
     """Seleção atual filtrada; se vazia, pede para o usuário selecionar."""
     current = list(revit.get_selection().elements)
-    picked = [el for el in current if elem_cat_int(el) in ALLOWED_CATS]
+    picked = [el for el in current if is_target(el)]
     ignored = len(current) - len(picked)
     if picked:
         return picked, ignored
     try:
         refs = uidoc.Selection.PickObjects(
-            ObjectType.Element, AllowedFilter(),
-            u"Selecione linhas, terreno, pisos, paredes ou ambientes e clique em Concluir")
+            ObjectType.Element, TargetFilter(),
+            u"Selecione os elementos da vista e clique em Concluir")
     except Exception:
         script.exit()   # Esc
     return [doc.GetElement(r) for r in refs], ignored
@@ -141,7 +122,7 @@ def elem_label(el):
         parts = [to_unicode(p.AsString()) for p in (num, name)
                  if p is not None and p.AsString()]
         return u" ".join(parts) or u"Ambiente [{}]".format(eid_int(el.Id))
-    kind = ALLOWED_CATS.get(elem_cat_int(el), u"Elemento")
+    kind = to_unicode(el.Category.Name) if el.Category is not None else u"Elemento"
     type_name = u""
     try:
         etype = doc.GetElement(el.GetTypeId())
@@ -159,6 +140,26 @@ GEOM_OPT = DB.Options()
 GEOM_OPT.DetailLevel = DB.ViewDetailLevel.Fine
 GEOM_OPT.ComputeReferences = False
 GEOM_OPT.IncludeNonVisibleObjects = False
+
+
+def owner_view(el):
+    """Vista dona de elementos específicos de vista (detalhes, anotações)."""
+    try:
+        if el.ViewSpecific:
+            return doc.GetElement(el.OwnerViewId)
+    except Exception:
+        pass
+    return None
+
+
+def geom_options(el):
+    view = owner_view(el)
+    if view is None:
+        return GEOM_OPT
+    opt = DB.Options()   # com View definida o DetailLevel vem da própria vista
+    opt.View = view
+    opt.ComputeReferences = False
+    return opt
 
 
 class ElemGeom(object):
@@ -180,6 +181,20 @@ class ElemGeom(object):
         except Exception:
             pass
 
+    def add_bbox(self):
+        """Fallback: 8 cantos da caixa envolvente (orientação pelo casco convexo)."""
+        try:
+            bb = self.el.get_BoundingBox(owner_view(self.el))
+        except Exception:
+            bb = None
+        if bb is None:
+            return
+        t, lo, hi = bb.Transform, bb.Min, bb.Max
+        for x in (lo.X, hi.X):
+            for y in (lo.Y, hi.Y):
+                for z in (lo.Z, hi.Z):
+                    self.points.append(t.OfPoint(DB.XYZ(x, y, z)))
+
     def walk(self, geom):
         if geom is None:
             return
@@ -199,28 +214,39 @@ class ElemGeom(object):
                 self.points.extend(obj.Vertices)
 
 
+# vínculos e importações: a geometria inteira seria pesada demais - só a caixa
+BBOX_ONLY = (DB.RevitLinkInstance, DB.ImportInstance)
+
+
 def extract_geometry(el):
     g = ElemGeom(el)
-    if isinstance(el, DB.SpatialElement):
-        loops = el.GetBoundarySegments(DB.SpatialElementBoundaryOptions()) or []
-        for loop in loops:
-            for seg in loop:
-                g.add_curve(seg.GetCurve())
-        if isinstance(el, Room):
-            try:
+    try:
+        if isinstance(el, BBOX_ONLY):
+            pass
+        elif isinstance(el, DB.SpatialElement):
+            loops = el.GetBoundarySegments(DB.SpatialElementBoundaryOptions()) or []
+            for loop in loops:
+                for seg in loop:
+                    g.add_curve(seg.GetCurve())
+            if isinstance(el, Room):
                 g.walk(el.ClosedShell)   # altura do ambiente (cortes/elevações)
-            except Exception:
-                pass
-    elif isinstance(el, DB.CurveElement):
-        g.add_curve(el.GeometryCurve)
-    else:
-        g.walk(el.get_Geometry(GEOM_OPT))
-        loc = getattr(el, "Location", None)
-        if (isinstance(el, DB.Wall) and isinstance(loc, DB.LocationCurve)
-                and isinstance(loc.Curve, DB.Line)):
-            # o eixo da parede reta manda na orientação (juntas em ângulo não)
-            c = loc.Curve
-            g.segs.append((c.GetEndPoint(0), c.GetEndPoint(1), LOCATION_WEIGHT))
+        elif isinstance(el, DB.CurveElement):
+            g.add_curve(el.GeometryCurve)
+        elif isinstance(el, DB.Grid):
+            g.add_curve(el.Curve)
+        elif isinstance(el, DB.ReferencePlane):
+            g.add_polyline([el.BubbleEnd, el.FreeEnd])
+        else:
+            g.walk(el.get_Geometry(geom_options(el)))
+            loc = getattr(el, "Location", None)
+            if isinstance(loc, DB.LocationCurve) and isinstance(loc.Curve, DB.Line):
+                # eixo de paredes/vigas/tubos retos manda na orientação
+                c = loc.Curve
+                g.segs.append((c.GetEndPoint(0), c.GetEndPoint(1), LOCATION_WEIGHT))
+    except Exception:
+        pass
+    if not g.points:
+        g.add_bbox()
     return g
 
 
@@ -924,7 +950,7 @@ warnings = []
 
 elements, ignored = get_target_elements()
 if ignored:
-    warnings.append(u"{} elemento(s) da seleção ignorado(s): categoria não suportada.".format(ignored))
+    warnings.append(u"{} elemento(s) da seleção ignorado(s): vistas, viewports e tipos não definem recorte.".format(ignored))
 
 geoms = []
 for el in elements:
