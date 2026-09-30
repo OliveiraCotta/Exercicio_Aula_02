@@ -559,11 +559,13 @@ VERTICAL_TITLES = (
     ("corte", u"CORTE", u"SECTION", False),
     ("elevacao", u"ELEVAÇÃO", u"ELEVATION", False),
 )
-# complemento das plantas 2..6: (chave, texto PT, texto EN) + nome do nível
-NO_SUFFIX = "none"
-SUFFIXES = ((NO_SUFFIX, u"", u""),
-            ("pav", u"- PAV.", u"LEVEL"),
-            ("amp", u"- AMPLIAÇÃO", u"ENLARGED"))
+# complemento: (chave, texto PT, texto EN). FREE_SUFFIX = texto digitado
+# (ou nada) e vale para todos os títulos; PAV./AMPLIAÇÃO + nível só para
+# as plantas 2..6. O complemento sempre entra depois de " - ".
+FREE_SUFFIX = "none"
+SUFFIXES = ((FREE_SUFFIX, u"", u""),
+            ("pav", u"PAV.", u"LEVEL"),
+            ("amp", u"AMPLIAÇÃO", u"ENLARGED"))
 MANUAL_KEY = "manual"
 
 
@@ -610,20 +612,33 @@ def level_text(level):
 def suffix_labels(level):
     """Itens do combo Complemento, já com o nome do nível."""
     lv = level_text(level)
-    return [(pt + u" " + lv).strip() if key != NO_SUFFIX else u"(sem complemento)"
+    return [u"Sem complemento ou manual" if key == FREE_SUFFIX
+            else u" ".join(x for x in (u"-", pt, lv) if x)
             for key, pt, _en in SUFFIXES]
 
 
-def compose_names(opt, suffix_key, level, room, manual):
+def free_suffix(text):
+    """Complemento digitado, sem hífens/travessões iniciais (o ' - ' é automático)."""
+    return re.sub(u"^[\\s\\-\u2013]+", u"", to_unicode(text)).strip()
+
+
+def compose_names(opt, suffix_key, level, room, manual, suffix_text=u""):
     """Devolve (VIEW NAME, Title on Sheet - English)."""
     if opt["key"] == MANUAL_KEY:
         return manual.strip(), u""
     pt, en = opt["pt"], opt["en"]
-    if opt["suffix"] and suffix_key != NO_SUFFIX:
+    if not opt["suffix"]:
+        suffix_key = FREE_SUFFIX   # PAV./AMPLIAÇÃO só nas plantas 2..6
+    if suffix_key == FREE_SUFFIX:
+        extra = free_suffix(suffix_text)
+        if extra:
+            pt += u" - " + extra
+            en += EN_DASH + extra
+    else:
         lv = level_text(level)
         _k, suf_pt, suf_en = next(s for s in SUFFIXES if s[0] == suffix_key)
-        pt = u" ".join(x for x in (pt, suf_pt, lv) if x)
-        en = en + EN_DASH + u" ".join(x for x in (suf_en, lv) if x)
+        pt += u" - " + u" ".join(x for x in (suf_pt, lv) if x)
+        en += EN_DASH + u" ".join(x for x in (suf_en, lv) if x)
     if opt["room"] and room is not None:
         number, name, name_en = room_info(room)
         pt = u"{} - {} - {}".format(number, name, pt)
@@ -792,6 +807,9 @@ CROP_XAML = u"""
     <ComboBox x:Name="vname"/>
     <TextBlock x:Name="suffix_lbl" Text="Complemento"/>
     <ComboBox x:Name="vsuffix"/>
+    <TextBlock x:Name="suffix_text_lbl"
+               Text="Complemento manual (vazio = sem complemento; entra depois de ' - ')"/>
+    <TextBox x:Name="suffix_text"/>
     <TextBlock x:Name="manual_lbl"
                Text="Nome manual (vazio = mantém o nome do Revit;  # = sequência 01, 02...)"/>
     <TextBox x:Name="manual"/>
@@ -836,6 +854,8 @@ class CropWindow(forms.WPFWindow):
         self.name_hint.Text = u"\n".join(ctx["hints"])
         self._suffix_idx = next(
             (i for i, s in enumerate(SUFFIXES) if s[0] == cfg["suffix"]), 0)
+        self._forced = False   # combo travado em "Sem complemento ou manual"
+        self._busy = False
 
         enabled = [k for k in MODES if k not in reasons]
         for key, rb in self._radios.items():
@@ -844,6 +864,7 @@ class CropWindow(forms.WPFWindow):
         self.vname.SelectionChanged += self._on_name
         self.vsuffix.SelectionChanged += self._on_name
         self.manual.TextChanged += self._on_name
+        self.suffix_text.TextChanged += self._on_name
         start = cfg["mode"] if cfg["mode"] in enabled else enabled[0]
         self._radios[start].IsChecked = True
         self._refresh()
@@ -883,7 +904,7 @@ class CropWindow(forms.WPFWindow):
                                     if self._saved["vname"] in keys else 0)
 
         # complemento traz o nome do nível da vista resultante
-        if self.vsuffix.SelectedIndex >= 0:
+        if self.vsuffix.SelectedIndex >= 0 and not self._forced:
             self._suffix_idx = self.vsuffix.SelectedIndex
         self.vsuffix.ItemsSource = suffix_labels(self.ctx["level"][mode])
         self.vsuffix.SelectedIndex = self._suffix_idx
@@ -903,16 +924,41 @@ class CropWindow(forms.WPFWindow):
         opt = self.name_opt
         manual = to_unicode(self.manual.Text)
         pt, en = compose_names(opt, self.suffix_key, self.ctx["level"][self.mode],
-                               self.ctx["room"], manual)
+                               self.ctx["room"], manual, to_unicode(self.suffix_text.Text))
         if opt["key"] == MANUAL_KEY:
             pt = sequence_name(pt) if pt else u""
         return pt, en
 
+    def _sync_suffix(self, opt):
+        """PAV./AMPLIAÇÃO só nas plantas 2..6: nas demais o combo fica em
+        'Sem complemento ou manual' e a escolha anterior volta depois."""
+        if opt["suffix"]:
+            if self._forced:
+                self.vsuffix.SelectedIndex = self._suffix_idx
+                self._forced = False
+            self._suffix_idx = self.vsuffix.SelectedIndex
+        else:
+            self._forced = True
+            self.vsuffix.SelectedIndex = 0
+
     def _update_names(self):
+        if self._busy:   # mudar o combo aqui dispara SelectionChanged de novo
+            return
+        self._busy = True
+        try:
+            self._render_names()
+        finally:
+            self._busy = False
+
+    def _render_names(self):
         opt = self.name_opt
         is_manual = opt["key"] == MANUAL_KEY
+        self._sync_suffix(opt)
+        free = self.suffix_key == FREE_SUFFIX
         self.vsuffix.IsEnabled = opt["suffix"]
-        self.suffix_lbl.Opacity = 1.0 if opt["suffix"] else 0.4
+        self.suffix_lbl.Opacity = 1.0 if not is_manual else 0.4
+        self.suffix_text.IsEnabled = free and not is_manual
+        self.suffix_text_lbl.Opacity = 1.0 if free and not is_manual else 0.4
         self.manual.IsEnabled = is_manual
         self.manual_lbl.Opacity = 1.0 if is_manual else 0.4
         pt, en = self.names()
