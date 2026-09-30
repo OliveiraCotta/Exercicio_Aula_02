@@ -23,13 +23,17 @@ Modos:
   0. Somente analisar  - relatório de inconsistências, nada é gravado.
   1. Modelo -> Excel   - adiciona keynotes e preenche descrições vazias.
   2. Excel  -> Modelo  - grava Description / Descrição em IN nos tipos e
-                         materiais (prévia + confirmação antes de sobrescrever).
+                         materiais. Antes de gravar abre uma janela de
+                         verificação em árvore (Categoria > Keynote > alteração)
+                         para o usuário marcar o que deve ser gravado.
 
 O Excel é lido e gravado direto no XML do .xlsx (sem Excel/COM). Antes de
 gravar é feito um backup com data/hora ao lado do arquivo. O arquivo precisa
 estar FECHADO no Excel.
 
-Ao final abre um relatório HTML agrupado por categoria do Revit.
+Ao final pergunta se gera o relatório HTML (sempre gerado em "Somente
+analisar"): preenchidos, alterados e faltando/pendentes por categoria do
+modelo > keynote, mais as inconsistências Excel × modelo.
 """
 
 __title__ = "Atualização\nDescrição\npor Keynotes"
@@ -996,7 +1000,9 @@ def where_label(h):
 
 
 def plan_to_model():
-    plan = []      # (holder, field, param, old, new)
+    """-> (plan, bloqueados). plan: alterações possíveis; bloqueados: diferenças
+    que não podem ser gravadas (parâmetro ausente, somente leitura, workshared)."""
+    plan, blocked = [], []
     for key, holders in MODEL.items():
         rec = XL["by_key"].get(key)
         if rec is None:
@@ -1021,51 +1027,300 @@ def plan_to_model():
                     reason = u"parâmetro '{}' somente leitura".format(label)
                 elif owned_by_other(h["elem"]):
                     reason = u"elemento emprestado por outro usuário (workshared)"
-                if reason:
-                    skipped.append({"key": key, "where": where_label(h), "id": h["id"],
-                                    "eid": h["elem"].Id, "reason": reason})
-                    continue
-                plan.append((h, field, label, p, old, new))
-    return plan
+                item = {"h": h, "field": field, "label": label, "p": p,
+                        "old": old, "new": new, "reason": reason}
+                (blocked if reason else plan).append(item)
+    return plan, blocked
 
+
+# ---- janela de verificação: Categoria > Keynote > alteração (com checkbox) ----
+for _asm in ("PresentationFramework", "PresentationCore", "WindowsBase"):
+    try:
+        clr.AddReference(_asm)
+    except Exception:
+        pass
+
+SELECT_XAML = u"""
+<Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Excel → Modelo · Verificar alterações" Width="1000" Height="700"
+        MinWidth="700" MinHeight="420" WindowStartupLocation="CenterScreen"
+        Background="#0E1526">
+  <Window.Resources>
+    <Style TargetType="Button">
+      <Setter Property="Height" Value="28"/>
+      <Setter Property="Padding" Value="12,0,12,0"/>
+      <Setter Property="Margin" Value="0,0,8,0"/>
+    </Style>
+  </Window.Resources>
+  <Grid Margin="16">
+    <Grid.RowDefinitions>
+      <RowDefinition Height="Auto"/>
+      <RowDefinition Height="Auto"/>
+      <RowDefinition Height="*"/>
+      <RowDefinition Height="Auto"/>
+    </Grid.RowDefinitions>
+    <StackPanel Grid.Row="0">
+      <TextBlock Text="EXCEL → MODELO  ·  MARQUE O QUE DEVE SER GRAVADO" FontSize="15"
+                 FontWeight="SemiBold" Foreground="#65E3FF" FontFamily="Segoe UI"/>
+      <TextBlock x:Name="info" TextWrapping="Wrap" FontSize="12" Foreground="#CFE3FF"
+                 FontFamily="Segoe UI" Margin="0,6,0,0"/>
+      <TextBlock TextWrapping="Wrap" FontSize="11" Foreground="#7A8FA9" FontFamily="Segoe UI"
+                 Margin="0,4,0,0"
+                 Text="Verde = preenche parâmetro vazio  ·  Âmbar = SOBRESCREVE valor existente  ·  Cinza = não pode ser gravado (motivo ao lado). Parâmetros de tipo valem para todas as instâncias do tipo."/>
+    </StackPanel>
+    <WrapPanel Grid.Row="1" Margin="0,12,0,8">
+      <Button x:Name="b_all" Content="Marcar tudo"/>
+      <Button x:Name="b_none" Content="Desmarcar tudo"/>
+      <Button x:Name="b_fill" Content="Somente preencher vazios"/>
+      <Button x:Name="b_expand" Content="Expandir"/>
+      <Button x:Name="b_collapse" Content="Recolher"/>
+    </WrapPanel>
+    <Border Grid.Row="2" BorderBrush="#2A4A66" BorderThickness="1">
+      <TreeView x:Name="tree" Background="#0A1120" BorderThickness="0" Padding="4"/>
+    </Border>
+    <DockPanel Grid.Row="3" Margin="0,12,0,0" LastChildFill="False">
+      <TextBlock x:Name="counter" DockPanel.Dock="Left" VerticalAlignment="Center"
+                 Foreground="#CFE3FF" FontFamily="Segoe UI"/>
+      <Button x:Name="b_apply" DockPanel.Dock="Right" Content="Gravar selecionados"
+              Width="160" Margin="0"/>
+      <Button x:Name="b_cancel" DockPanel.Dock="Right" Content="Cancelar" Width="100"
+              Margin="0,0,10,0"/>
+    </DockPanel>
+  </Grid>
+</Window>
+"""
+
+C_TEXT, C_KEY, C_FILL, C_OVER, C_OFF = "#D9E8F5", "#65E3FF", "#50D682", "#FFB454", "#7A8FA9"
+
+
+def short(text, n=80):
+    text = to_unicode(text).replace(u"\n", u" ")
+    return text if len(text) <= n else text[:n - 1] + u"…"
+
+
+def holder_label(h):
+    if h["kind"] == "material":
+        return u"Material: {}".format(h["name"])
+    return u"Tipo: {}{}".format((h["family"] + u" - ") if h["family"] else u"", h["name"])
+
+
+class TNode(object):
+    """Um nível da árvore: CheckBox dentro de um TreeViewItem."""
+    def __init__(self, text, color, item=None, enabled=True, bold=False):
+        from System.Windows.Controls import CheckBox, TextBlock, TreeViewItem
+        from System.Windows import FontWeights, VerticalAlignment
+        from System.Windows.Media import SolidColorBrush, ColorConverter
+        self.children, self.parent, self.item, self.enabled = [], None, item, enabled
+        tb = TextBlock()
+        tb.Text = text
+        tb.Foreground = SolidColorBrush(ColorConverter.ConvertFromString(color))
+        if bold:
+            tb.FontWeight = FontWeights.SemiBold
+        self.cb = CheckBox()
+        self.cb.Content = tb
+        self.cb.IsEnabled = enabled
+        self.cb.IsChecked = bool(enabled)
+        self.cb.VerticalContentAlignment = VerticalAlignment.Center
+        self.tvi = TreeViewItem()
+        self.tvi.Header = self.cb
+
+    def add(self, child):
+        child.parent = self
+        self.children.append(child)
+        self.tvi.Items.Add(child.tvi)
+        return child
+
+    def leaves(self):
+        if not self.children:
+            return [self]
+        out = []
+        for c in self.children:
+            out.extend(c.leaves())
+        return out
+
+
+class SelectWindow(forms.WPFWindow):
+    def __init__(self, plan, blocked, info_text):
+        forms.WPFWindow.__init__(self, SELECT_XAML, literal_string=True)
+        self.confirmed = False
+        self.roots = []
+        self.info.Text = info_text
+
+        groups = OrderedDict()               # categoria -> keynote -> [itens]
+        for it in sorted(plan + blocked, key=lambda i: (
+                i["h"]["category"], i["h"]["key"], i["h"]["name"], i["field"])):
+            groups.setdefault(it["h"]["category"], OrderedDict()) \
+                  .setdefault(it["h"]["key"], []).append(it)
+
+        for cat, keys in groups.items():
+            n_items = sum(1 for its in keys.values() for i in its if not i["reason"])
+            cnode = TNode(u"{}    ·  {} keynote(s)  ·  {} alteração(ões)".format(
+                cat, len(keys), n_items), C_TEXT, bold=True)
+            for key, its in keys.items():
+                rec = XL["by_key"].get(key) or {}
+                n_ok = sum(1 for i in its if not i["reason"])
+                n_over = sum(1 for i in its if not i["reason"] and i["old"])
+                ktxt = u"{}    PT: {}    |    IN: {}    ({} alteração(ões){})".format(
+                    key, short(rec.get("pt") or u"-", 60), short(rec.get("en") or u"-", 60),
+                    n_ok, u", {} sobrescreve(m)".format(n_over) if n_over else u"")
+                knode = cnode.add(TNode(ktxt, C_KEY, bold=True))
+                for it in its:
+                    h = it["h"]
+                    if it["reason"]:
+                        txt = u"{}  —  {}: não pode ser gravado ({})".format(
+                            holder_label(h), it["label"], it["reason"])
+                        knode.add(TNode(txt, C_OFF, item=it, enabled=False))
+                        continue
+                    txt = u"{}  —  {}:  “{}”  →  “{}”".format(
+                        holder_label(h), it["label"],
+                        short(it["old"], 50) if it["old"] else u"(vazio)", short(it["new"], 60))
+                    knode.add(TNode(txt, C_OVER if it["old"] else C_FILL, item=it))
+                knode.tvi.IsExpanded = False
+            cnode.tvi.IsExpanded = True
+            self.roots.append(cnode)
+            self.tree.Items.Add(cnode.tvi)
+
+        for node in self._all_nodes():
+            node.cb.Click += self._make_click(node)
+        self.b_all.Click += lambda s, a: self._set_leaves(lambda it: True)
+        self.b_none.Click += lambda s, a: self._set_leaves(lambda it: False)
+        self.b_fill.Click += lambda s, a: self._set_leaves(lambda it: not it["old"])
+        self.b_expand.Click += lambda s, a: self._expand(True)
+        self.b_collapse.Click += lambda s, a: self._expand(False)
+        self.b_apply.Click += self._apply
+        self.b_cancel.Click += self._cancel
+        self._refresh()
+
+    def _all_nodes(self):
+        stack, out = list(self.roots), []
+        while stack:
+            n = stack.pop()
+            out.append(n)
+            stack.extend(n.children)
+        return out
+
+    def _make_click(self, node):
+        def handler(sender, args):
+            state = node.cb.IsChecked == True
+            for leaf in node.leaves():
+                if leaf.enabled:
+                    leaf.cb.IsChecked = state
+            self._refresh()
+        return handler
+
+    def _set_leaves(self, rule):
+        for root in self.roots:
+            for leaf in root.leaves():
+                if leaf.enabled:
+                    leaf.cb.IsChecked = bool(rule(leaf.item))
+        self._refresh()
+
+    def _expand(self, state):
+        """Categorias ficam sempre abertas; abre/fecha o nível dos keynotes."""
+        for root in self.roots:
+            root.tvi.IsExpanded = True
+            for k in root.children:
+                k.tvi.IsExpanded = state
+
+    def _sync(self, node):
+        """Pais: marcado / desmarcado / parcial (None) conforme as folhas."""
+        if not node.children:
+            return
+        for c in node.children:
+            self._sync(c)
+        states = [l.cb.IsChecked == True for l in node.leaves() if l.enabled]
+        if not states:
+            node.cb.IsChecked, node.cb.IsEnabled = False, False
+        elif all(states):
+            node.cb.IsChecked = True
+        elif not any(states):
+            node.cb.IsChecked = False
+        else:
+            node.cb.IsChecked = None
+
+    def _refresh(self):
+        for root in self.roots:
+            self._sync(root)
+        sel = self.selected_items()
+        total = sum(1 for r in self.roots for l in r.leaves() if l.enabled)
+        keys = set((i["h"]["category"], i["h"]["key"]) for i in sel)
+        over = sum(1 for i in sel if i["old"])
+        self.counter.Text = (u"{} de {} alteração(ões) selecionada(s)  ·  {} keynote(s)  ·  "
+                             u"{} sobrescreve(m) valor existente".format(
+                                 len(sel), total, len(keys), over))
+
+    def selected_items(self):
+        return [l.item for r in self.roots for l in r.leaves()
+                if l.enabled and l.cb.IsChecked == True]
+
+    def _apply(self, sender, args):
+        self.confirmed = True
+        self.Close()
+
+    def _cancel(self, sender, args):
+        self.confirmed = False
+        self.Close()
+
+
+# (holder id, campo) -> motivo de NÃO ter sido gravado (usado no resultado)
+not_written = {}
 
 if MODE == "to_model":
-    plan = plan_to_model()
+    plan, blocked = plan_to_model()
+    for it in blocked:
+        h = it["h"]
+        not_written[(h["id"], it["field"])] = it["reason"]
+        skipped.append({"key": h["key"], "where": where_label(h), "id": h["id"],
+                        "eid": h["elem"].Id, "reason": it["reason"]})
+
+    keys_with_info = [k for k in MODEL if XL["by_key"].get(k) and
+                      (XL["by_key"][k]["pt"] or XL["by_key"][k]["en"])]
+    keys_to_change = set(it["h"]["key"] for it in plan)
+    info_text = (u"{} keynote(s) do modelo têm descrição no Excel  ·  {} com alteração a "
+                 u"gravar  ·  {} já iguais ao Excel  ·  {} sem descrição no Excel  ·  "
+                 u"{} fora do Excel.".format(
+                     len(keys_with_info), len(keys_to_change),
+                     len([k for k in keys_with_info if k not in keys_to_change
+                          and not any(it["h"]["key"] == k for it in blocked)]),
+                     len([k for k in MODEL if XL["by_key"].get(k) and k not in keys_with_info]),
+                     len([k for k in MODEL if not XL["by_key"].get(k)])))
+
     if not plan:
         output.print_md(u"**Excel → Modelo:** nada a gravar - as descrições do modelo "
                         u"já coincidem com a planilha (ou não há permissão para gravar).")
     else:
-        overwrites = [x for x in plan if x[4]]
-        fills_m = [x for x in plan if not x[4]]
-        output.print_md(u"## Excel → Modelo - prévia")
-        if overwrites:
-            output.print_md(u"### :warning: {} valor(es) do modelo serão SOBRESCRITOS".format(
-                len(overwrites)))
-            output.print_table(
-                table_data=[[h["key"], output.linkify(h["elem"].Id), where_label(h), lbl, old, new]
-                            for h, f, lbl, p, old, new in overwrites],
-                columns=[u"Keynote", u"Elemento", u"Tipo / Material", u"Parâmetro",
-                         u"Valor atual", u"Novo valor (Excel)"])
-        if fills_m:
-            output.print_md(u"_Mais **{}** parâmetro(s) vazio(s) serão preenchidos._".format(
-                len(fills_m)))
-        output.print_md(u"_Parâmetros de TIPO: a alteração vale para todas as instâncias do tipo._")
+        sw = SelectWindow(plan, blocked, info_text)
+        sw.ShowDialog()
+        if not sw.confirmed:
+            chosen = []
+            output.print_md(u"**Cancelado - modelo não alterado.**")
+        else:
+            chosen = sw.selected_items()
+        chosen_ids = set(id(it) for it in chosen)
+        for it in plan:
+            if id(it) not in chosen_ids:
+                not_written[(it["h"]["id"], it["field"])] = (
+                    u"não selecionado pelo usuário" +
+                    (u" (modelo diferente do Excel)" if it["old"] else u""))
 
-        if forms.alert(u"{} valor(es) sobrescritos e {} preenchidos no modelo.\n\n"
-                       u"Confira a prévia na janela de saída.\n\nAplicar?".format(
-                           len(overwrites), len(fills_m)), yes=True, no=True):
+        if chosen:
             t = DB.Transaction(doc, u"Atualizar descrições por Keynote")
             t.Start()
             try:
-                for h, field, label, p, old, new in plan:
+                for it in chosen:
+                    h, field, old, new = it["h"], it["field"], it["old"], it["new"]
                     try:
-                        p.Set(new)
+                        it["p"].Set(new)
                         h[field] = new
                         changes.append({"target": "model",
                                         "action": "overwrite" if old else "fill",
-                                        "key": h["key"], "field": label, "old": old,
-                                        "new": new, "where": where_label(h), "id": h["id"]})
+                                        "key": h["key"], "field": it["label"],
+                                        "fieldKey": field, "category": h["category"],
+                                        "old": old, "new": new, "where": where_label(h),
+                                        "id": h["id"]})
                     except Exception as ex:
+                        not_written[(h["id"], field)] = to_unicode(ex)
                         skipped.append({"key": h["key"], "where": where_label(h),
                                         "id": h["id"], "eid": h["elem"].Id,
                                         "reason": to_unicode(ex)})
@@ -1074,8 +1329,8 @@ if MODE == "to_model":
                 t.RollBack()
                 forms.alert(u"Atualização desfeita (rollback):\n{}".format(to_unicode(ex)),
                             exitscript=True)
-        else:
-            output.print_md(u"**Cancelado - modelo não alterado.**")
+        elif sw.confirmed:
+            output.print_md(u"**Nenhuma alteração selecionada - modelo não alterado.**")
 
 
 # ------------------------------------------------------------------
@@ -1180,8 +1435,127 @@ for k in keynotes_out:
 
 
 # ------------------------------------------------------------------
-# 7. Relatório HTML + janela de saída
+# 7. Resultado da operação: preenchidos / alterados / faltando,
+#    agrupado por categoria do modelo e depois por keynote
 # ------------------------------------------------------------------
+FIELD_LABEL = {"pt": u"Description", "en": PARAM_IN_NAMES[0]}
+XL_FIELD_LABEL = {"pt": u"DESCRIÇÃO", "en": u"DESCRIÇÃO IN"}
+
+
+def build_result():
+    res = {"target": None, "filled": [], "changed": [], "missing": []}
+    if MODE == "to_model":
+        res["target"] = "model"
+        written = set()
+        for c in changes:
+            if c["target"] != "model":
+                continue
+            written.add((c["id"], c["fieldKey"]))
+            entry = {"category": c["category"], "key": c["key"], "where": c["where"],
+                     "id": c["id"], "field": c["field"], "old": c["old"], "new": c["new"]}
+            res["changed" if c["action"] == "overwrite" else "filled"].append(entry)
+        for key, holders in MODEL.items():
+            rec = XL["by_key"].get(key)
+            for h in holders:
+                for field, pkey in (("pt", "pt_p"), ("en", "en_p")):
+                    if (h["id"], field) in written:
+                        continue
+                    label = to_unicode(h[pkey].Definition.Name) if h[pkey] is not None \
+                        else FIELD_LABEL[field]
+                    value = h[field] or u""
+                    reason = not_written.get((h["id"], field))
+                    if not reason and value:
+                        continue                   # preenchido e sem pendência
+                    if not reason:
+                        if h[pkey] is None:
+                            reason = u"parâmetro '{}' não existe".format(label)
+                        elif rec is None:
+                            reason = u"keynote não está no Excel"
+                        elif not rec[field]:
+                            reason = u"sem descrição no Excel"
+                        else:
+                            reason = u"vazio"
+                    res["missing"].append({
+                        "category": h["category"], "key": key, "where": where_label(h),
+                        "id": h["id"], "field": label, "old": value, "new": u"",
+                        "reason": reason})
+    elif MODE == "to_excel":
+        res["target"] = "excel"
+        for c in changes:
+            if c["target"] != "excel":
+                continue
+            for cat in sorted(set(h["category"] for h in MODEL.get(c["key"], []))) or [u"-"]:
+                res["filled"].append({
+                    "category": cat, "key": c["key"], "where": c["where"], "id": None,
+                    "field": c["field"] if c["action"] != "append" else u"Linha nova",
+                    "old": u"", "new": c["new"]})
+        for key, holders in MODEL.items():
+            rec = XL["by_key"].get(key)
+            for cat in sorted(set(h["category"] for h in holders)):
+                if rec is None:
+                    res["missing"].append({
+                        "category": cat, "key": key, "where": XL["sheet"], "id": None,
+                        "field": u"Linha", "old": u"", "new": u"",
+                        "reason": u"keynote não gravado na planilha"})
+                    continue
+                for field in ("pt", "en"):
+                    if not rec[field]:
+                        res["missing"].append({
+                            "category": cat, "key": key,
+                            "where": u"{} · linha {}".format(XL["sheet"], rec["row"]),
+                            "id": None, "field": XL_FIELD_LABEL[field], "old": u"",
+                            "new": u"", "reason": u"vazio no Excel e no modelo"})
+    for k in ("filled", "changed", "missing"):
+        res[k].sort(key=lambda e: (e["category"], e["key"], e["where"], e["field"]))
+    return res
+
+
+RESULT = build_result()
+
+
+# ------------------------------------------------------------------
+# 8. Janela de saída + relatório HTML (opcional nos modos que gravam)
+# ------------------------------------------------------------------
+output.print_md(u"## Keynotes × Excel - {}".format(MODES[MODE]))
+output.print_md(u"- **{}** keynote(s) no modelo ({} tipo(s)/material(is)) · **{}** no Excel "
+                u"(aba *{}*) · **{}** em ambos".format(
+                    len(MODEL), sum(len(v) for v in MODEL.values()), len(XL["by_key"]),
+                    XL["sheet"],
+                    sum(1 for k in keynotes_out if k["inModel"] and k["inExcel"])))
+if RESULT["target"]:
+    output.print_md(u"- Resultado no **{}**: **{}** preenchido(s) · **{}** alterado(s) · "
+                    u"**{}** faltando / pendente(s)".format(
+                        u"modelo" if RESULT["target"] == "model" else u"Excel",
+                        len(RESULT["filled"]), len(RESULT["changed"]),
+                        len(RESULT["missing"])))
+for c, v in ISSUES.items():
+    if issue_count[c]:
+        output.print_md(u"- {}: **{}**".format(v["label"], issue_count[c]))
+if xl_written["backup"]:
+    output.print_md(u"- Excel gravado: **{}** adicionado(s), **{}** preenchido(s). "
+                    u"Backup: `{}`".format(xl_written["appended"], xl_written["filled"],
+                                           xl_written["backup"]))
+if skipped:
+    output.print_md(u"### :warning: {} item(ns) não gravado(s)".format(len(skipped)))
+    output.print_table(
+        table_data=[[s["key"], output.linkify(s["eid"]),
+                     s["where"], s["reason"]] for s in skipped],
+        columns=[u"Keynote", u"Elemento", u"Tipo / Material", u"Motivo"])
+if missing_in_by_cat:
+    output.print_md(u"- Parâmetro **{}** ausente em: {}".format(
+        PARAM_IN_NAMES[0], u", ".join(u"{} ({})".format(c, n)
+                                      for c, n in sorted(missing_in_by_cat.items()))))
+
+if MODE != "analyze":
+    make_html = forms.alert(
+        u"Gerar o relatório HTML?\n\n"
+        u"{} preenchido(s) · {} alterado(s) · {} faltando / pendente(s)\n"
+        u"(agrupados por categoria do modelo e por keynote)".format(
+            len(RESULT["filled"]), len(RESULT["changed"]), len(RESULT["missing"])),
+        yes=True, no=True)
+    if not make_html:
+        script.exit()
+
 data = {
     "project": to_unicode(doc.Title),
     "generated": datetime.now().strftime("%d/%m/%Y %H:%M"),
@@ -1200,11 +1574,20 @@ data = {
                    for c, v in sorted(cat_summary.items())],
     "missingIn": [{"category": c, "count": n} for c, n in sorted(missing_in_by_cat.items())],
     "keynotes": keynotes_out,
+    "result": RESULT,
     "changes": changes,
     "skipped": [dict((k, v) for k, v in s.items() if k != "eid") for s in skipped],
 }
 
-template_path = os.path.join(HERE, "keynotes.html")
+# o template pode se chamar script.html (repositório) ou keynotes.html
+template_path = None
+for _name in ("script.html", "keynotes.html"):
+    if os.path.isfile(os.path.join(HERE, _name)):
+        template_path = os.path.join(HERE, _name)
+        break
+if template_path is None:
+    forms.alert(u"Modelo do relatório não encontrado (script.html) na pasta do botão:\n"
+                u"{}".format(HERE), exitscript=True)
 with codecs.open(template_path, "r", encoding="utf-8") as f:
     html = f.read()
 html = html.replace("__DATA__", json.dumps(data, ensure_ascii=False,
@@ -1212,32 +1595,6 @@ html = html.replace("__DATA__", json.dumps(data, ensure_ascii=False,
 out_path = script.get_document_data_file("keynotes_report", "html")
 with codecs.open(out_path, "w", encoding="utf-8") as f:
     f.write(html)
-
-output.print_md(u"## Keynotes × Excel - {}".format(MODES[MODE]))
-output.print_md(u"- **{}** keynote(s) no modelo ({} tipo(s)/material(is)) · **{}** no Excel "
-                u"(aba *{}*) · **{}** em ambos".format(
-                    data["summary"]["model"], data["summary"]["holders"],
-                    data["summary"]["excel"], XL["sheet"], data["summary"]["both"]))
-for c, v in ISSUES.items():
-    if issue_count[c]:
-        output.print_md(u"- {}: **{}**".format(v["label"], issue_count[c]))
-if xl_written["backup"]:
-    output.print_md(u"- Excel gravado: **{}** adicionado(s), **{}** preenchido(s). "
-                    u"Backup: `{}`".format(xl_written["appended"], xl_written["filled"],
-                                           xl_written["backup"]))
-model_changes = [c for c in changes if c["target"] == "model"]
-if model_changes:
-    output.print_md(u"- Modelo gravado: **{}** parâmetro(s)".format(len(model_changes)))
-if skipped:
-    output.print_md(u"### :warning: {} item(ns) não gravado(s)".format(len(skipped)))
-    output.print_table(
-        table_data=[[s["key"], output.linkify(s["eid"]),
-                     s["where"], s["reason"]] for s in skipped],
-        columns=[u"Keynote", u"Elemento", u"Tipo / Material", u"Motivo"])
-if missing_in_by_cat:
-    output.print_md(u"- Parâmetro **{}** ausente em: {}".format(
-        PARAM_IN_NAMES[0], u", ".join(u"{} ({})".format(c, n)
-                                      for c, n in sorted(missing_in_by_cat.items()))))
 
 if not open_in_browser(out_path):
     forms.alert(u"Relatório gerado, mas não abriu automaticamente:\n\n{}".format(out_path))

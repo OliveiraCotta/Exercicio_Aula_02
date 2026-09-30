@@ -90,6 +90,8 @@
   .holder .id{font-family:Consolas,monospace; color:var(--dim); font-size:11px}
   .holder .kd{display:inline-block; font-size:9px; letter-spacing:.14em; text-transform:uppercase;
     border:1px solid var(--line); color:var(--dim); padding:0 5px; border-radius:2px; margin-right:4px}
+  tr.kh td{background:rgba(101,227,255,.05); border-bottom:1px solid var(--line); padding:8px 12px}
+  .rtabs{margin-bottom:16px}
   .empty{text-align:center; padding:44px 0; color:var(--teal); letter-spacing:.2em}
   footer{margin-top:60px; font-size:10px; letter-spacing:.3em; color:var(--dim);
     text-transform:uppercase; text-align:center; line-height:2}
@@ -110,6 +112,8 @@
 <h2>Operação</h2>
 <div class="panel" id="actions"></div>
 
+<div id="resultWrap"></div>
+
 <h2>Inconsistências <span style="flex:0; letter-spacing:.1em; text-transform:none; white-space:nowrap">(clique para filtrar)</span></h2>
 <div class="cards" id="issueCards"></div>
 
@@ -123,7 +127,6 @@
 </div>
 <div id="cats"></div>
 
-<div id="changesWrap"></div>
 
 <footer>Atualização Descrição por Keynotes · Description (PT) e <span id="inparam"></span> em parâmetros de tipo / material<br>
 O Excel é a base revisada das descrições · Excel → Modelo nunca apaga valores</footer>
@@ -181,7 +184,7 @@ document.getElementById("inparam").textContent = DATA.inParam;
       ? `<p><b>Excel → Modelo:</b> ${ow} valor(es) sobrescrito(s) e ${fi} preenchido(s) nos parâmetros de tipo / material. Desfaça com Ctrl+Z se necessário.</p>`
       : `<p><b>Excel → Modelo:</b> nenhuma alteração gravada.</p>`;
   }
-  if(sk.length) html += `<p class="warn">${sk.length} item(ns) não gravado(s) - veja a tabela no fim da página.</p>`;
+  if(sk.length) html += `<p class="warn">${sk.length} item(ns) não gravado(s) - veja “Faltando / pendentes” no resultado.</p>`;
   if(DATA.missingIn.length){
     html += `<p class="warn">Parâmetro <b>${esc(DATA.inParam)}</b> não encontrado em: ${
       DATA.missingIn.map(m=>esc(m.category)+" ("+m.count+")").join(", ")
@@ -264,28 +267,57 @@ function renderCats(keepOpen){
   }).join("");
 }
 
-/* ---- alterações gravadas e itens pulados ---- */
-(function(){
-  const el = document.getElementById("changesWrap");
-  let html = "";
-  if(DATA.changes.length){
-    const lbl = {append:"adicionado", fill:"preenchido", overwrite:"sobrescrito"};
-    html += `<h2 style="margin-top:36px">Alterações gravadas (${DATA.changes.length})</h2><div class="panel tw" style="padding:6px"><table>
-      <thead><tr><th>Destino</th><th>Ação</th><th>Keynote</th><th>Onde</th><th>Campo</th><th>Antes</th><th>Depois</th></tr></thead><tbody>${
-      DATA.changes.map(c=>`<tr><td>${c.target==="excel"?"Excel":"Modelo"}</td><td>${lbl[c.action]||c.action}</td>
-        <td class="key">${esc(c.key)}</td><td>${esc(c.where)}${c.id?` <span class="holder id">#${c.id}</span>`:""}</td>
-        <td>${esc(c.field)}</td><td>${c.old?esc(c.old):'<span class="none">vazio</span>'}</td><td>${esc(c.new)}</td></tr>`).join("")
-    }</tbody></table></div>`;
+/* ---- resultado: preenchidos / alterados / faltando (categoria > keynote) ---- */
+const RTABS = [
+  {id:"filled",  label:"Preenchidos",          c:"var(--green)", hint:"Descrição gravada onde estava vazio"},
+  {id:"changed", label:"Alterados",            c:"var(--amber)", hint:"Valor existente substituído pelo Excel"},
+  {id:"missing", label:"Faltando / pendentes", c:"var(--red)",   hint:"Continua vazio ou não foi gravado - veja o motivo"},
+];
+let rtab = null;
+function renderResult(){
+  const R = DATA.result, wrap = document.getElementById("resultWrap");
+  if(!R || !R.target){ wrap.innerHTML = ""; return; }
+  if(!rtab) rtab = (RTABS.find(t=>R[t.id].length) || RTABS[0]).id;
+  const where = R.target==="model" ? "no modelo" : "no Excel";
+  const cards = RTABS.map(t=>{
+    const n = R[t.id].length, nk = new Set(R[t.id].map(e=>e.key)).size;
+    return `<button class="card ${rtab===t.id?'on':''} ${n?'':'zero'}" style="--c:${t.c}" data-t="${t.id}">
+      <div class="v">${fmt(n)}</div><div class="l">${esc(t.label)} · ${nk} keynote(s)</div>
+      <div class="h">${esc(t.hint)}</div></button>`;
+  }).join("");
+  const list = R[rtab];
+  let body;
+  if(!list.length){
+    body = `<div class="empty">Nenhum item em “${esc(RTABS.find(t=>t.id===rtab).label)}”</div>`;
+  } else {
+    const cats = {};
+    list.forEach(e=>{ ((cats[e.category]=cats[e.category]||{})[e.key]=cats[e.category][e.key]||[]).push(e); });
+    const isMissing = rtab==="missing", isChanged = rtab==="changed";
+    const head = `<tr><th>Tipo / Material</th><th>Campo</th>${
+      isMissing ? "<th>Valor atual</th><th>Motivo</th>" :
+      isChanged ? "<th>Antes</th><th>Depois</th>" : "<th>Valor gravado</th>"}</tr>`;
+    body = Object.keys(cats).sort((a,b)=>a.localeCompare(b,"pt-BR")).map(cat=>{
+      const keys = Object.keys(cats[cat]).sort((a,b)=>a.localeCompare(b,"pt-BR",{numeric:true}));
+      const n = keys.reduce((s,k)=>s+cats[cat][k].length,0);
+      const rows = keys.map(k=>{
+        const items = cats[cat][k];
+        return `<tr class="kh"><td colspan="4"><span class="key">${esc(k)}</span>
+            <span class="cc" style="margin-left:10px">${items.length} item(ns)</span></td></tr>` +
+          items.map(e=>`<tr><td>${esc(e.where)}${e.id?` <span class="holder id">#${e.id}</span>`:""}</td>
+            <td>${esc(e.field)}</td>${
+            isMissing ? `<td>${e.old?esc(e.old):'<span class="none">vazio</span>'}</td><td style="color:var(--amber)">${esc(e.reason)}</td>` :
+            isChanged ? `<td class="diffv">${esc(e.old)}</td><td>${esc(e.new)}</td>` :
+                        `<td>${esc(e.new)}</td>`}</tr>`).join("");
+      }).join("");
+      return `<details class="cat" open><summary><span class="cn">${esc(cat)}</span>
+        <span class="cc">${keys.length} keynote(s) · ${n} item(ns)</span></summary>
+        <div class="tw"><table><thead>${head}</thead><tbody>${rows}</tbody></table></div></details>`;
+    }).join("");
   }
-  if(DATA.skipped.length){
-    html += `<h2 style="margin-top:36px">Não gravados (${DATA.skipped.length})</h2><div class="panel tw" style="padding:6px"><table>
-      <thead><tr><th>Keynote</th><th>Tipo / Material</th><th>ID</th><th>Motivo</th></tr></thead><tbody>${
-      DATA.skipped.map(s=>`<tr><td class="key">${esc(s.key)}</td><td>${esc(s.where)}</td>
-        <td class="mono">${s.id||"-"}</td><td style="color:var(--amber)">${esc(s.reason)}</td></tr>`).join("")
-    }</tbody></table></div>`;
-  }
-  el.innerHTML = html;
-})();
+  wrap.innerHTML = `<h2>Resultado ${where} <span style="flex:0; letter-spacing:.1em; text-transform:none; white-space:nowrap">(por categoria do modelo › keynote)</span></h2>
+    <div class="cards rtabs">${cards}</div>${body}<div style="height:24px"></div>`;
+  wrap.querySelectorAll(".rtabs button").forEach(b=>b.onclick=()=>{ rtab=b.dataset.t; renderResult(); });
+}
 
 /* ---- CSV ---- */
 function exportCsv(){
@@ -310,7 +342,7 @@ document.getElementById("q").addEventListener("input", ()=>renderCats(true));
 document.getElementById("expand").onclick = ()=>document.querySelectorAll("details.cat").forEach(d=>d.open=true);
 document.getElementById("collapse").onclick = ()=>document.querySelectorAll("details.cat").forEach(d=>d.open=false);
 document.getElementById("csv").onclick = exportCsv;
-renderIssueCards(); renderCats(false);
+renderResult(); renderIssueCards(); renderCats(false);
 </script>
 </body>
 </html>
