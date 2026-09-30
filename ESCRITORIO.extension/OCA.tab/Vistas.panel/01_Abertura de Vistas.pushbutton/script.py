@@ -523,12 +523,20 @@ PLAN_TITLES = (
     ("piso", u"PLANTA DE PISO", u"FLOOR FINISH PLAN", True),
     ("forro", u"PLANTA DE FORRO", u"REFLECTED CEILING PLAN", True),
 )
+# outros títulos principais de planta (sem versão por ambiente)
+EXTRA_PLAN_TITLES = (
+    ("memoria", u"MEMÓRIA DE CÁLCULO", u"CALCULATION REPORT", False),
+    ("implantacao", u"IMPLANTAÇÃO", u"SITE PLAN", False),
+    ("pavimentacao", u"PAVIMENTAÇÃO", u"PAVING PLAN", False),
+)
 VERTICAL_TITLES = (
     ("corte", u"CORTE", u"SECTION", False),
     ("elevacao", u"ELEVAÇÃO", u"ELEVATION", False),
 )
 # complemento das plantas 2..6: (chave, texto PT, texto EN) + nome do nível
-SUFFIXES = (("pav", u"- PAV.", u"LEVEL"),
+NO_SUFFIX = "none"
+SUFFIXES = ((NO_SUFFIX, u"", u""),
+            ("pav", u"- PAV.", u"LEVEL"),
             ("amp", u"- AMPLIAÇÃO", u"ENLARGED"))
 MANUAL_KEY = "manual"
 
@@ -551,7 +559,8 @@ def room_prefix(room):
 def name_options(target, room):
     """VIEW NAME na ordem do padrão do escritório (1..11) para o tipo de vista."""
     if target == "plan":
-        base, room_base = PLAN_TITLES, PLAN_TITLES[1:]   # cobertura não tem versão por ambiente
+        # cobertura e os títulos extras não têm versão por ambiente
+        base, room_base = PLAN_TITLES + EXTRA_PLAN_TITLES, PLAN_TITLES[1:]
     else:
         base, room_base = VERTICAL_TITLES, VERTICAL_TITLES
     opts = [{"key": key, "label": pt, "pt": pt, "en": en, "suffix": suf, "room": False}
@@ -575,7 +584,8 @@ def level_text(level):
 def suffix_labels(level):
     """Itens do combo Complemento, já com o nome do nível."""
     lv = level_text(level)
-    return [(pt + u" " + lv).strip() for _k, pt, _en in SUFFIXES]
+    return [(pt + u" " + lv).strip() if key != NO_SUFFIX else u"(sem complemento)"
+            for key, pt, _en in SUFFIXES]
 
 
 def compose_names(opt, suffix_key, level, room, manual):
@@ -583,7 +593,7 @@ def compose_names(opt, suffix_key, level, room, manual):
     if opt["key"] == MANUAL_KEY:
         return manual.strip(), u""
     pt, en = opt["pt"], opt["en"]
-    if opt["suffix"]:
+    if opt["suffix"] and suffix_key != NO_SUFFIX:
         lv = level_text(level)
         _k, suf_pt, suf_en = next(s for s in SUFFIXES if s[0] == suffix_key)
         pt = u" ".join(x for x in (pt, suf_pt, lv) if x)
