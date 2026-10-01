@@ -4,12 +4,14 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Keynotes × Excel</title>
+<!-- usado só no botão "Baixar Excel" (se não carregar, baixa CSV) -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <style>
   :root{
     --bg:#070C16; --panel:rgba(255,255,255,.028); --line:rgba(101,227,255,.22);
     --grid:rgba(101,227,255,.05); --ink:#D9E8F5; --dim:#7A8FA9;
     --cy:#65E3FF; --teal:#3DDCB4; --amber:#FFB454; --mag:#FF4F9A; --violet:#9D8CFF;
-    --green:#50D682; --red:#E84A4A;
+    --green:#50D682; --red:#E84A4A; --orange:#FF8C00;
   }
   *{box-sizing:border-box; margin:0; padding:0}
   body{
@@ -31,68 +33,76 @@
   .tbadge{display:inline-block; margin-top:6px; padding:3px 12px; border:1px solid var(--cy);
     border-radius:20px; color:var(--cy); font-size:12px; letter-spacing:.18em}
   h2{font-size:12px; letter-spacing:.4em; text-transform:uppercase; color:var(--dim);
-    margin:0 0 16px; display:flex; align-items:center; gap:12px}
+    margin:36px 0 16px; display:flex; align-items:center; gap:12px}
   h2::after{content:""; flex:1; height:1px; background:var(--line)}
+  h2 small{letter-spacing:.08em; text-transform:none; white-space:nowrap; font-size:12px}
 
-  .cards{display:grid; grid-template-columns:repeat(auto-fit,minmax(150px,1fr)); gap:14px; margin-bottom:22px}
+  .cards{display:grid; grid-template-columns:repeat(auto-fit,minmax(150px,1fr)); gap:14px; margin-bottom:18px}
   .card{background:var(--panel); border:1px solid var(--line); border-radius:4px;
-    padding:16px 16px 12px; position:relative; overflow:hidden}
+    padding:14px 16px 12px; position:relative; overflow:hidden}
   .card::before{content:""; position:absolute; top:0; left:0; width:100%; height:2px;
     background:linear-gradient(90deg, var(--c,var(--cy)), transparent 70%)}
-  .card .v{font-size:30px; font-weight:600; color:var(--c,var(--cy)); font-variant-numeric:tabular-nums}
+  .card .v{font-size:28px; font-weight:600; color:var(--c,var(--cy)); font-variant-numeric:tabular-nums}
   .card .l{font-size:10px; letter-spacing:.2em; text-transform:uppercase; color:var(--dim); margin-top:8px; line-height:1.5}
+  .card .h{font-size:11px; color:var(--dim); margin-top:6px; line-height:1.4}
   button.card{cursor:pointer; text-align:left; font:inherit; color:inherit}
   button.card:hover{border-color:var(--c,var(--cy))}
   button.card.on{background:rgba(101,227,255,.07); border-color:var(--c,var(--cy))}
   button.card.zero{opacity:.45}
-  .card .h{font-size:11px; color:var(--dim); margin-top:6px; letter-spacing:.02em; line-height:1.4}
 
-  .panel{background:var(--panel); border:1px solid var(--line); border-radius:6px;
-    padding:18px 22px; margin-bottom:30px}
-  .panel p{font-size:13px; line-height:1.7; color:var(--ink)}
-  .panel .path{color:var(--teal); font-family:Consolas,monospace; word-break:break-all}
-  .panel .warn{color:var(--amber)}
+  .panel{background:var(--panel); border:1px solid var(--line); border-radius:6px; padding:16px 22px}
+  .panel p{font-size:13px; line-height:1.7}
+  .path{color:var(--teal); font-family:Consolas,monospace; word-break:break-all}
+  .warn{color:var(--amber)}
 
-  .toolbar{display:flex; gap:12px; align-items:center; flex-wrap:wrap; margin-bottom:18px}
-  .toolbar input{flex:1; min-width:220px; background:rgba(255,255,255,.04); border:1px solid var(--line);
-    color:var(--ink); padding:9px 12px; border-radius:4px; font:inherit; font-size:13px}
-  .toolbar input:focus{outline:none; border-color:var(--cy)}
+  .toolbar{display:flex; gap:10px; align-items:center; flex-wrap:wrap; margin-bottom:12px}
+  .toolbar input[type=search], .toolbar select{background:#0C1424; border:1px solid var(--line);
+    color:var(--ink); padding:8px 10px; border-radius:4px; font:inherit; font-size:13px}
+  .toolbar input[type=search]{flex:1; min-width:200px}
+  .toolbar input:focus, .toolbar select:focus{outline:none; border-color:var(--cy)}
+  .toolbar label{font-size:12px; color:var(--dim); display:flex; align-items:center; gap:6px; cursor:pointer}
   .btn{background:transparent; border:1px solid var(--line); color:var(--cy); padding:8px 14px;
-    border-radius:4px; font:inherit; font-size:11px; letter-spacing:.2em; text-transform:uppercase; cursor:pointer}
+    border-radius:4px; font:inherit; font-size:11px; letter-spacing:.16em; text-transform:uppercase;
+    cursor:pointer; text-decoration:none; white-space:nowrap}
   .btn:hover{border-color:var(--cy); background:rgba(101,227,255,.06)}
-  .filterinfo{font-size:11px; color:var(--dim); letter-spacing:.12em}
+  .btn.solid{background:rgba(61,220,180,.12); border-color:var(--teal); color:var(--teal)}
+  .count{font-size:11px; color:var(--dim); letter-spacing:.12em}
 
-  details.cat{background:var(--panel); border:1px solid var(--line); border-radius:6px; margin-bottom:12px}
-  details.cat > summary{cursor:pointer; list-style:none; padding:14px 20px; display:flex; align-items:center; gap:14px}
-  details.cat > summary::-webkit-details-marker{display:none}
-  details.cat > summary::before{content:"▸"; color:var(--cy); transition:transform .15s}
-  details.cat[open] > summary::before{transform:rotate(90deg)}
-  .cn{font-size:15px; font-weight:600; letter-spacing:.03em}
-  .cc{margin-left:auto; font-size:11px; color:var(--dim); letter-spacing:.14em; font-family:Consolas,monospace}
-  .cc b{color:var(--amber)}
-  .tw{overflow-x:auto; padding:0 6px 6px}
-  table{width:100%; border-collapse:collapse; font-size:13px}
-  th{font-size:10px; letter-spacing:.2em; text-transform:uppercase; color:var(--cy);
-    text-align:left; padding:10px 12px; border-bottom:1px solid var(--line); white-space:nowrap; vertical-align:bottom}
-  td{padding:9px 12px; border-bottom:1px solid rgba(255,255,255,.05); color:var(--ink); vertical-align:top}
-  td.num{font-variant-numeric:tabular-nums; text-align:right}
-  tr:hover td{background:rgba(101,227,255,.04)}
-  .key{font-family:Consolas,monospace; font-size:14px; color:var(--cy); white-space:nowrap}
-  .sub{display:block; font-size:11px; color:var(--dim); margin-top:3px; line-height:1.45}
+  .chips{display:flex; flex-wrap:wrap; gap:8px; margin-bottom:12px}
+  .chip{border:1px solid var(--line); background:transparent; color:var(--ink); border-radius:16px;
+    padding:4px 12px; font:inherit; font-size:12px; cursor:pointer}
+  .chip b{color:var(--amber); font-weight:600; margin-left:4px}
+  .chip.on{background:rgba(101,227,255,.12); border-color:var(--cy); color:var(--cy)}
+
+  /* tabelas com rolagem e cabeçalho fixo */
+  .scroll{max-height:68vh; overflow:auto; border:1px solid var(--line); border-radius:6px; background:rgba(5,10,20,.6)}
+  table{width:100%; border-collapse:separate; border-spacing:0; font-size:12.5px}
+  thead th{position:sticky; top:0; z-index:2; background:#101B31; font-size:10px; letter-spacing:.16em;
+    text-transform:uppercase; color:var(--cy); text-align:left; padding:10px; border-bottom:1px solid var(--line);
+    white-space:nowrap}
+  td{padding:7px 10px; border-bottom:1px solid rgba(255,255,255,.05); vertical-align:top; line-height:1.4}
+  tbody tr:hover td{background:rgba(101,227,255,.04)}
+  tr.gh td{position:sticky; top:33px; z-index:1; background:#16243F; color:var(--cy); font-weight:600;
+    letter-spacing:.08em; font-size:12px; border-bottom:1px solid var(--line)}
+  tr.gh td span{color:var(--dim); font-weight:400; margin-left:10px; letter-spacing:.04em}
+  .key{font-family:Consolas,monospace; color:var(--cy); white-space:nowrap}
   .none{color:var(--dim); font-style:italic}
-  .val{display:block; line-height:1.45}
-  .val + .val{margin-top:4px; padding-top:4px; border-top:1px dashed rgba(255,255,255,.08)}
-  .diffv{color:var(--mag)}
-  .flag{display:inline-block; margin:2px 4px 2px 0; padding:2px 8px; border-radius:2px; font-size:11px;
-    border:1px solid var(--fc); color:var(--fc); background:rgba(255,255,255,.03); white-space:nowrap}
-  .ok{color:var(--teal); font-size:11px; letter-spacing:.14em}
-  .holder{display:block; font-size:12px; line-height:1.5}
-  .holder .id{font-family:Consolas,monospace; color:var(--dim); font-size:11px}
-  .holder .kd{display:inline-block; font-size:9px; letter-spacing:.14em; text-transform:uppercase;
-    border:1px solid var(--line); color:var(--dim); padding:0 5px; border-radius:2px; margin-right:4px}
-  tr.kh td{background:rgba(101,227,255,.05); border-bottom:1px solid var(--line); padding:8px 12px}
-  .rtabs{margin-bottom:16px}
-  .empty{text-align:center; padding:44px 0; color:var(--teal); letter-spacing:.2em}
+  .muted{color:var(--dim)}
+  .tag{display:inline-block; padding:1px 8px; border-radius:2px; font-size:11px; white-space:nowrap;
+    border:1px solid var(--fc,var(--line)); color:var(--fc,var(--dim))}
+  .k-fill td.new{color:#7BE3A0}
+  .k-over td.new{color:var(--amber)}
+  .k-blocked td{color:var(--dim)}
+  /* excel */
+  td.c-fill{background:rgba(80,214,130,.16); box-shadow:inset 3px 0 var(--green)}
+  td.c-over{background:rgba(255,180,84,.16); box-shadow:inset 3px 0 var(--amber)}
+  tr.r-new td{background:rgba(101,227,255,.07)}
+  tr.r-new td:first-child{box-shadow:inset 3px 0 var(--cy)}
+  .was{display:block; font-size:11px; color:var(--dim); text-decoration:line-through; margin-top:2px}
+  .legend{display:flex; gap:16px; flex-wrap:wrap; font-size:11px; color:var(--dim); margin:4px 0 12px}
+  .legend i{display:inline-block; width:12px; height:12px; border-radius:2px; vertical-align:-2px; margin-right:6px}
+  .dot{display:inline-block; width:12px; height:12px; border-radius:50%; vertical-align:-2px}
+  .empty{text-align:center; padding:36px 0; color:var(--teal); letter-spacing:.2em}
   footer{margin-top:60px; font-size:10px; letter-spacing:.3em; color:var(--dim);
     text-transform:uppercase; text-align:center; line-height:2}
 </style>
@@ -108,241 +118,327 @@
 </header>
 
 <div class="cards" id="totals"></div>
-
-<h2>Operação</h2>
 <div class="panel" id="actions"></div>
 
+<!-- 1. verificação nos dois sentidos -->
+<h2>Verificação Modelo × Excel <small>(agrupado por agrupamento de Keynotes)</small></h2>
+<div class="toolbar">
+  <select id="v_cat"></select>
+  <select id="v_dir"><option value="">Todos os sentidos</option><option value="model">Excel → Modelo</option><option value="excel">Modelo → Excel</option></select>
+  <select id="v_st"></select>
+  <input id="v_q" type="search" placeholder="Buscar keynote, família, tipo, descrição...">
+  <span class="count" id="v_n"></span>
+</div>
+<div class="scroll"><table><thead><tr>
+  <th>Agrupamento de Keynotes</th><th>Família</th><th>Tipo</th><th>Keynote</th>
+  <th>Descrição atual</th><th>Descrição nova</th><th>Descrição em IN atual</th><th>Descrição em IN nova</th>
+  <th>Destino</th><th>Situação</th></tr></thead><tbody id="v_body"></tbody></table></div>
+
+<!-- 2. tabela do Excel -->
+<h2>Tabela do Excel · resultado final <small id="x_sheet"></small></h2>
+<div class="chips" id="x_chips"></div>
+<div class="toolbar">
+  <select id="x_field">
+    <option value="">Todas as colunas</option><option value="pt">Só DESCRIÇÃO alterada</option>
+    <option value="en">Só DESCRIÇÃO IN alterada</option><option value="new">Só linhas novas</option>
+  </select>
+  <label><input type="checkbox" id="x_changed"> Somente alterados nesta execução</label>
+  <label><input type="checkbox" id="x_model"> Somente keynotes usados no modelo</label>
+  <input id="x_q" type="search" placeholder="Buscar na tabela...">
+  <button class="btn solid" id="x_dl">Baixar Excel</button>
+  <a class="btn" id="x_open" target="_blank">Abrir planilha gravada</a>
+  <span class="count" id="x_n"></span>
+</div>
+<div class="legend"><span><i style="background:rgba(80,214,130,.5)"></i>preenchido (estava vazio)</span>
+  <span><i style="background:rgba(255,180,84,.5)"></i>sobrescrito (valor anterior riscado)</span>
+  <span><i style="background:rgba(101,227,255,.4)"></i>linha nova</span></div>
+<div class="scroll"><table><thead><tr>
+  <th>Linha</th><th>Categoria</th><th>Grupo</th><th>Keynote</th><th>Descrição</th>
+  <th>Descrição IN</th><th>Observações</th><th>No modelo</th></tr></thead><tbody id="x_body"></tbody></table></div>
+
+<!-- 3. resultado -->
 <div id="resultWrap"></div>
 
-<h2>Inconsistências <span style="flex:0; letter-spacing:.1em; text-transform:none; white-space:nowrap">(clique para filtrar)</span></h2>
+<!-- 4. destaques no modelo -->
+<h2>Destaque no modelo <small>(Keynote × Description dos tipos - vista ativa)</small></h2>
+<div class="cards" id="h_cards"></div>
+<div id="h_wrap"></div>
+
+<!-- 5. inconsistências -->
+<h2>Inconsistências <small>(clique para filtrar)</small></h2>
 <div class="cards" id="issueCards"></div>
-
-<h2>Keynotes por categoria</h2>
 <div class="toolbar">
+  <select id="k_cat"></select>
   <input id="q" type="search" placeholder="Buscar keynote, descrição, tipo ou material...">
-  <button class="btn" id="expand">Expandir tudo</button>
-  <button class="btn" id="collapse">Recolher tudo</button>
   <button class="btn" id="csv">Exportar CSV</button>
-  <span class="filterinfo" id="finfo"></span>
+  <span class="count" id="finfo"></span>
 </div>
-<div id="cats"></div>
-
+<div class="scroll"><table><thead><tr><th>Keynote</th><th>Status</th><th>Descrição · Excel</th>
+  <th>Description · Modelo</th><th>Descrição IN · Excel</th><th>Descrição IN · Modelo</th>
+  <th>Tipos / Materiais</th></tr></thead><tbody id="k_body"></tbody></table></div>
 
 <footer>Atualização Descrição por Keynotes · Description (PT) e <span id="inparam"></span> em parâmetros de tipo / material<br>
-O Excel é a base revisada das descrições · Excel → Modelo nunca apaga valores</footer>
+Excel → Modelo nunca apaga valores · TXT de Keynotes: DESCRIÇÃO | DESCRIÇÃO IN</footer>
 
 <script>
 const DATA = __DATA__;
 const esc = s => String(s==null?"":s).replace(/[&<>"]/g,m=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[m]));
 const fmt = n => Number(n).toLocaleString("pt-BR");
+const $ = id => document.getElementById(id);
 const ISSUE = {}; DATA.issues.forEach(i=>ISSUE[i.code]=i);
-let activeFlag = null;
-// pendência = keynote USADO no modelo com alguma inconsistência (linhas do
-// template ainda não usadas não contam)
+const rankOf = c => { const i = DATA.catOrder.indexOf(c); return i<0 ? 999 : i; };
+const byGroup = (a,b) => (a.agRank??rankOf(a.agCat)) - (b.agRank??rankOf(b.agCat)) ||
+  String(a.agCat).localeCompare(b.agCat,"pt-BR") || String(a.key).localeCompare(b.key,"pt-BR",{numeric:true});
 const pending = k => k.inModel && k.flags.some(f=>f!=="excel_only");
+function fillSelect(sel, values, allLabel){
+  sel.innerHTML = `<option value="">${esc(allLabel)}</option>` + values.map(v=>`<option>${esc(v)}</option>`).join("");
+}
+function catsIn(list, key){ return [...new Set(list.map(x=>x[key]))].sort((a,b)=>rankOf(a)-rankOf(b)||a.localeCompare(b,"pt-BR")); }
+function groupRows(list, catKey, cols, rowFn){
+  // cabeçalho de agrupamento + linhas, numa tabela só (sem expandir/recolher)
+  let html = "", cur = null;
+  const counts = {}; list.forEach(x=>counts[x[catKey]]=(counts[x[catKey]]||0)+1);
+  list.forEach(x=>{
+    if(x[catKey]!==cur){ cur = x[catKey];
+      html += `<tr class="gh"><td colspan="${cols}">${esc(cur)}<span>${counts[cur]} linha(s)</span></td></tr>`; }
+    html += rowFn(x);
+  });
+  return html;
+}
 
-document.getElementById("proj").innerHTML =
-  esc(DATA.project.replace(/\.rvt$/i,"")) + ' <span>/ keynotes × excel</span>';
-document.getElementById("tbadge").textContent = DATA.modeLabel.toUpperCase();
-document.getElementById("stamp").textContent = DATA.generated;
-document.getElementById("scope").textContent = DATA.scope + (DATA.materials ? " + materiais" : "");
-document.getElementById("xlname").textContent = DATA.excel.name + " › " + DATA.excel.sheet;
-document.getElementById("inparam").textContent = DATA.inParam;
+$("proj").innerHTML = esc(DATA.project.replace(/\.rvt$/i,"")) + ' <span>/ keynotes × excel</span>';
+$("tbadge").textContent = DATA.modeLabel.toUpperCase();
+$("stamp").textContent = DATA.generated;
+$("scope").textContent = DATA.scope + (DATA.materials ? " + materiais" : "");
+$("xlname").textContent = DATA.excel.name + " › " + DATA.excel.sheet;
+$("inparam").textContent = DATA.inParam;
 
 /* ---- totais ---- */
 (function(){
-  const s = DATA.summary;
-  const flagged = DATA.keynotes.filter(pending).length;
+  const s = DATA.summary, V = DATA.verify;
   const cards = [
     {v:s.model, l:"Keynotes no modelo", c:"var(--cy)"},
-    {v:s.holders, l:"Tipos / materiais com keynote", c:"var(--cy)"},
     {v:s.excel, l:"Keynotes no Excel", c:"var(--teal)"},
-    {v:s.both, l:"Em ambos", c:"var(--green)"},
-    {v:flagged, l:"Keynotes do modelo com pendência", c: flagged ? "var(--amber)" : "var(--teal)"},
+    {v:V.filter(r=>r.dir==="model").length, l:"Diferenças Excel → Modelo", c:"var(--violet)"},
+    {v:V.filter(r=>r.dir==="excel").length, l:"Diferenças Modelo → Excel", c:"var(--violet)"},
+    {v:V.filter(r=>r.status==="Gravado").length, l:"Linhas gravadas", c:"var(--green)"},
+    {v:DATA.keynotes.filter(pending).length, l:"Keynotes do modelo com pendência", c:"var(--amber)"},
   ];
-  document.getElementById("totals").innerHTML = cards.map(m=>
+  $("totals").innerHTML = cards.map(m=>
     `<div class="card" style="--c:${m.c}"><div class="v">${fmt(m.v)}</div><div class="l">${esc(m.l)}</div></div>`).join("");
 })();
 
 /* ---- painel da operação ---- */
 (function(){
-  const el = document.getElementById("actions");
-  const ch = DATA.changes, sk = DATA.skipped;
+  const ch = DATA.changes, sk = DATA.skipped, T = DATA.txt;
   const xl = ch.filter(c=>c.target==="excel"), md = ch.filter(c=>c.target==="model");
-  let html = "";
-  if(DATA.mode==="analyze"){
-    html += `<p>Somente análise - <b>nada foi gravado</b> no modelo nem na planilha.</p>`;
-  } else if(DATA.mode==="to_excel"){
-    const ap = xl.filter(c=>c.action==="append").length, fi = xl.filter(c=>c.action==="fill").length;
-    html += xl.length
-      ? `<p><b>Modelo → Excel:</b> ${ap} keynote(s) adicionado(s) ao fim da aba <b>${esc(DATA.excel.sheet)}</b> e ${fi} descrição(ões) vazia(s) preenchida(s). Descrições já existentes no Excel não foram alteradas.</p>`
-      : `<p><b>Modelo → Excel:</b> nenhuma alteração gravada.</p>`;
-    if(DATA.excel.backup) html += `<p>Backup: <span class="path">${esc(DATA.excel.backup)}</span></p>`;
-  } else {
-    const ow = md.filter(c=>c.action==="overwrite").length, fi = md.filter(c=>c.action==="fill").length;
-    html += md.length
-      ? `<p><b>Excel → Modelo:</b> ${ow} valor(es) sobrescrito(s) e ${fi} preenchido(s) nos parâmetros de tipo / material. Desfaça com Ctrl+Z se necessário.</p>`
-      : `<p><b>Excel → Modelo:</b> nenhuma alteração gravada.</p>`;
+  let h = "";
+  if(DATA.mode==="analyze") h += `<p>Somente análise - <b>nada foi gravado</b> no modelo nem na planilha.</p>`;
+  else {
+    h += `<p><b>Modelo:</b> ${md.length ? `${md.filter(c=>c.action==="overwrite").length} sobrescrito(s) e ${md.filter(c=>c.action==="fill").length} preenchido(s) (Ctrl+Z desfaz)` : "nenhuma alteração gravada"}.
+      &nbsp; <b>Excel:</b> ${xl.length ? `${xl.filter(c=>c.action==="append").length} linha(s) nova(s), ${xl.filter(c=>c.action==="fill").length} preenchida(s), ${xl.filter(c=>c.action==="overwrite").length} sobrescrita(s)` : "nenhuma alteração gravada"}.</p>`;
+    if(DATA.excel.backup) h += `<p>Backup da planilha: <span class="path">${esc(DATA.excel.backup)}</span></p>`;
   }
-  if(sk.length) html += `<p class="warn">${sk.length} item(ns) não gravado(s) - veja “Faltando / pendentes” no resultado.</p>`;
-  if(DATA.missingIn.length){
-    html += `<p class="warn">Parâmetro <b>${esc(DATA.inParam)}</b> não encontrado em: ${
-      DATA.missingIn.map(m=>esc(m.category)+" ("+m.count+")").join(", ")
-    }. Vincule o parâmetro compartilhado a essas categorias (e a Materiais) como parâmetro de tipo.</p>`;
+  if(T && T.on){
+    h += `<p><b>TXT de Keynotes:</b> ${T.written ? `gravado em <span class="path">${esc(T.path)}</span> (${esc(T.encoding)}, ${T.lines} linhas) · ${esc(T.msg)}` : esc(T.msg)}</p>`;
+    if(T.backup) h += `<p>Backup do TXT anterior: <span class="path">${esc(T.backup)}</span></p>`;
+    if(T.warnings.length) h += `<p class="warn">${T.warnings.map(esc).join("<br>")}</p>`;
   }
-  html += `<p style="color:var(--dim); font-size:12px; margin-top:6px">Planilha: <span class="path">${esc(DATA.excel.path)}</span></p>`;
-  el.innerHTML = html;
+  if(sk.length) h += `<p class="warn">${sk.length} item(ns) não gravado(s) - veja “Faltando / pendentes”.</p>`;
+  if(DATA.missingIn.length) h += `<p class="warn">Parâmetro <b>${esc(DATA.inParam)}</b> não encontrado em: ${
+      DATA.missingIn.map(m=>esc(m.category)+" ("+m.count+")").join(", ")}.</p>`;
+  h += `<p class="muted" style="font-size:12px">Planilha: <span class="path">${esc(DATA.excel.path)}</span></p>`;
+  $("actions").innerHTML = h;
 })();
 
-/* ---- cards de inconsistência (filtro) ---- */
-function renderIssueCards(){
-  document.getElementById("issueCards").innerHTML = DATA.issues.map(i=>
-    `<button class="card ${activeFlag===i.code?'on':''} ${i.count?'':'zero'}" style="--c:${i.color}" data-f="${i.code}">
-       <div class="v">${fmt(i.count)}</div><div class="l">${esc(i.label)}</div><div class="h">${esc(i.hint)}</div>
-     </button>`).join("");
-  document.querySelectorAll("#issueCards button").forEach(b=>b.onclick=()=>{
-    activeFlag = activeFlag===b.dataset.f ? null : b.dataset.f;
-    renderIssueCards(); renderCats(true);
-  });
+/* ---- 1. verificação ---- */
+const ST_COLOR = {"Gravado":"var(--green)","Não marcado":"var(--dim)","Bloqueado":"var(--red)",
+  "Não gravado":"var(--red)","Somente análise":"var(--cy)"};
+fillSelect($("v_cat"), catsIn(DATA.verify,"cat"), "Todos os agrupamentos");
+fillSelect($("v_st"), [...new Set(DATA.verify.map(r=>r.status))], "Todas as situações");
+function renderVerify(){
+  const c=$("v_cat").value, d=$("v_dir").value, st=$("v_st").value, q=$("v_q").value.trim().toLowerCase();
+  const list = DATA.verify.filter(r=>(!c||r.cat===c)&&(!d||r.dir===d)&&(!st||r.status===st)&&
+    (!q||[r.key,r.family,r.type,r.ptCur,r.ptNew,r.enCur,r.enNew,r.grp].join(" ").toLowerCase().includes(q)))
+    .map(r=>Object.assign({agCat:r.cat},r)).sort(byGroup);
+  $("v_n").textContent = list.length + " linha(s)";
+  const keep = v => /^\((mantém|vazio|sem parâmetro|não está no Excel|bloqueado)\)$/.test(v) ? `<span class="none">${esc(v)}</span>` : esc(v);
+  $("v_body").innerHTML = list.length ? groupRows(list,"agCat",10,r=>`<tr class="k-${r.kind}">
+      <td class="muted">${esc(r.grp)}</td><td>${esc(r.family)}</td><td>${esc(r.type)}</td><td class="key">${esc(r.key)}</td>
+      <td>${keep(r.ptCur)}</td><td class="new">${keep(r.ptNew)}</td><td>${keep(r.enCur)}</td><td class="new">${keep(r.enNew)}</td>
+      <td>${esc(r.dest)}</td><td><span class="tag" style="--fc:${ST_COLOR[r.status]||"var(--dim)"}">${esc(r.status)}</span></td></tr>`)
+    : `<tr><td colspan="10" class="empty">Nenhuma diferença${c||d||st||q?" para este filtro":""}</td></tr>`;
 }
+["v_cat","v_dir","v_st"].forEach(id=>$(id).onchange=renderVerify); $("v_q").oninput=renderVerify;
 
-/* ---- tabela por categoria ---- */
-function flagChip(f){ const i=ISSUE[f]; return `<span class="flag" style="--fc:${i.color}">${esc(i.label)}</span>`; }
-function valCell(xl, model, inModel, inExcel, hasParam){
-  // coluna Excel | coluna Modelo lado a lado, destacando divergência
-  const xlHtml = inExcel ? (xl ? `<span class="val">${esc(xl)}</span>` : `<span class="none">vazio</span>`) : `<span class="none">-</span>`;
-  let mHtml;
-  if(!inModel) mHtml = `<span class="none">-</span>`;
-  else if(hasParam===false) mHtml = `<span class="none">sem parâmetro</span>`;
-  else if(!model.length) mHtml = `<span class="none">vazio</span>`;
-  else mHtml = model.map(v=>`<span class="val ${inExcel && v!==xl ? 'diffv':''}">${esc(v)}</span>`).join("");
-  return [xlHtml, mHtml];
+/* ---- 2. tabela do Excel ---- */
+const XT = DATA.excelTable;
+let xCat = "";
+$("x_sheet").textContent = "(aba " + DATA.excel.sheet + ")";
+$("x_open").href = "file:///" + DATA.excel.path.replace(/\\/g,"/");
+const xChanged = r => r.isNew || Object.keys(r.changed).length>0;
+function renderChips(){
+  const cats = catsIn(XT,"agCat");
+  $("x_chips").innerHTML = [`<button class="chip ${xCat===""?"on":""}" data-c="">Todos<b>${XT.filter(xChanged).length||""}</b></button>`]
+    .concat(cats.map(c=>{ const n = XT.filter(r=>r.agCat===c&&xChanged(r)).length;
+      return `<button class="chip ${xCat===c?"on":""}" data-c="${esc(c)}">${esc(c)}${n?`<b>${n}</b>`:""}</button>`; })).join("");
+  $("x_chips").querySelectorAll(".chip").forEach(b=>b.onclick=()=>{ xCat=b.dataset.c; renderChips(); renderExcel(); });
 }
-function matches(k, q){
-  if(activeFlag && !k.flags.includes(activeFlag)) return false;
-  if(!q) return true;
-  const hay = [k.key, k.xlPt, k.xlEn, k.fileText, k.excelCategory, k.excelGroup,
-    ...k.modelPt, ...k.modelEn, ...k.holders.map(h=>h.family+" "+h.name+" "+h.category)].join(" ").toLowerCase();
-  return hay.includes(q);
+function xFiltered(){
+  const f=$("x_field").value, onlyCh=$("x_changed").checked, onlyM=$("x_model").checked, q=$("x_q").value.trim().toLowerCase();
+  return XT.filter(r=>(!xCat||r.agCat===xCat)&&(!onlyCh||xChanged(r))&&(!onlyM||r.inModel)&&
+    (!f||(f==="new"?r.isNew:!!r.changed[f]))&&
+    (!q||[r.key,r.pt,r.en,r.obs,r.categoria,r.grupo].join(" ").toLowerCase().includes(q))).sort(byGroup);
 }
-function renderCats(keepOpen){
-  const q = document.getElementById("q").value.trim().toLowerCase();
-  const wrap = document.getElementById("cats");
-  const openNow = new Set([...wrap.querySelectorAll("details[open]")].map(d=>d.dataset.cat));
-  const groups = {};
-  DATA.keynotes.forEach(k=>{ if(matches(k,q)) k.categories.forEach(c=>(groups[c]=groups[c]||[]).push(k)); });
-  const names = Object.keys(groups).sort((a,b)=>{
-    const ea=a.startsWith("Excel ·"), eb=b.startsWith("Excel ·");
-    return ea!==eb ? (ea?1:-1) : a.localeCompare(b,"pt-BR");
-  });
-  const total = new Set(Object.values(groups).flat().map(k=>k.key)).size;
-  document.getElementById("finfo").textContent =
-    (activeFlag ? "Filtro: "+ISSUE[activeFlag].label+" · " : "") + total + " keynote(s)";
-  if(!names.length){ wrap.innerHTML = `<div class="empty">Nenhum keynote para este filtro</div>`; return; }
-  wrap.innerHTML = names.map(cat=>{
-    const list = groups[cat].sort((a,b)=>a.key.localeCompare(b.key,"pt-BR",{numeric:true}));
-    const pend = list.filter(pending).length;
-    const open = (keepOpen && openNow.has(cat)) || activeFlag || q || (!keepOpen && pend);
-    const rows = list.map(k=>{
-      const hs = k.holders.filter(h=>h.category===cat || cat.startsWith("Excel ·"));
-      const hasIn = k.holders.length ? k.holders.some(h=>h.hasIn) : null;
-      const [xp, mp] = valCell(k.xlPt, k.modelPt, k.inModel, k.inExcel, true);
-      const [xe, me] = valCell(k.xlEn, k.modelEn, k.inModel, k.inExcel, hasIn);
-      const where = hs.length ? hs.map(h=>
-          `<span class="holder"><span class="kd">${h.kind==="material"?"mat":"tipo"}</span>${esc(h.family?h.family+" - ":"")}${esc(h.name)}
-           <span class="id">#${h.id} · ${fmt(h.count)} un${h.kind==="material"&&h.usedIn.length?" · "+esc(h.usedIn.join(", ")):""}</span></span>`).join("")
-        : `<span class="none">não usado no modelo</span>`;
-      const xlInfo = k.inExcel ? `<span class="sub">Excel linha ${k.excelRow}${k.excelGroup?" · "+esc(k.excelGroup):""}${k.excelDupRows.length?" · repetido nas linhas "+k.excelDupRows.join(", "):""}</span>` : "";
-      const fileInfo = k.fileText ? `<span class="sub">Arquivo .txt: ${esc(k.fileText)}</span>` : "";
-      const flags = k.flags.length ? k.flags.map(flagChip).join("") : `<span class="ok">✓ OK</span>`;
-      return `<tr><td><span class="key">${esc(k.key)}</span>${xlInfo}</td>
-        <td>${flags}</td><td>${xp}</td><td>${mp}${fileInfo}</td><td>${xe}</td><td>${me}</td><td>${where}</td></tr>`;
-    }).join("");
-    return `<details class="cat" data-cat="${esc(cat)}" ${open?"open":""}>
-      <summary><span class="cn">${esc(cat)}</span>
-        <span class="cc">${list.length} keynote(s)${pend?` · <b>${pend} com pendência</b>`:""}</span></summary>
-      <div class="tw"><table><thead><tr><th>Keynote</th><th>Status</th><th>Descrição · Excel</th>
-        <th>Description · Modelo</th><th>Descrição IN · Excel</th><th>Descrição IN · Modelo</th>
-        <th>Tipos / Materiais</th></tr></thead><tbody>${rows}</tbody></table></div></details>`;
-  }).join("");
+function xCell(r,f){
+  const v = r[f], c = r.changed[f];
+  const txt = v ? esc(v) : `<span class="none">vazio</span>`;
+  if(!c) return `<td>${txt}</td>`;
+  return `<td class="c-${c.action==="overwrite"?"over":"fill"}" title="antes: ${esc(c.old||"(vazio)")}">${txt}${
+    c.action==="overwrite"?`<span class="was">${esc(c.old)}</span>`:""}</td>`;
 }
+function renderExcel(){
+  const list = xFiltered();
+  $("x_n").textContent = list.length + " linha(s) · " + list.filter(xChanged).length + " alterada(s)";
+  $("x_body").innerHTML = list.length ? groupRows(list,"agCat",8,r=>`<tr class="${r.isNew?"r-new":""}">
+      <td class="mono muted">${r.row}${r.isNew?' <span class="tag" style="--fc:var(--cy)">NOVA</span>':""}</td>
+      <td>${esc(r.categoria)}</td><td class="muted">${esc(r.grupo)}</td><td class="key">${esc(r.key)}</td>
+      ${xCell(r,"pt")}${xCell(r,"en")}<td class="muted">${esc(r.obs)}</td>
+      <td>${r.inModel?'<span style="color:var(--green)">sim</span>':'<span class="muted">não</span>'}</td></tr>`)
+    : `<tr><td colspan="8" class="empty">Nenhuma linha para este filtro</td></tr>`;
+}
+["x_field","x_changed","x_model"].forEach(id=>$(id).onchange=renderExcel); $("x_q").oninput=renderExcel;
+$("x_dl").onclick = ()=>{
+  const list = xFiltered();
+  const st = r => r.isNew ? "linha nova" : Object.entries(r.changed).map(([f,c])=>
+    (f==="pt"?"DESCRIÇÃO":"DESCRIÇÃO IN")+" "+(c.action==="overwrite"?"sobrescrita":"preenchida")).join(" / ");
+  const head = ["LINHA","AGRUPAMENTO","CATEGORIA","GRUPO","PREFIXO","SEQUENCIA","KEYNOTE","DESCRIÇÃO","DESCRIÇÃO IN",
+    "OBSERVAÇÕES","NO MODELO","ALTERADO NESTA EXECUÇÃO","DESCRIÇÃO ANTERIOR","DESCRIÇÃO IN ANTERIOR"];
+  const rows = list.map(r=>[r.row,r.agCat,r.categoria,r.grupo,r.prefixo,r.seq,r.key,r.pt,r.en,r.obs,
+    r.inModel?"sim":"não", st(r), r.changed.pt?r.changed.pt.old:"", r.changed.en?r.changed.en.old:""]);
+  const name = "Keynotes_" + DATA.project.replace(/\.rvt$/i,"").replace(/[^\w-]+/g,"_") + (xCat?"_"+xCat.replace(/[^\w-]+/g,"_"):"");
+  if(window.XLSX){
+    const ws = XLSX.utils.aoa_to_sheet([head].concat(rows));
+    ws["!cols"] = head.map((h,i)=>({wch: [7,18,18,22,9,10,11,45,45,30,10,28,30,30][i]}));
+    ws["!autofilter"] = {ref: XLSX.utils.encode_range({s:{r:0,c:0},e:{r:rows.length,c:head.length-1}})};
+    const wb = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb, ws, "MATERIAIS");
+    XLSX.writeFile(wb, name + ".xlsx");
+  } else {
+    const cell = v => '"' + String(v==null?"":v).replace(/"/g,'""') + '"';
+    const csv = [head].concat(rows).map(r=>r.map(cell).join(";")).join("\r\n");
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(new Blob(["﻿"+csv],{type:"text/csv;charset=utf-8"}));
+    a.download = name + ".csv"; document.body.appendChild(a); a.click(); a.remove();
+  }
+};
 
-/* ---- resultado: preenchidos / alterados / faltando (categoria > keynote) ---- */
+/* ---- 3. resultado: preenchidos / alterados / faltando ---- */
 const RTABS = [
   {id:"filled",  label:"Preenchidos",          c:"var(--green)", hint:"Descrição gravada onde estava vazio"},
-  {id:"changed", label:"Alterados",            c:"var(--amber)", hint:"Valor existente substituído pelo Excel"},
-  {id:"missing", label:"Faltando / pendentes", c:"var(--red)",   hint:"Continua vazio ou não foi gravado - veja o motivo"},
+  {id:"changed", label:"Alterados",            c:"var(--amber)", hint:"Valor existente substituído"},
+  {id:"missing", label:"Faltando / pendentes", c:"var(--red)",   hint:"Continua vazio ou não foi gravado"},
 ];
 let rtab = null;
 function renderResult(){
-  const R = DATA.result, wrap = document.getElementById("resultWrap");
+  const R = DATA.result, wrap = $("resultWrap");
   if(!R || !R.target){ wrap.innerHTML = ""; return; }
   if(!rtab) rtab = (RTABS.find(t=>R[t.id].length) || RTABS[0]).id;
-  const where = R.target==="model" ? "no modelo" : "no Excel";
-  const cards = RTABS.map(t=>{
-    const n = R[t.id].length, nk = new Set(R[t.id].map(e=>e.key)).size;
-    return `<button class="card ${rtab===t.id?'on':''} ${n?'':'zero'}" style="--c:${t.c}" data-t="${t.id}">
-      <div class="v">${fmt(n)}</div><div class="l">${esc(t.label)} · ${nk} keynote(s)</div>
-      <div class="h">${esc(t.hint)}</div></button>`;
-  }).join("");
-  const list = R[rtab];
-  let body;
-  if(!list.length){
-    body = `<div class="empty">Nenhum item em “${esc(RTABS.find(t=>t.id===rtab).label)}”</div>`;
-  } else {
-    const cats = {};
-    list.forEach(e=>{ ((cats[e.category]=cats[e.category]||{})[e.key]=cats[e.category][e.key]||[]).push(e); });
-    const isMissing = rtab==="missing", isChanged = rtab==="changed";
-    const head = `<tr><th>Tipo / Material</th><th>Campo</th>${
-      isMissing ? "<th>Valor atual</th><th>Motivo</th>" :
-      isChanged ? "<th>Antes</th><th>Depois</th>" : "<th>Valor gravado</th>"}</tr>`;
-    body = Object.keys(cats).sort((a,b)=>a.localeCompare(b,"pt-BR")).map(cat=>{
-      const keys = Object.keys(cats[cat]).sort((a,b)=>a.localeCompare(b,"pt-BR",{numeric:true}));
-      const n = keys.reduce((s,k)=>s+cats[cat][k].length,0);
-      const rows = keys.map(k=>{
-        const items = cats[cat][k];
-        return `<tr class="kh"><td colspan="4"><span class="key">${esc(k)}</span>
-            <span class="cc" style="margin-left:10px">${items.length} item(ns)</span></td></tr>` +
-          items.map(e=>`<tr><td>${esc(e.where)}${e.id?` <span class="holder id">#${e.id}</span>`:""}</td>
-            <td>${esc(e.field)}</td>${
-            isMissing ? `<td>${e.old?esc(e.old):'<span class="none">vazio</span>'}</td><td style="color:var(--amber)">${esc(e.reason)}</td>` :
-            isChanged ? `<td class="diffv">${esc(e.old)}</td><td>${esc(e.new)}</td>` :
-                        `<td>${esc(e.new)}</td>`}</tr>`).join("");
-      }).join("");
-      return `<details class="cat" open><summary><span class="cn">${esc(cat)}</span>
-        <span class="cc">${keys.length} keynote(s) · ${n} item(ns)</span></summary>
-        <div class="tw"><table><thead>${head}</thead><tbody>${rows}</tbody></table></div></details>`;
-    }).join("");
-  }
-  wrap.innerHTML = `<h2>Resultado ${where} <span style="flex:0; letter-spacing:.1em; text-transform:none; white-space:nowrap">(por categoria do modelo › keynote)</span></h2>
-    <div class="cards rtabs">${cards}</div>${body}<div style="height:24px"></div>`;
+  const where = {model:"no modelo", excel:"no Excel", both:"no modelo e no Excel"}[R.target];
+  const cards = RTABS.map(t=>{ const n = R[t.id].length;
+    return `<button class="card ${rtab===t.id?"on":""} ${n?"":"zero"}" style="--c:${t.c}" data-t="${t.id}">
+      <div class="v">${fmt(n)}</div><div class="l">${esc(t.label)} · ${new Set(R[t.id].map(e=>e.key)).size} keynote(s)</div>
+      <div class="h">${esc(t.hint)}</div></button>`; }).join("");
+  const list = R[rtab].slice().sort(byGroup), miss = rtab==="missing", chg = rtab==="changed";
+  const head = `<tr><th>Keynote</th><th>Destino</th><th>Tipo / Material / Linha</th><th>Campo</th>${
+    miss?"<th>Valor atual</th><th>Motivo</th>":chg?"<th>Antes</th><th>Depois</th>":"<th>Valor gravado</th><th></th>"}</tr>`;
+  const body = list.length ? groupRows(list,"agCat",6,e=>`<tr><td class="key">${esc(e.key)}</td><td>${esc(e.dest)}</td>
+      <td>${esc(e.where)}${e.id?` <span class="muted mono">#${e.id}</span>`:""}</td><td>${esc(e.field)}</td>${
+      miss?`<td>${e.old?esc(e.old):'<span class="none">vazio</span>'}</td><td class="warn">${esc(e.reason)}</td>`:
+      chg?`<td style="color:var(--mag)">${esc(e.old)}</td><td>${esc(e.new)}</td>`:`<td>${esc(e.new)}</td><td></td>`}</tr>`)
+    : `<tr><td colspan="6" class="empty">Nenhum item</td></tr>`;
+  wrap.innerHTML = `<h2>Resultado ${where}</h2><div class="cards rtabs">${cards}</div>
+    <div class="scroll"><table><thead>${head}</thead><tbody>${body}</tbody></table></div>`;
   wrap.querySelectorAll(".rtabs button").forEach(b=>b.onclick=()=>{ rtab=b.dataset.t; renderResult(); });
 }
 
-/* ---- CSV ---- */
-function exportCsv(){
-  const q = document.getElementById("q").value.trim().toLowerCase();
+/* ---- 4. destaques ---- */
+(function(){
+  const H = DATA.highlight;
+  const red = H.filter(x=>x.color==="red"), org = H.filter(x=>x.color==="orange");
+  const sum = l => l.reduce((s,x)=>s+x.count,0);
+  $("h_cards").innerHTML = [
+    {v:sum(red.filter(x=>x.case===2)), l:"Vermelho · keynote sem description", c:"var(--red)"},
+    {v:sum(red.filter(x=>x.case===3)), l:"Vermelho · description sem keynote", c:"var(--red)"},
+    {v:sum(org), l:"Laranja · sem keynote e sem description", c:"var(--orange)"},
+  ].map(m=>`<div class="card" style="--c:${m.c}"><div class="v">${fmt(m.v)}</div><div class="l">${esc(m.l)}</div></div>`).join("");
+  if(DATA.highlightNote){ $("h_wrap").innerHTML = `<p class="muted">Destaque: ${esc(DATA.highlightNote)}</p>`; return; }
+  if(!H.length){ $("h_wrap").innerHTML = `<div class="empty">✓ Todos os tipos visíveis têm Keynote e Description</div>`; return; }
+  const list = H.map(x=>Object.assign({grpLabel:(x.color==="red"?"VERMELHO · ":"LARANJA · ")+x.label},x));
+  $("h_wrap").innerHTML = `<div class="scroll" style="max-height:50vh"><table><thead><tr><th></th><th>Categoria</th><th>Família</th>
+    <th>Tipo</th><th>Keynote</th><th>Description</th><th>Elementos</th></tr></thead><tbody>${
+    groupRows(list,"grpLabel",7,x=>`<tr><td><span class="dot" style="background:var(--${x.color==="red"?"red":"orange"})"></span></td>
+      <td>${esc(x.category)}</td><td>${esc(x.family)}</td><td>${esc(x.type)} <span class="muted mono">#${x.typeId}</span></td>
+      <td class="key">${x.key?esc(x.key):'<span class="none">vazio</span>'}</td>
+      <td>${x.desc?esc(x.desc):'<span class="none">vazio</span>'}</td><td class="mono">${x.count}</td></tr>`)}</tbody></table></div>`;
+})();
+
+/* ---- 5. inconsistências + keynotes ---- */
+let activeFlag = null;
+function renderIssueCards(){
+  $("issueCards").innerHTML = DATA.issues.map(i=>
+    `<button class="card ${activeFlag===i.code?"on":""} ${i.count?"":"zero"}" style="--c:${i.color}" data-f="${i.code}">
+       <div class="v">${fmt(i.count)}</div><div class="l">${esc(i.label)}</div><div class="h">${esc(i.hint)}</div></button>`).join("");
+  $("issueCards").querySelectorAll("button").forEach(b=>b.onclick=()=>{
+    activeFlag = activeFlag===b.dataset.f ? null : b.dataset.f; renderIssueCards(); renderKeys(); });
+}
+fillSelect($("k_cat"), catsIn(DATA.keynotes,"agCat"), "Todos os agrupamentos");
+function kMatch(k){
+  const q = $("q").value.trim().toLowerCase(), c = $("k_cat").value;
+  if(activeFlag && !k.flags.includes(activeFlag)) return false;
+  if(c && k.agCat!==c) return false;
+  if(!q) return true;
+  return [k.key,k.xlPt,k.xlEn,k.fileText,k.agGrp,...k.modelPt,...k.modelEn,
+    ...k.holders.map(h=>h.family+" "+h.name+" "+h.category)].join(" ").toLowerCase().includes(q);
+}
+function vals(xl, model, inModel, inExcel, hasParam){
+  const a = inExcel ? (xl?esc(xl):'<span class="none">vazio</span>') : '<span class="none">-</span>';
+  let b;
+  if(!inModel) b = '<span class="none">-</span>';
+  else if(hasParam===false) b = '<span class="none">sem parâmetro</span>';
+  else if(!model.length) b = '<span class="none">vazio</span>';
+  else b = model.map(v=>`<div style="${inExcel&&v!==xl?"color:var(--mag)":""}">${esc(v)}</div>`).join("");
+  return [a,b];
+}
+function renderKeys(){
+  const list = DATA.keynotes.filter(kMatch).slice().sort(byGroup);
+  $("finfo").textContent = (activeFlag?"Filtro: "+ISSUE[activeFlag].label+" · ":"") + list.length + " keynote(s)";
+  $("k_body").innerHTML = list.length ? groupRows(list,"agCat",7,k=>{
+    const hasIn = k.holders.length ? k.holders.some(h=>h.hasIn) : null;
+    const [xp,mp] = vals(k.xlPt,k.modelPt,k.inModel,k.inExcel,true), [xe,me] = vals(k.xlEn,k.modelEn,k.inModel,k.inExcel,hasIn);
+    const flags = k.flags.length ? k.flags.map(f=>`<span class="tag" style="--fc:${ISSUE[f].color};margin:1px 3px 1px 0">${esc(ISSUE[f].label)}</span>`).join("")
+      : '<span style="color:var(--teal)">✓ OK</span>';
+    const where = k.holders.length ? k.holders.map(h=>`${h.kind==="material"?"Material: ":""}${esc(h.family?h.family+" - ":"")}${esc(h.name)} <span class="muted mono">#${h.id}</span>`).join("<br>")
+      : '<span class="none">não usado no modelo</span>';
+    return `<tr><td><span class="key">${esc(k.key)}</span><div class="muted" style="font-size:11px">${esc(k.agGrp)}${k.excelRow?" · linha "+k.excelRow:""}</div></td>
+      <td>${flags}</td><td>${xp}</td><td>${mp}</td><td>${xe}</td><td>${me}</td><td>${where}</td></tr>`;
+  }) : `<tr><td colspan="7" class="empty">Nenhum keynote para este filtro</td></tr>`;
+}
+$("q").oninput = renderKeys; $("k_cat").onchange = renderKeys;
+$("csv").onclick = ()=>{
   const cell = v => '"' + String(v==null?"":v).replace(/"/g,'""') + '"';
-  const head = ["Keynote","Categorias","Status","Descrição Excel","Description Modelo",
+  const head = ["Agrupamento","Grupo","Keynote","Status","Descrição Excel","Description Modelo",
     "Descrição IN Excel","Descrição IN Modelo","Linha Excel","Tipos/Materiais"];
   const lines = [head.map(cell).join(";")];
-  DATA.keynotes.filter(k=>matches(k,q)).forEach(k=>lines.push([
-    k.key, k.categories.join(" | "), k.flags.map(f=>ISSUE[f].label).join(" | ") || "OK",
-    k.xlPt, k.modelPt.join(" | "), k.xlEn, k.modelEn.join(" | "), k.excelRow||"",
-    k.holders.map(h=>(h.family?h.family+" - ":"")+h.name+" #"+h.id).join(" | ")
-  ].map(cell).join(";")));
-  const blob = new Blob(["﻿"+lines.join("\r\n")], {type:"text/csv;charset=utf-8"});
+  DATA.keynotes.filter(kMatch).sort(byGroup).forEach(k=>lines.push([k.agCat,k.agGrp,k.key,
+    k.flags.map(f=>ISSUE[f].label).join(" | ")||"OK",k.xlPt,k.modelPt.join(" | "),k.xlEn,k.modelEn.join(" | "),
+    k.excelRow||"",k.holders.map(h=>(h.family?h.family+" - ":"")+h.name+" #"+h.id).join(" | ")].map(cell).join(";")));
   const a = document.createElement("a");
-  a.href = URL.createObjectURL(blob);
-  a.download = "keynotes_" + DATA.project.replace(/\.rvt$/i,"").replace(/[^\w-]+/g,"_") + ".csv";
+  a.href = URL.createObjectURL(new Blob(["﻿"+lines.join("\r\n")],{type:"text/csv;charset=utf-8"}));
+  a.download = "inconsistencias_" + DATA.project.replace(/\.rvt$/i,"").replace(/[^\w-]+/g,"_") + ".csv";
   document.body.appendChild(a); a.click(); a.remove();
-}
+};
 
-document.getElementById("q").addEventListener("input", ()=>renderCats(true));
-document.getElementById("expand").onclick = ()=>document.querySelectorAll("details.cat").forEach(d=>d.open=true);
-document.getElementById("collapse").onclick = ()=>document.querySelectorAll("details.cat").forEach(d=>d.open=false);
-document.getElementById("csv").onclick = exportCsv;
-renderResult(); renderIssueCards(); renderCats(false);
+renderVerify(); renderChips(); renderExcel(); renderResult(); renderIssueCards(); renderKeys();
 </script>
 </body>
 </html>
