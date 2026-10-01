@@ -8,7 +8,11 @@ Onde cada dado mora:
   * Keynote ........ parâmetro nativo KEYNOTE dos TIPOS usados no modelo e dos
                      MATERIAIS usados pelos elementos (opcional).
   * Descrição PT ... parâmetro nativo "Description" (tipo / material).
-  * Descrição IN ... parâmetro compartilhado "Descrição em IN" (tipo / material).
+  * Descrição IN ... parâmetro compartilhado "Descrição IN" (tipo / material),
+                     associado pelo GUID 70307f6e-3b31-4049-bed4-62dfc3570fec
+                     (OCA_Parametros_Template.txt). No modo Excel -> Modelo,
+                     se faltar em alguma categoria, oferece vincular ao projeto
+                     como parâmetro de TIPO.
   * Excel .......... aba MATERIAIS: colunas KEYNOTE, DESCRIÇÃO, DESCRIÇÃO IN.
 
 Fonte da verdade (evita que uma direção desfaça a outra):
@@ -22,7 +26,7 @@ Fonte da verdade (evita que uma direção desfaça a outra):
 Modos:
   0. Somente analisar  - relatório de inconsistências, nada é gravado.
   1. Modelo -> Excel   - adiciona keynotes e preenche descrições vazias.
-  2. Excel  -> Modelo  - grava Description / Descrição em IN nos tipos e
+  2. Excel  -> Modelo  - grava Description / Descrição IN nos tipos e
                          materiais. Antes de gravar abre uma janela de
                          verificação em árvore (Categoria > Keynote > alteração)
                          para o usuário marcar o que deve ser gravado.
@@ -60,7 +64,8 @@ for _asm in ("System.IO.Compression",
         clr.AddReference(_asm)
     except Exception:
         pass
-from System.IO import (StreamReader, StreamWriter, File, FileMode,
+from System import Guid
+from System.IO import (StreamReader, StreamWriter, File, FileMode, Path,
                        FileAccess, FileShare)
 from System.IO.Compression import ZipFile, ZipArchiveMode
 from System.Text import UTF8Encoding
@@ -80,9 +85,13 @@ output.set_title("Atualização Descrição por Keynotes")
 # ------------------------------------------------------------------
 SHEET_NAME = u"MATERIAIS"          # aba com os keynotes
 DATA_SHEET_NAME = u"DADOS"         # aba PREFIXO -> GRUPO -> CATEGORIA
-# nome do parâmetro compartilhado da descrição em inglês (primeiro que existir)
-PARAM_IN_NAMES = [u"Descrição em IN", u"Descrição IN", u"Descricao em IN",
-                  u"Descricao IN", u"Description IN"]
+# Parâmetro compartilhado da descrição em inglês (OCA_Parametros_Template.txt).
+# A associação é feita pelo GUID - um parâmetro de mesmo nome com outro GUID
+# NÃO é considerado (não aparece nas tabelas/etiquetas do template).
+PARAM_IN_NAME = u"Descrição IN"
+PARAM_IN_GUID_STR = "70307f6e-3b31-4049-bed4-62dfc3570fec"
+PARAM_IN_GROUP = u"Informações do Modelo"        # grupo no arquivo compartilhado
+PARAM_IN_GUID = Guid(PARAM_IN_GUID_STR)
 MATERIALS_LABEL = u"Materiais"     # categoria usada no relatório p/ materiais
 
 MODES = OrderedDict([
@@ -206,7 +215,7 @@ KN_XAML = u"""
     <TextBlock Text="KEYNOTES  ×  EXCEL" FontSize="15" FontWeight="SemiBold"
                Foreground="#65E3FF" Margin="0,0,0,4"/>
     <TextBlock TextWrapping="Wrap" FontSize="11" Foreground="#7A8FA9" Margin="0,0,0,4"
-               Text="Compara os Keynotes dos tipos e materiais usados no modelo com a aba MATERIAIS da planilha. Descrição PT = parâmetro Description; Descrição IN = parâmetro compartilhado 'Descrição em IN'. Ao final abre um relatório por categoria."/>
+               Text="Compara os Keynotes dos tipos e materiais usados no modelo com a aba MATERIAIS da planilha. Descrição PT = parâmetro Description; Descrição IN = parâmetro compartilhado 'Descrição IN' (GUID 70307f6e). Ao final abre um relatório por categoria."/>
 
     <TextBlock Text="Planilha Excel (.xlsx - feche o arquivo no Excel antes de gravar)"/>
     <DockPanel LastChildFill="True">
@@ -221,7 +230,7 @@ KN_XAML = u"""
     <RadioButton x:Name="m_to_excel" GroupName="mode"
                  Content="Modelo → Excel  (adiciona keynotes novos e preenche descrições vazias)"/>
     <RadioButton x:Name="m_to_model" GroupName="mode"
-                 Content="Excel → Modelo  (atualiza Description e Descrição em IN no Revit)"/>
+                 Content="Excel → Modelo  (atualiza Description e Descrição IN no Revit)"/>
 
     <TextBlock Text="Escopo"/>
     <RadioButton x:Name="s_model" GroupName="scope" Content="Modelo inteiro"/>
@@ -590,15 +599,27 @@ def desc_param(elem):
 
 
 def in_param(elem):
-    """Parâmetro compartilhado da descrição em inglês (None se não existir)."""
-    for nm in PARAM_IN_NAMES:
-        try:
-            p = elem.LookupParameter(nm)
-            if p is not None and p.StorageType == DB.StorageType.String:
-                return p
-        except Exception:
-            continue
+    """Parâmetro compartilhado 'Descrição IN', localizado pelo GUID
+    (None se o parâmetro não estiver vinculado a este tipo / material)."""
+    try:
+        p = elem.get_Parameter(PARAM_IN_GUID)
+        if p is not None and p.StorageType == DB.StorageType.String:
+            return p
+    except Exception:
+        pass
     return None
+
+
+def in_param_clash(elem):
+    """True se existe um parâmetro chamado 'Descrição IN' que NÃO é o
+    compartilhado do escritório (GUID diferente / parâmetro de projeto)."""
+    try:
+        p = elem.LookupParameter(PARAM_IN_NAME)
+        if p is None:
+            return False
+        return not (p.IsShared and p.GUID == PARAM_IN_GUID)
+    except Exception:
+        return False
 
 
 def is_model_category(cat):
@@ -655,6 +676,7 @@ def collect_model(view_only, include_materials):
             "category": category, "family": family_name(elem) if kind == "type" else u"",
             "name": elem_name(elem), "count": count, "usedIn": sorted(used_in),
             "key": key, "pt_p": pp, "en_p": ep,
+            "en_clash": ep is None and in_param_clash(elem),
             "pt": param_text(pp), "en": param_text(ep) if ep is not None else None,
         })
 
@@ -693,6 +715,153 @@ def keynote_file_texts():
 
 MODEL = collect_model(use_view, opts["materials"])
 FILE_TEXT = keynote_file_texts()
+
+
+# ------------------------------------------------------------------
+# 3b. Vincular o parâmetro compartilhado 'Descrição IN' (só Excel -> Modelo)
+# ------------------------------------------------------------------
+def in_param_missing_categories():
+    """Categorias (Category) de tipos/materiais com keynote sem o parâmetro."""
+    cats = OrderedDict()
+    for holders in MODEL.values():
+        for h in holders:
+            if h["en_p"] is not None:
+                continue
+            try:
+                if h["kind"] == "material":
+                    cat = doc.Settings.Categories.get_Item(DB.BuiltInCategory.OST_Materials)
+                else:
+                    cat = h["elem"].Category
+            except Exception:
+                cat = None
+            if cat is not None and getattr(cat, "AllowsBoundParameters", True):
+                cats.setdefault(eid_int(cat.Id), cat)
+    return list(cats.values())
+
+
+def _insert_binding(defn, binding, reinsert):
+    """Insert/ReInsert no grupo 'Dados de identidade' (API 2022+ e anterior)."""
+    pb = doc.ParameterBindings
+    fn = pb.ReInsert if reinsert else pb.Insert
+    group = getattr(DB, "GroupTypeId", None)
+    if group is not None:
+        try:
+            return fn(defn, binding, group.IdentityData)
+        except Exception:
+            pass
+    bipg = getattr(DB, "BuiltInParameterGroup", None)
+    if bipg is not None:
+        try:
+            return fn(defn, binding, bipg.PG_IDENTITY_DATA)
+        except Exception:
+            pass
+    return fn(defn, binding)
+
+
+SHARED_PARAM_TXT = u"\r\n".join([
+    u"# This is a Revit shared parameter file.",
+    u"# Do not edit manually.",
+    u"*META\tVERSION\tMINVERSION",
+    u"META\t2\t1",
+    u"*GROUP\tID\tNAME",
+    u"GROUP\t1\t" + PARAM_IN_GROUP,
+    u"*PARAM\tGUID\tNAME\tDATATYPE\tDATACATEGORY\tGROUP\tVISIBLE\tDESCRIPTION"
+    u"\tUSERMODIFIABLE\tHIDEWHENNOVALUE",
+    u"PARAM\t{}\t{}\tTEXT\t\t1\t1\t\t1\t0".format(PARAM_IN_GUID_STR, PARAM_IN_NAME),
+    u""])
+
+
+def bind_in_param(cats):
+    """Vincula 'Descrição IN' como parâmetro de TIPO às categorias informadas.
+    Se o parâmetro ainda não existe no projeto, a definição é lida de um
+    arquivo compartilhado temporário com o MESMO GUID do template OCA (o
+    arquivo configurado no Revit é restaurado em seguida).
+    -> (ok, mensagem)"""
+    app = doc.Application
+    catset = app.Create.NewCategorySet()
+    for c in cats:
+        catset.Insert(c)
+
+    spe = None
+    try:
+        spe = DB.SharedParameterElement.Lookup(doc, PARAM_IN_GUID)
+    except Exception:
+        spe = None
+
+    t = DB.Transaction(doc, u"Vincular parâmetro compartilhado Descrição IN")
+    t.Start()
+    try:
+        if spe is not None:
+            idef = spe.GetDefinition()
+            binding = doc.ParameterBindings.get_Item(idef)
+            if binding is None:
+                ok = _insert_binding(idef, app.Create.NewTypeBinding(catset), False)
+            elif isinstance(binding, DB.InstanceBinding):
+                t.RollBack()
+                return False, (u"'{}' já está no projeto como parâmetro de INSTÂNCIA. "
+                               u"Altere para TIPO em Gerenciar > Parâmetros do projeto "
+                               u"e rode de novo.".format(PARAM_IN_NAME))
+            else:
+                for c in cats:
+                    binding.Categories.Insert(c)
+                ok = _insert_binding(idef, binding, True)
+        else:
+            tmp = os.path.join(Path.GetTempPath(), u"OCA_Descricao_IN_shared.txt")
+            with codecs.open(tmp, "w", encoding="utf-16") as f:
+                f.write(SHARED_PARAM_TXT)
+            original = app.SharedParametersFilename
+            try:
+                app.SharedParametersFilename = tmp
+                dfile = app.OpenSharedParameterFile()
+                ext = None
+                for g in dfile.Groups:
+                    ext = g.Definitions.get_Item(PARAM_IN_NAME)
+                    if ext is not None:
+                        break
+                if ext is None:
+                    raise Exception(u"definição não encontrada no arquivo temporário")
+                ok = _insert_binding(ext, app.Create.NewTypeBinding(catset), False)
+            finally:
+                try:
+                    app.SharedParametersFilename = original or u""
+                except Exception:
+                    pass
+                try:
+                    os.remove(tmp)
+                except Exception:
+                    pass
+        if not ok:
+            t.RollBack()
+            return False, (u"o Revit recusou o vínculo (existe outro parâmetro chamado "
+                           u"'{}' no projeto?)".format(PARAM_IN_NAME))
+        t.Commit()
+        return True, u"vinculado como parâmetro de tipo em: {}".format(
+            u", ".join(to_unicode(c.Name) for c in cats))
+    except Exception as ex:
+        if t.HasStarted() and not t.HasEnded():
+            t.RollBack()
+        return False, to_unicode(ex)
+
+
+if MODE == "to_model":
+    missing_cats = in_param_missing_categories()
+    clash = sorted(set(h["category"] for hs in MODEL.values() for h in hs if h["en_clash"]))
+    if missing_cats:
+        msg = (u"O parâmetro compartilhado '{}' (GUID {}) não está disponível em:\n\n"
+               u"{}\n\nVincular ao projeto como parâmetro de TIPO nessas categorias?\n"
+               u"(sem ele, a descrição em inglês não é gravada nesses itens)").format(
+                   PARAM_IN_NAME, PARAM_IN_GUID_STR,
+                   u"\n".join(u"  • " + to_unicode(c.Name) for c in missing_cats))
+        if clash:
+            msg += (u"\n\nAtenção: em {} já existe um parâmetro '{}' que NÃO é o "
+                    u"compartilhado do escritório (GUID diferente). Ele será ignorado."
+                    ).format(u", ".join(clash), PARAM_IN_NAME)
+        if forms.alert(msg, yes=True, no=True):
+            ok, info = bind_in_param(missing_cats)
+            output.print_md(u"- Parâmetro **{}**: {}{}".format(
+                PARAM_IN_NAME, u"" if ok else u":warning: não vinculado - ", info))
+            if ok:
+                MODEL = collect_model(use_view, opts["materials"])   # relê os parâmetros
 
 if not MODEL and MODE == "to_model":
     forms.alert(u"Nenhum tipo ou material com Keynote preenchido foi encontrado "
@@ -1009,7 +1178,7 @@ def plan_to_model():
             continue
         for h in holders:
             for field, label, pkey in (("pt", u"Description", "pt_p"),
-                                       ("en", PARAM_IN_NAMES[0], "en_p")):
+                                       ("en", PARAM_IN_NAME, "en_p")):
                 new = rec[field]
                 if not new:
                     continue                      # Excel vazio nunca apaga o modelo
@@ -1020,7 +1189,10 @@ def plan_to_model():
                 if old == new:
                     continue
                 reason = None
-                if p is None:
+                if p is None and field == "en" and h["en_clash"]:
+                    reason = (u"'{}' existente não é o parâmetro compartilhado "
+                              u"(GUID diferente)".format(label))
+                elif p is None:
                     reason = (u"parâmetro '{}' não existe neste {}".format(
                         label, u"material" if h["kind"] == "material" else u"tipo"))
                 elif p.IsReadOnly:
@@ -1354,7 +1526,7 @@ ISSUES = OrderedDict([
                   "hint": u"Tem descrição em inglês e falta a em português."}),
     ("excel_dup", {"label": u"Keynote repetido no Excel", "color": "var(--amber)",
                    "hint": u"Só a primeira linha é usada na sincronização."}),
-    ("no_in_param", {"label": u"Sem parâmetro 'Descrição em IN'", "color": "var(--amber)",
+    ("no_in_param", {"label": u"Sem parâmetro compartilhado 'Descrição IN'", "color": "var(--amber)",
                      "hint": u"Vincule o parâmetro compartilhado a essas categorias."}),
 ])
 
@@ -1438,7 +1610,7 @@ for k in keynotes_out:
 # 7. Resultado da operação: preenchidos / alterados / faltando,
 #    agrupado por categoria do modelo e depois por keynote
 # ------------------------------------------------------------------
-FIELD_LABEL = {"pt": u"Description", "en": PARAM_IN_NAMES[0]}
+FIELD_LABEL = {"pt": u"Description", "en": PARAM_IN_NAME}
 XL_FIELD_LABEL = {"pt": u"DESCRIÇÃO", "en": u"DESCRIÇÃO IN"}
 
 
@@ -1467,7 +1639,10 @@ def build_result():
                     if not reason and value:
                         continue                   # preenchido e sem pendência
                     if not reason:
-                        if h[pkey] is None:
+                        if h[pkey] is None and h.get("en_clash"):
+                            reason = (u"'{}' existente não é o parâmetro "
+                                      u"compartilhado (GUID diferente)".format(label))
+                        elif h[pkey] is None:
                             reason = u"parâmetro '{}' não existe".format(label)
                         elif rec is None:
                             reason = u"keynote não está no Excel"
@@ -1543,7 +1718,7 @@ if skipped:
         columns=[u"Keynote", u"Elemento", u"Tipo / Material", u"Motivo"])
 if missing_in_by_cat:
     output.print_md(u"- Parâmetro **{}** ausente em: {}".format(
-        PARAM_IN_NAMES[0], u", ".join(u"{} ({})".format(c, n)
+        PARAM_IN_NAME, u", ".join(u"{} ({})".format(c, n)
                                       for c, n in sorted(missing_in_by_cat.items()))))
 
 if MODE != "analyze":
@@ -1562,7 +1737,7 @@ data = {
     "mode": MODE, "modeLabel": MODES[MODE],
     "scope": (u"Vista ativa: " + to_unicode(active_view.Name)) if use_view else u"Modelo inteiro",
     "materials": opts["materials"],
-    "inParam": PARAM_IN_NAMES[0],
+    "inParam": PARAM_IN_NAME,
     "excel": {"path": XLSX_PATH, "name": os.path.basename(XLSX_PATH), "sheet": XL["sheet"],
               "rows": len(XL["rows"]), "backup": xl_written["backup"]},
     "summary": {"model": len(MODEL), "excel": len(XL["by_key"]),
