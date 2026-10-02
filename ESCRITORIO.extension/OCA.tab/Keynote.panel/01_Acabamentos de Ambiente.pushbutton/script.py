@@ -67,7 +67,7 @@ only exercised on IronPython.
 __title__ = "Acabamentos\nde Ambiente"
 __doc__ = u"""Preenche automaticamente os acabamentos dos ambientes com base nas Keynotes dos elementos ao redor e ajusta o tipo do identificador conforme o número de linhas de acabamento.
 
-Analise, confira a pré-visualização e confirme - nada é gravado sem a sua confirmação."""
+Analise, confira a pré-visualização e confirme."""
 
 import os
 import re
