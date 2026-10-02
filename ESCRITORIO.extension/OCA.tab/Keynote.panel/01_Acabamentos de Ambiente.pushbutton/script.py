@@ -131,9 +131,10 @@ PLACEHOLDER = u"-"
 
 # Rule B - room identifier (Room Tag) type per number of rows. The tag
 # family is not named in code: any Room Tag family whose types carry
-# "REVESTIMENTOS NN" / "REVESTIMENTOS NX" in the name is used, and only tags
-# already placed in the project are switched (nothing is created).
-TAG_ROWS_RE = re.compile(u"(REVESTIMENTOS?\\s*)(\\d{1,2})(\\s*X)?", re.IGNORECASE)
+# "REVESTIMENTOS NN" / "REVESTIMENTOS NX" anywhere in the name is used
+# ("OCA_REVESTIMENTOS_3X - 1:50" too), and only tags already placed in the
+# project are switched (nothing is created).
+TAG_ROWS_RE = re.compile(u"(REVESTIMENTOS?[\\s_.-]*)(\\d{1,2})(\\s*X)?", re.IGNORECASE)
 TAG_MAX_ROWS = 5
 
 # Boundary location for the 2D wall boundaries. Finish = the room-facing
