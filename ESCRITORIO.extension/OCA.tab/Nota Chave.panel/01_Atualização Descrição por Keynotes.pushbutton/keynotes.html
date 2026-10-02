@@ -117,7 +117,6 @@
   <div class="stamp mono">GERADO <b id="stamp"></b><br>ESCOPO <b id="scope"></b><br>PLANILHA <b id="xlname"></b></div>
 </header>
 
-<div class="cards" id="totals"></div>
 <div class="panel" id="actions"></div>
 
 <!-- 1. verificação nos dois sentidos -->
@@ -212,21 +211,6 @@ $("stamp").textContent = DATA.generated;
 $("scope").textContent = DATA.scope + (DATA.materials ? " + materiais" : "");
 $("xlname").textContent = DATA.excel.name + " › " + DATA.excel.sheet;
 $("inparam").textContent = DATA.inParam;
-
-/* ---- totais ---- */
-(function(){
-  const s = DATA.summary, V = DATA.verify;
-  const cards = [
-    {v:s.model, l:"Keynotes no modelo", c:"var(--cy)"},
-    {v:s.excel, l:"Keynotes no Excel", c:"var(--teal)"},
-    {v:V.filter(r=>r.dir==="model").length, l:"Diferenças Excel → Modelo", c:"var(--violet)"},
-    {v:V.filter(r=>r.dir==="excel").length, l:"Diferenças Modelo → Excel", c:"var(--violet)"},
-    {v:V.filter(r=>r.status==="Gravado").length, l:"Linhas gravadas", c:"var(--green)"},
-    {v:DATA.keynotes.filter(pending).length, l:"Keynotes do modelo com pendência", c:"var(--amber)"},
-  ];
-  $("totals").innerHTML = cards.map(m=>
-    `<div class="card" style="--c:${m.c}"><div class="v">${fmt(m.v)}</div><div class="l">${esc(m.l)}</div></div>`).join("");
-})();
 
 /* ---- painel da operação ---- */
 (function(){
