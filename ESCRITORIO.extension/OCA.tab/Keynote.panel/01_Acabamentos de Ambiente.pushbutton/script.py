@@ -65,14 +65,9 @@ only exercised on IronPython.
 """
 
 __title__ = "Acabamentos\nde Ambiente"
-__doc__ = u"""Preenche os acabamentos de cada ambiente a partir das Keynotes dos elementos ao redor dele.
+__doc__ = u"""Preenche automaticamente os acabamentos dos ambientes com base nas Keynotes dos elementos ao redor e ajusta o tipo do identificador conforme o número de linhas de acabamento.
 
-1. Analisa todos os ambientes e lê as Keynotes de paredes, pisos, forros, rodapés, molduras e soleiras.
-2. Classifica pelo prefixo: SL Soleira, RT Rodateto, PI Piso, FR/CB Teto, RD Rodapé, RE Parede.
-3. Grava cada Keynote em um campo (01, 02, 03...) e completa com "-" as linhas vazias.
-4. Troca o tipo do identificador do ambiente (REVESTIMENTOS 01 a 05) conforme o número de linhas.
-
-Mostra uma pré-visualização antes de gravar e gera um relatório HTML. Nada é gravado sem confirmação."""
+Analise, confira a pré-visualização e confirme - nada é gravado sem a sua confirmação."""
 
 import os
 import re
