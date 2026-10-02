@@ -36,7 +36,7 @@ Elements considered for a room (all through Revit API relationships):
     height, not Room Bounding, or above a low room Limit Offset.
   The zone is grown 2 cm outwards so elements flush with the room faces
   count too, and every Wall Sweep and Ceiling is tested even without a
-  finish-prefix type Keynote (their material Keynotes are read).
+  finish-prefix type Keynote, so one without a Keynote is reported.
   - Room containment (Document.GetRoomAtPoint) for every element with a
     finish Keynote that no room claimed above, and for EVERY wall sweep:
     points are sampled inside the element's own geometry along its whole
@@ -51,7 +51,8 @@ Elements considered for a room (all through Revit API relationships):
   skirting and walls of the storey above out of the room below. Rejected
   values are reported, not written.
 
-Keynote lookup, per element (see KEYNOTE_SOURCES):
+Keynote lookup, per element (KEYNOTE_MODE = "type": only step 1 is used;
+the other modes in KEYNOTE_SOURCES are kept in code but not offered in the UI):
   1. Keynote on the element itself (rare - most categories only have it on
      the type), then the Keynote of its type (BuiltInParameter.KEYNOTE_PARAM).
   2. Keynote of the material on the face that actually touches the room
@@ -153,9 +154,13 @@ PREFIX_RULES = OrderedDict([
 # FR elements must cover this share of the room's top surface, else warning.
 CEILING_FULL_COVERAGE = 0.98
 
+# The keynote is always read from the element itself (its own Keynote, else
+# its type's - where Revit stores it). Material Keynotes are not used.
+KEYNOTE_MODE = "type"
+
 KEYNOTE_SOURCES = [
     ("auto", u"Keynote do elemento/tipo e, se não houver, do material voltado ao ambiente (recomendado)"),
-    ("type", u"Somente Keynote do elemento/tipo"),
+    ("type", u"Keynote do elemento"),
     ("material", u"Somente Keynote do material voltado ao ambiente"),
 ]
 
@@ -1248,7 +1253,7 @@ class Scanner(object):
 
         # sweeps built into wall types: the only Keynote they can carry is
         # their material's
-        for it in raw["integral"]:
+        for it in (raw["integral"] if self.mode != "type" else []):
             wall = it["wall"]
             item = {"id": eid_int(wall.Id), "cat": u"Moldura do tipo de parede", "link": u"",
                     "rels": [u"moldura no tipo de parede"]}
@@ -2024,15 +2029,10 @@ XAML = u"""
               <ColumnDefinition Width="*"/>
             </Grid.ColumnDefinitions>
             <StackPanel Grid.Column="0">
-              <TextBlock Style="{StaticResource Label}" Text="Fonte da Keynote"/>
-              <ComboBox x:Name="cb_source" ToolTipService.ShowDuration="20000"
-                        ToolTip="De onde a Keynote é lida. Recomendado: a Keynote do tipo do elemento; se o tipo não tiver uma Keynote de acabamento, usa a do material da face voltada para o ambiente."/>
-
-              <TextBlock Style="{StaticResource Label}" Margin="0,12,0,4" Text="Margem de busca do forro acima do ambiente (m)"/>
+              <TextBlock Style="{StaticResource Label}" Text="Margem de busca do forro acima do ambiente (m)"/>
               <StackPanel Orientation="Horizontal">
                 <TextBox x:Name="tb_margin" Width="80" ToolTipService.ShowDuration="20000"
                          ToolTip="Até quantos metros acima do topo do ambiente a ferramenta procura o forro. Aumente se o forro estiver acima do Limit Offset do ambiente. Depois de alterar, clique em Analisar Modelo de novo."/>
-                <TextBlock x:Name="tb_margin_hint" Style="{StaticResource Hint}" VerticalAlignment="Center" Margin="10,0,0,0"/>
               </StackPanel>
             </StackPanel>
 
@@ -2125,15 +2125,12 @@ class RoomFinishWindow(forms.WPFWindow):
         self.records = []
         self.row_keys = []          # table row index -> (record, finish key)
         self.table = None
-        self.mode = "auto"
+        self.mode = KEYNOTE_MODE
         self.search_above_m = SEARCH_ABOVE_M
         self.keynote_texts = {}
         self.contain_stats = {"tested": 0, "sweeps": 0, "sweeps_in_rooms": 0, "unassigned": []}
 
-        self.cb_source.ItemsSource = [label for _, label in KEYNOTE_SOURCES]
-        self.cb_source.SelectedIndex = 0
         self.tb_margin.Text = fmt_m(SEARCH_ABOVE_M)
-        self.tb_margin_hint.Text = u"padrão: {} m".format(fmt_m(SEARCH_ABOVE_M))
         self.tb_help_rules.Text = help_rules_text()
         self._fill_help_search()
 
@@ -2149,7 +2146,6 @@ class RoomFinishWindow(forms.WPFWindow):
         self.btn_update.Click += self.on_update
         self.btn_report.Click += self.on_report
         self.btn_cancel.Click += self.on_cancel
-        self.cb_source.SelectionChanged += self.on_settings_changed
         self.tb_margin.TextChanged += self.on_settings_changed
 
     def _fill_help_search(self):
@@ -2188,7 +2184,7 @@ class RoomFinishWindow(forms.WPFWindow):
         self.tb_params.Text = u"\n".join(lines)
 
     def on_settings_changed(self, sender, args):
-        """Keynote source or ceiling margin changed: the scan is out of date."""
+        """Ceiling margin changed: the scan is out of date."""
         self._fill_help_search()
         if self.records:
             self.records = []
@@ -2209,7 +2205,7 @@ class RoomFinishWindow(forms.WPFWindow):
                         u"(ex.: 1,00).".format(to_unicode(self.tb_margin.Text)))
             return
         self.search_above_m = margin
-        self.mode = KEYNOTE_SOURCES[max(0, self.cb_source.SelectedIndex)][0]
+        self.mode = KEYNOTE_MODE
         self._invalidate_preview()
         output.print_md(u"**[2/6] Ambientes coletados:** {} ambiente(s).".format(len(self.rooms)))
         try:
