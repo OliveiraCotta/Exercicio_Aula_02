@@ -1,0 +1,354 @@
+<title>Workshop Guide</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wght@500;600;700&family=IBM+Plex+Mono:wght@500;600&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
+<style>
+  :root{
+    --bg:#F5F8FA; --panel:#FFFFFF; --panel2:#EEF3F6; --ink:#122230; --dim:#5B7382;
+    --line:#D6E1E8; --line2:#E7EEF2; --accent:#0C7C9E; --accent-soft:#E2F1F6;
+    --revit:#D2662A; --excel:#1F9E63; --plugin:#0C7C9E; --browser:#6A5BD6;
+    --claude:#C98A1E; --say:#5B7382; --ok:#1F9E63; --ok-soft:#E4F4EC;
+    --shadow:0 1px 2px rgba(18,34,48,.05), 0 8px 24px rgba(18,34,48,.05);
+  }
+  /* Light is the default. Dark applies only when the reader clicks the toggle. */
+  :root[data-theme="dark"]{
+    --bg:#0A131C; --panel:#101E2A; --panel2:#152532; --ink:#DCE8F1; --dim:#8AA1B0;
+    --line:#22333F; --line2:#1A2A36; --accent:#4CC3E4; --accent-soft:#123240;
+    --revit:#E8834A; --excel:#43C489; --plugin:#4CC3E4; --browser:#9488F0;
+    --claude:#E4B457; --say:#8AA1B0; --ok:#43C489; --ok-soft:#123528;
+    --shadow:0 1px 2px rgba(0,0,0,.3), 0 10px 30px rgba(0,0,0,.35);
+  }
+  *{box-sizing:border-box; margin:0; padding:0}
+  html{scroll-behavior:smooth}
+  body{background:var(--bg); color:var(--ink);
+    font-family:"IBM Plex Sans",system-ui,sans-serif; line-height:1.55;
+    -webkit-font-smoothing:antialiased; padding:0 20px 90px}
+  .wrap{max-width:940px; margin:0 auto}
+  .mono{font-family:"IBM Plex Mono",ui-monospace,monospace}
+
+  header{padding:44px 0 26px; border-bottom:1px solid var(--line); margin-bottom:8px}
+  .eyebrow{font-family:"IBM Plex Mono",monospace; font-size:12px; letter-spacing:.34em;
+    text-transform:uppercase; color:var(--accent); font-weight:600}
+  h1{font-family:"Archivo",sans-serif; font-weight:700; font-size:clamp(28px,4.6vw,46px);
+    letter-spacing:-.02em; line-height:1.03; margin:12px 0 10px; text-wrap:balance; max-width:20ch}
+  .sub{color:var(--dim); font-size:16px; max-width:62ch}
+  .meta{display:flex; flex-wrap:wrap; gap:8px 22px; margin-top:18px; font-size:13px; color:var(--dim)}
+  .meta b{color:var(--ink); font-weight:600}
+
+  .pipe{display:flex; flex-wrap:wrap; align-items:center; gap:8px; margin:26px 0 6px;
+    padding:16px 18px; background:var(--panel); border:1px solid var(--line);
+    border-radius:12px; box-shadow:var(--shadow)}
+  .pipe .node{font-family:"Archivo",sans-serif; font-weight:600; font-size:14px; letter-spacing:-.01em}
+  .pipe .arr{color:var(--accent); font-weight:700}
+  .pipe .cap{width:100%; font-size:12.5px; color:var(--dim); margin-top:6px}
+
+  .legend{display:flex; flex-wrap:wrap; gap:8px; margin:22px 0 34px}
+  .tag{display:inline-flex; align-items:center; gap:6px; font-family:"IBM Plex Mono",monospace;
+    font-size:11px; font-weight:600; letter-spacing:.08em; text-transform:uppercase;
+    padding:4px 9px; border-radius:999px; border:1px solid transparent; white-space:nowrap}
+  .tag::before{content:""; width:7px; height:7px; border-radius:50%; background:currentColor}
+  .tag.revit{color:var(--revit); background:color-mix(in srgb,var(--revit) 12%,transparent); border-color:color-mix(in srgb,var(--revit) 30%,transparent)}
+  .tag.excel{color:var(--excel); background:color-mix(in srgb,var(--excel) 12%,transparent); border-color:color-mix(in srgb,var(--excel) 30%,transparent)}
+  .tag.plugin{color:var(--plugin); background:color-mix(in srgb,var(--plugin) 12%,transparent); border-color:color-mix(in srgb,var(--plugin) 30%,transparent)}
+  .tag.browser{color:var(--browser); background:color-mix(in srgb,var(--browser) 12%,transparent); border-color:color-mix(in srgb,var(--browser) 30%,transparent)}
+  .tag.claude{color:var(--claude); background:color-mix(in srgb,var(--claude) 12%,transparent); border-color:color-mix(in srgb,var(--claude) 30%,transparent)}
+  .tag.say{color:var(--say); background:color-mix(in srgb,var(--say) 12%,transparent); border-color:color-mix(in srgb,var(--say) 28%,transparent)}
+
+  .day{margin:46px 0 8px; padding-top:10px}
+  .day .dl{font-family:"IBM Plex Mono",monospace; font-size:12px; letter-spacing:.28em;
+    text-transform:uppercase; color:var(--accent); font-weight:600}
+  .day h2{font-family:"Archivo",sans-serif; font-weight:700; font-size:26px; letter-spacing:-.02em;
+    margin:6px 0 4px}
+  .day .dt{color:var(--dim); font-size:14px}
+  .rule{height:1px; background:var(--line); margin:16px 0 22px}
+
+  .step{display:grid; grid-template-columns:52px 1fr; gap:16px; padding:16px 0;
+    border-bottom:1px solid var(--line2)}
+  .step:last-child{border-bottom:none}
+  .sn{font-family:"IBM Plex Mono",monospace; font-weight:600; font-size:15px; color:var(--accent);
+    padding-top:2px; font-variant-numeric:tabular-nums}
+  .sc .tags{display:flex; flex-wrap:wrap; gap:6px; margin-bottom:7px}
+  .act{font-family:"Archivo",sans-serif; font-weight:600; font-size:16.5px; letter-spacing:-.01em;
+    color:var(--ink); margin-bottom:4px; text-wrap:balance}
+  .sc p{font-size:14px; color:var(--dim); margin:2px 0}
+  .sc ul{margin:6px 0 0; padding-left:18px}
+  .sc li{font-size:14px; color:var(--dim); margin:3px 0}
+  .sc code{font-family:"IBM Plex Mono",monospace; font-size:12.5px; background:var(--panel2);
+    border:1px solid var(--line2); border-radius:5px; padding:1px 6px; color:var(--ink)}
+  .k{font-family:"IBM Plex Mono",monospace; font-size:12px; background:var(--panel2);
+    border:1px solid var(--line); border-radius:5px; padding:1px 6px; color:var(--ink); white-space:nowrap}
+
+  .ckpt{display:flex; gap:9px; align-items:flex-start; margin-top:9px; padding:8px 12px;
+    background:var(--ok-soft); border:1px solid color-mix(in srgb,var(--ok) 32%,transparent);
+    border-radius:8px; font-size:13px; color:var(--ink)}
+  .ckpt b{color:var(--ok); font-weight:600; font-family:"IBM Plex Mono",monospace;
+    font-size:11px; letter-spacing:.08em; text-transform:uppercase; white-space:nowrap; padding-top:1px}
+  .wow{border-color:color-mix(in srgb,var(--accent) 45%,transparent); background:var(--accent-soft)}
+  .wow b{color:var(--accent)}
+
+  .card{background:var(--panel); border:1px solid var(--line); border-radius:12px;
+    padding:18px 20px; margin:8px 0 6px; box-shadow:var(--shadow)}
+  .card h3{font-family:"Archivo",sans-serif; font-size:15px; font-weight:600; margin-bottom:10px;
+    display:flex; align-items:center; gap:9px}
+  .check{list-style:none; padding:0; margin:0; display:grid; gap:7px}
+  .check li{position:relative; padding-left:22px; font-size:14px; color:var(--ink)}
+  .check li::before{content:""; position:absolute; left:3px; top:8px; width:7px; height:7px;
+    border-radius:50%; background:var(--accent)}
+
+  footer{margin-top:40px; padding-top:18px; border-top:1px solid var(--line);
+    font-family:"IBM Plex Mono",monospace; font-size:11.5px; letter-spacing:.06em;
+    color:var(--dim); text-align:center; text-transform:uppercase}
+
+  .toggle{position:fixed; top:14px; right:16px; z-index:10; font-family:"IBM Plex Mono",monospace;
+    font-size:11px; letter-spacing:.1em; text-transform:uppercase; color:var(--dim);
+    background:var(--panel); border:1px solid var(--line); border-radius:999px;
+    padding:6px 12px; cursor:pointer}
+  .toggle:hover{color:var(--accent); border-color:var(--accent)}
+  .toggle:focus-visible{outline:2px solid var(--accent); outline-offset:2px}
+
+  @media (max-width:560px){ .step{grid-template-columns:40px 1fr; gap:12px} }
+  @media print{
+    .toggle{display:none}
+    body{background:#fff; color:#000; padding:0}
+    .card,.pipe{box-shadow:none}
+    .step{break-inside:avoid}
+  }
+</style>
+
+<button class="toggle" id="tg" aria-label="Toggle light or dark theme">◐ Theme</button>
+
+<div class="wrap">
+<header>
+  <div class="eyebrow">PAACADEMY Workshop · Student Guide</div>
+  <h1>From Model to Browser</h1>
+  <p class="sub">Your step-by-step guide for the two days. Work along on your own machine; checkpoint files are there if you fall behind.</p>
+  <div class="meta">
+    <span><b>2 days</b> · 4 h each</span>
+    <span>Revit · Power Query · PA Academy plugin · dashboard</span>
+  </div>
+</header>
+
+<div class="pipe">
+  <span class="node">Revit model</span><span class="arr">-&gt;</span>
+  <span class="node">Power Query</span><span class="arr">-&gt;</span>
+  <span class="node">PA Academy plugin</span><span class="arr">-&gt;</span>
+  <span class="node">HTML dashboard</span>
+  <span class="cap">Clean and merge the data, check the model, turn it into a shareable health scorecard, then open it straight from Revit.</span>
+</div>
+
+<div class="legend">
+  <span class="tag revit">Revit</span>
+  <span class="tag excel">Excel · Power Query</span>
+  <span class="tag plugin">Plugin</span>
+  <span class="tag browser">Browser</span>
+  <span class="tag claude">Claude</span>
+  <span class="tag say">Watch</span>
+</div>
+
+<div class="card">
+  <h3>Before you start (have these ready)</h3>
+  <ul class="check">
+    <li><b>Revit 2025+</b> and <b>pyRevit</b> installed. <b>Day 1</b> you build the tower from a blank project - don't open the provided model (it's only a fallback if you fall behind). <b>Day 2</b> you open the finished <code>PA_Modular Tower.rvt</code>, which already has the rooms and data in it.</li>
+    <li>We build the <b>PA Academy plugin</b> together on Day 2, so you only need pyRevit ready - your instructor shows how to create the extension folders.</li>
+    <li><b>Microsoft Excel</b> (Power Query is built in) and a modern <b>web browser</b>.</li>
+    <li>The <b>Day 1</b> and <b>Day 2</b> data files your instructor shared.</li>
+    <li>Optional: a <b>Claude</b> account if you want to run the AI prompts yourself.</li>
+  </ul>
+  <p style="margin-top:12px; font-size:13px; color:var(--dim)">Tip: you can reopen this guide anytime from the <b>Run Sheet</b> button in the PA Academy tab.</p>
+</div>
+
+<!-- DAY 1 -->
+<div class="day">
+  <div class="dl">Day 1</div>
+  <h2>Model and structure the data</h2>
+  <div class="dt">Modeling and Power Query. You finish the day with a Revit keynote file and a costed bill of quantities.</div>
+</div>
+<div class="rule"></div>
+
+<div class="step">
+  <div class="sn">1.1</div>
+  <div class="sc">
+    <div class="tags"><span class="tag say">Watch</span></div>
+    <div class="act">Intro: a short presentation</div>
+    <p>Your instructor opens with a short PowerPoint - the idea behind the two days and the pipeline you will build, from Revit to a shareable dashboard.</p>
+  </div>
+</div>
+
+<div class="step">
+  <div class="sn">1.2</div>
+  <div class="sc">
+    <div class="tags"><span class="tag revit">Revit</span></div>
+    <div class="act">Model a simple massing tower</div>
+    <ul>
+      <li>Set a couple of <b>levels</b> and build a simple <b>massing</b> form.</li>
+      <li>Add <b>floors by level</b> and a perimeter <b>wall</b> to enclose the space.</li>
+    </ul>
+    <div class="ckpt"><b>Checkpoint</b><span>Behind? Open <code>PA_Modular Tower.rvt</code> and continue from there.</span></div>
+  </div>
+</div>
+
+<div class="step">
+  <div class="sn">1.3</div>
+  <div class="sc">
+    <div class="tags"><span class="tag revit">Revit</span></div>
+    <div class="act">Build the adaptive facade component</div>
+    <ul>
+      <li>Make an adaptive component with placement points and load it into the project.</li>
+      <li>Place it across the facade so your tower reads as a real building.</li>
+    </ul>
+    <p>Take your time here. If you run behind, keep the panel simple and use the provided model.</p>
+  </div>
+</div>
+
+<div class="step">
+  <div class="sn">1.4</div>
+  <div class="sc">
+    <div class="tags"><span class="tag excel">Excel · Power Query</span></div>
+    <div class="act">Open the Day 1 data file and meet Power Query</div>
+    <ul>
+      <li>Open <code>Day 1 ▸ D1_PA-Workshop_DATA.xlsx</code> (tabs: <b>Specifications</b>, <b>Quantities</b>, <b>Rates</b>, <b>Read me</b>).</li>
+      <li>Click any cell in <b>Specifications</b> ▸ <span class="k">Data ▸ From Table/Range</span>. The editor opens; watch the <b>Applied Steps</b> panel on the right.</li>
+      <li>The idea: you are not cleaning data once, you are building a cleaning machine you can reuse.</li>
+    </ul>
+  </div>
+</div>
+
+<div class="step">
+  <div class="sn">1.5</div>
+  <div class="sc">
+    <div class="tags"><span class="tag excel">Excel · Power Query</span></div>
+    <div class="act">Exercise 1: clean the specification into keynotes</div>
+    <p>Build it with clicks only, one step at a time. Each step fixes a real problem in the data:</p>
+    <ul>
+      <li>Choose the columns you need, then filter <b>Status</b> (drop Superseded and On Hold) and <b>Phase</b> (keep CD, DD and blank).</li>
+      <li>Remove duplicates, then <b>Trim</b> and remove duplicates <b>again</b> - key <code>033000.01</code> has a trailing-space twin that only collapses after the Trim.</li>
+      <li>Add <b>KeynoteText</b>, then derive <b>Parent_Key</b> from the first two characters of the key (<code>033000.01 -&gt; 03</code>).</li>
+      <li>Keep the three keynote columns, then <span class="k">Close &amp; Load</span>.</li>
+    </ul>
+    <div class="ckpt"><b>Checkpoint</b><span><code>D1_PA-Workshop_DATA_prebuilt.xlsx</code> ▸ <b>Keynotes_EN</b> (50 keynotes).</span></div>
+  </div>
+</div>
+
+<div class="step">
+  <div class="sn">1.6</div>
+  <div class="sc">
+    <div class="tags"><span class="tag excel">Excel · Power Query</span><span class="tag revit">Revit</span></div>
+    <div class="act">Export the Revit keynote file</div>
+    <ul>
+      <li>Keep the three columns in order, delete the header row, then <span class="k">Save As ▸ Unicode Text (*.txt)</span>.</li>
+      <li>In Revit: <span class="k">Annotate ▸ Keynote ▸ Keynoting Settings</span> and point to your <code>.txt</code>.</li>
+    </ul>
+    <div class="ckpt"><b>Provided</b><span><code>Keynotes_EN.txt</code> / <code>Keynotes_FR.txt</code> are ready to use.</span></div>
+  </div>
+</div>
+
+<div class="step">
+  <div class="sn">1.7</div>
+  <div class="sc">
+    <div class="tags"><span class="tag excel">Excel · Power Query</span></div>
+    <div class="act">Exercise 2: build a costed bill of quantities</div>
+    <ul>
+      <li>On the <b>Quantities</b> tab: <span class="k">Data ▸ From Table/Range</span>.</li>
+      <li><span class="k">Group By</span> <b>Keynote_Key + Type_Name + Unit</b>; sum Quantity as <b>Total Qty</b> and add <b>Count Rows</b> as Levels. Grouping by Unit keeps m2, m and ea apart.</li>
+      <li><span class="k">Merge Queries</span> with your <b>Keynotes_EN</b> on Keynote_Key (Left Outer), expand the description.</li>
+      <li><span class="k">Merge Queries</span> again with the <b>Rates</b> tab on Keynote_Key, expand <b>Unit_Rate</b>.</li>
+      <li>Select <b>Total Qty</b> and <b>Unit_Rate</b>, then <span class="k">Add Column ▸ Standard ▸ Multiply</span> for <b>Line Cost</b>.</li>
+    </ul>
+    <div class="ckpt"><b>Checkpoint</b><span><code>D1_PA-Workshop_DATA_prebuilt.xlsx</code> ▸ <b>BoQ_EN</b> (27 items).</span></div>
+    <p style="margin-top:8px">Notice: key <code>095113.09</code> is modeled but not in the spec, so its description stays blank - a real coordination flag.</p>
+  </div>
+</div>
+
+<div class="step">
+  <div class="sn">1.8</div>
+  <div class="sc">
+    <div class="tags"><span class="tag excel">Excel · Power Query</span></div>
+    <div class="act">Try the one-click refresh</div>
+    <p>Change a value or drop in a new export, then click <span class="k">Data ▸ Refresh All</span>. Every step runs again. Same query, next project. That is the payoff.</p>
+  </div>
+</div>
+
+<!-- DAY 2 -->
+<div class="day">
+  <div class="dl">Day 2</div>
+  <h2>Plugin, validation, and the dashboard</h2>
+  <div class="dt">Install the plugin, check and fix the model, extend it with Claude, compare against the brief and open the dashboard - then a quick Revit MCP demo to close.</div>
+</div>
+<div class="rule"></div>
+
+<div class="step">
+  <div class="sn">2.1</div>
+  <div class="sc">
+    <div class="tags"><span class="tag plugin">Plugin</span></div>
+    <div class="act">Module 1 - Install the pyRevit plugin</div>
+    <ul>
+      <li>pyRevit turns folders into buttons: <code>PA Academy.tab ▸ Workshop.panel ▸ 01_Name.pushbutton</code>, each holding a <code>script.py</code> + <code>icon.png</code>.</li>
+      <li>Drop the folder in <code>%APPDATA%\pyRevit\Extensions</code>, then <b>Reload pyRevit</b> - the <b>PA Academy</b> tab appears.</li>
+    </ul>
+    <div class="ckpt"><b>Checkpoint</b><span>The finished <code>PAACADEMY.extension</code> is provided - copy it in and reload.</span></div>
+  </div>
+</div>
+
+<div class="step">
+  <div class="sn">2.2</div>
+  <div class="sc">
+    <div class="tags"><span class="tag plugin">Plugin</span><span class="tag excel">Excel</span></div>
+    <div class="act">Module 2 - QA/QC: check and fix the model</div>
+    <ul>
+      <li>Look first: <code>PA - Rooms QA (Department)</code> and sheet <code>PA-QA</code>. White rooms = missing data. <b>Guess the grade.</b></li>
+      <li><span class="k">Element QA/QC ▸ Rooms</span> checks <b>Department</b> + <b>Occupancy</b>; run it on <b>Walls</b> for <b>Fire Rating</b> too (it works on any category - see sheet <code>PA-FR</code>).</li>
+      <li><span class="k">Export (.xlsx)</span>, fill the blanks (leave the <b>RoomID/ElementID</b> column), <span class="k">Update from Excel</span>, then re-run - the grade climbs and the white rooms colour in.</li>
+    </ul>
+    <div class="ckpt"><b>Checkpoint</b><span>Plugin installed; if an export breaks, re-run <span class="k">Element QA/QC</span> for a fresh sheet.</span></div>
+  </div>
+</div>
+
+<div class="step">
+  <div class="sn">2.3</div>
+  <div class="sc">
+    <div class="tags"><span class="tag say">Watch</span><span class="tag claude">Claude</span></div>
+    <div class="act">Module 3 - Build &amp; extend tools with Claude</div>
+    <ul>
+      <li><b>Meet Claude:</b> describe what a button should do in plain language, paste the code into a <code>script.py</code>, run it, fix the one error that comes back. The prompt-and-fix loop is the skill you take home.</li>
+      <li><b>Example:</b> the wall grade is unfair - REF and generic walls have no fire rating but still lower it. Ask Claude to add an <b>exclude-types</b> option so they drop out, then re-run the button to see the fairer grade.</li>
+    </ul>
+  </div>
+</div>
+
+<div class="step">
+  <div class="sn">2.4</div>
+  <div class="sc">
+    <div class="tags"><span class="tag plugin">Plugin</span><span class="tag excel">Excel</span><span class="tag browser">Browser</span></div>
+    <div class="act">Module 4 - Room brief &amp; dashboard</div>
+    <ul>
+      <li>The rooms' <b>Brief Area</b> starts empty. <span class="k">Update from Excel</span> on <code>D2_PA-Workshop_DATA.xlsx ▸ Space_Brief</code> writes the target areas back (numeric, in m2, matched on RoomID).</li>
+      <li>Open <span class="k">Room Dashboard</span>, pick <b>Brief Area</b> - see <b>model area vs brief</b>, variance and compliance by department.</li>
+      <li>The same button opens the full HTML scorecard straight from Revit - section diagram, metric cards, area donut, room schedule.</li>
+    </ul>
+    <div class="ckpt"><b>Checkpoint</b><span><code>D2_PA-Workshop_DATA.xlsx</code> ▸ <b>Space_Brief</b> holds every target.</span></div>
+  </div>
+</div>
+
+<div class="step">
+  <div class="sn">2.5</div>
+  <div class="sc">
+    <div class="tags"><span class="tag say">Watch</span><span class="tag claude">Claude</span><span class="tag revit">Revit</span></div>
+    <div class="act">Closing - Revit MCP: colour the facade live</div>
+    <p>A quick demo of the other AI mode: <b>MCP</b>, where Claude drives Revit by conversation. The instructor updates the facade mass with random <b>offset</b> values, then asks Claude to <b>colour every panel by its depth</b> in a new 3D view - the facade lights up as a heatmap, no file and no button.</p>
+    <p>Then replay the whole pipeline: Revit to Power Query to the plugin to the dashboard, and where each piece fits on your own projects.</p>
+  </div>
+</div>
+
+<footer>PA Academy Workshop · your step-by-step guide</footer>
+</div>
+
+<script>
+  (function(){
+    var t=document.getElementById("tg");
+    var m=window.matchMedia("(prefers-color-scheme: dark)");
+    function cur(){return document.documentElement.getAttribute("data-theme")||"light";}
+    t.addEventListener("click",function(){
+      document.documentElement.setAttribute("data-theme", cur()==="dark"?"light":"dark");
+    });
+  })();
+</script>
