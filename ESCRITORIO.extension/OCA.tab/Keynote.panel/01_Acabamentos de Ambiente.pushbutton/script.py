@@ -64,7 +64,7 @@ but the WPF window relies on pyRevit's WPFWindow + DataTable binding, which is
 only exercised on IronPython.
 """
 
-__title__ = "Acabamentos\npor Keynote"
+__title__ = "Acabamentos\nde Ambiente"
 __doc__ = u"""Preenche os acabamentos de cada ambiente a partir das Keynotes dos elementos ao redor dele.
 
 1. Analisa todos os ambientes e lê as Keynotes de paredes, pisos, forros, rodapés, molduras e soleiras.
@@ -98,7 +98,7 @@ except NameError:          # IronPython 3 / CPython
 doc = revit.doc
 BIP = DB.BuiltInParameter
 output = script.get_output()
-output.set_title(u"Acabamentos por Keynote - log")
+output.set_title(u"Acabamentos de Ambiente - log")
 
 
 # ==================================================================
@@ -1868,7 +1868,7 @@ def help_rules_text():
 XAML = u"""
 <Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="Acabamentos por Keynote" Width="1160" Height="800"
+        Title="Acabamentos de Ambiente" Width="1160" Height="800"
         MinWidth="900" MinHeight="600" WindowStartupLocation="CenterScreen"
         Background="#0E1526">
   <Window.Resources>
@@ -2468,7 +2468,7 @@ class RoomFinishWindow(forms.WPFWindow):
             return
 
         written, errors, tags_done = [], [], []
-        tx = DB.Transaction(doc, u"Acabamentos por Keynote - atualizar ambientes")
+        tx = DB.Transaction(doc, u"Acabamentos de Ambiente - atualizar ambientes")
         try:
             tx.Start()
             for rec, key, slot, value, kind in todo:
