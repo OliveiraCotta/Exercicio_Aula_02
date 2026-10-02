@@ -170,6 +170,7 @@ const STATS = [
   {k:"nobound", l:"Ambientes sem contorno",            c:"var(--mag)",    f: r => !hasBounds(r)},
   ...GROUPS.map(g=>({k:g.key, l:`Sem ${g.label.toLowerCase()} (${g.prefixes.join("/")})`, c:"var(--amber)", f: missing(g.key)})),
   {k:"overflow",l:"Keynotes sem campo livre",          c:"var(--mag)",    f: r => hasBounds(r) && FIN.some(k=>(r.finishes[k].overflow||[]).length)},
+  {k:"tagmiss", l:"Identificador sem o tipo necessário", c:"var(--mag)",  f: r => (r.tags||[]).some(t=>t.missing)},
   {k:"nokn",    l:"Ambientes com elementos sem Keynote", c:"var(--mag)",  f: r => hasBounds(r) && (r.issues||[]).length > 0},
   {k:"mismatch",l:"Inconsistências prefixo / categoria", c:"var(--mag)",  f: r => hasBounds(r) && FIN.some(k=>(r.finishes[k].mismatches||[]).length)},
   {k:"complete",l:"Ambientes com informação completa", c:"var(--teal)",   f: r => r.status === "OK"},
@@ -257,6 +258,7 @@ function renderTable(){
     list = list.slice().sort((a,b)=>{
       let x, y;
       if(sortK === "status"){ x = STATUS_RANK[a.status]; y = STATUS_RANK[b.status]; return (x-y)*sortDir; }
+      if(sortK === "rows"){ return ((a.rows||0)-(b.rows||0))*sortDir; }
       if(FIN.includes(sortK)){ x = a.finishes[sortK].value; y = b.finishes[sortK].value; }
       else { x = a[sortK]; y = b[sortK]; }
       return natural(x||"", y||"") * sortDir;
@@ -267,7 +269,7 @@ function renderTable(){
   if(!list.length){ wrap.innerHTML = `<div class="empty">Nenhum ambiente corresponde aos filtros.</div>`; return; }
   const arrow = k => sortK===k ? ` <span class="dir">${sortDir>0?"▲":"▼"}</span>` : "";
   const cols = [["number","Número"],["name","Nome do ambiente"],["level","Pavimento"],
-    ...FIN.map(k=>[k, FIN_LABEL[k]]),["status","Situação"]];
+    ...FIN.map(k=>[k, FIN_LABEL[k]]),["rows","Linhas"],["status","Situação"]];
   const head = `<tr>${cols.map(([k,l])=>`<th data-k="${k}"${FIN_FIELDS[k]?` title="${esc(FIN_FIELDS[k].join(", "))}"`:""}>${l}${arrow(k)}</th>`).join("")}</tr>`;
   const body = list.map(r=>{
     const open = openRows.has(r.id);
@@ -276,6 +278,7 @@ function renderTable(){
       <td>${esc(r.name)||"-"}</td>
       <td><span class="tag">${esc(r.level)}</span></td>
       ${FIN.map(k=>`<td>${finishCell(r,k)}</td>`).join("")}
+      <td class="mono" title="Linhas do identificador com valor">${r.rows||"-"}${(r.tags||[]).some(t=>t.missing)?` <span class="st missing" title="Tipo de identificador ausente">!</span>`:""}</td>
       <td><span class="badge ${r.status}">${STATUS_PT[r.status]||r.status}</span>${r.updated?`<span class="upd">ATUALIZADO</span>`:""}</td></tr>`;
     return open ? row + detailRow(r, cols.length) : row;
   }).join("");
@@ -315,9 +318,14 @@ function detailRow(r, span){
   }).join("") : "";
   const iss = (r.issues||[]).map(i=>`<li class="iss">${elLine(i, "- " + esc(i.msg))}</li>`);
   const oth = (r.others||[]).map(o=>`<li class="note">${elLine(o, (o.kn||[]).map(x=>`<span class="kn">${esc(x)}</span>`).join("") + " " + esc(o.msg))}</li>`);
+  const tagLines = (r.tags||[]).map(t=> t.missing
+      ? `<li class="iss">Vista ${esc(t.view)}: ${esc(t.current)} → <b>${esc(t.new)}</b> - ${esc(t.msg)}</li>`
+      : `<li>Vista ${esc(t.view)}: ${esc(t.current)} → <span class="kn">${esc(t.new)}</span>${t.msg?` <span class="src">${esc(t.msg)}</span>`:""}</li>`);
+  const tagBox = hasBounds(r) ? `<div class="dbox"><h4>Identificador <span class="src">(${r.rows||0} linha(s) com valor)</span></h4><ul>${
+      tagLines.join("") || `<li class="note">${r.rows ? "Nenhum identificador para trocar (já está no tipo certo ou o ambiente não tem identificador REVESTIMENTOS)." : "Ambiente sem acabamento: o identificador não é alterado."}</li>`}</ul></div>` : "";
   const otherBox = (iss.length || oth.length)
     ? `<div class="dbox"><h4>Outros elementos</h4><ul>${[...iss,...oth].join("")}</ul></div>` : "";
-  return `<tr class="detail"><td colspan="${span}">${msgs}<div class="dgrid">${boxes}${otherBox}</div>
+  return `<tr class="detail"><td colspan="${span}">${msgs}<div class="dgrid">${boxes}${tagBox}${otherBox}</div>
     <div class="cur">Id do ambiente ${r.id}${r.phase?" · fase "+esc(r.phase):""}</div></td></tr>`;
 }
 
@@ -352,6 +360,10 @@ document.getElementById("meta").innerHTML =
   `<b>Campos:</b> ` + GROUPS.map(g=>{ const miss = g.slots.filter(x=>!x.found).map(x=>x.name);
     return `${esc(g.label)}: ${g.slots.length - miss.length}/${g.slots.length}` + (miss.length ? ` <span style="color:var(--mag)">(faltando: ${esc(miss.join(", "))})</span>` : ""); }).join(" · ") +
   `<br><b>Ambiente por ponto:</b> ${fmt(CS.tested||0)} elementos testados · molduras de parede: ${fmt(CS.sweeps||0)} no modelo, ${fmt(CS.sweeps_in_rooms||0)} dentro de um ambiente · ${fmt(UN.length)} fora de qualquer ambiente` +
+  `<br><b>Identificador:</b> ` + ((DATA.tagFamilies||[]).length ? (DATA.tagFamilies.map(esc).join(", ") +
+      ((DATA.tagMissing||[]).length ? ` <span style="color:var(--mag)">(faltando: ${DATA.tagMissing.map(m=>esc(m.family)+": "+m.types.map(esc).join(", ")).join(" · ")})</span>` : ` (tipos REVESTIMENTOS 01 a 05 encontrados)`))
+      : `nenhuma família com tipos REVESTIMENTOS - os identificadores não são trocados`) +
+  ` · linhas vazias recebem "${esc(DATA.placeholder||"-")}" quando o ambiente tem pelo menos uma linha preenchida` +
   `<br><b>Arquivo de Keynotes:</b> ${Object.keys(KN).length ? fmt(Object.keys(KN).length)+" chaves carregadas" : "não carregado - as chaves não são validadas"}`;
 
 renderCards();

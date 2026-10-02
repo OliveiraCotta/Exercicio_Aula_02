@@ -65,8 +65,14 @@ only exercised on IronPython.
 """
 
 __title__ = "Acabamentos\npor Keynote"
-__doc__ = ("Lê automaticamente as Keynotes dos elementos ao redor de cada ambiente e grava nos "
-           "parâmetros de acabamento do ambiente (Soleira, Rodateto, Piso, Teto, Rodapé e Parede).")
+__doc__ = u"""Preenche os acabamentos de cada ambiente a partir das Keynotes dos elementos ao redor dele.
+
+1. Analisa todos os ambientes e lê as Keynotes de paredes, pisos, forros, rodapés, molduras e soleiras.
+2. Classifica pelo prefixo: SL Soleira, RT Rodateto, PI Piso, FR/CB Teto, RD Rodapé, RE Parede.
+3. Grava cada Keynote em um campo (01, 02, 03...) e completa com "-" as linhas vazias.
+4. Troca o tipo do identificador do ambiente (REVESTIMENTOS 01 a 05) conforme o número de linhas.
+
+Mostra uma pré-visualização antes de gravar e gera um relatório HTML. Nada é gravado sem confirmação."""
 
 import os
 import re
@@ -121,6 +127,18 @@ FINISH_SLOTS = OrderedDict([
               (u"Acabamento de Parede 05", "bf744c4b-1ff6-44a9-ab50-e445f0521559")]),
 ])
 SEPARATOR = u" / "
+
+# Rule A - row placeholder. Field NN of every finish is row NN of the room
+# identifier. When at least one row has a real value, the empty fields of
+# rows 1..N get this text, so the tag prints a dash instead of a blank.
+PLACEHOLDER = u"-"
+
+# Rule B - room identifier (Room Tag) type per number of rows. The tag
+# family is not named in code: any Room Tag family whose types carry
+# "REVESTIMENTOS NN" / "REVESTIMENTOS NX" in the name is used, and only tags
+# already placed in the project are switched (nothing is created).
+TAG_ROWS_RE = re.compile(u"(REVESTIMENTOS?\\s*)(\\d{1,2})(\\s*X)?", re.IGNORECASE)
+TAG_MAX_ROWS = 5
 
 # Boundary location for the 2D wall boundaries. Finish = the room-facing
 # face of the wall, which is what a finish schedule describes.
@@ -283,6 +301,12 @@ def natural_key(text):
 def unique_sorted(values):
     """Remove duplicates and return a deterministic, natural order."""
     return sorted(set(v for v in values if v), key=natural_key)
+
+
+def is_real(value):
+    """A finish value found by the command - not empty, not the '-' placeholder."""
+    v = (value or u"").strip()
+    return bool(v) and v != PLACEHOLDER
 
 
 def join_keys(keys):
@@ -1461,16 +1485,27 @@ def sort_records(records):
                                           natural_key(r["info"]["number"]), r["info"]["id"]))
 
 
-def compute_changes(records, targets):
+def compute_changes(records, targets, tag_index=None):
     """Current vs new value for every finish field of every room. The unique
     Keynotes of a finish fill its fields in order (01, 02, ...). When at
     least one Keynote was found, the finish is rewritten as a whole: fields
     past the last Keynote are cleared ("Clear"). When nothing was found, the
-    fields are left as they are. Keynotes beyond the last field overflow and
-    are reported. Nothing is written here."""
+    real values already in the room are kept. Keynotes beyond the last field
+    overflow and are reported. Nothing is written here.
+
+    On top of that (step 2, after the values are known):
+      Rule A - N = the last row (field number) holding a real value in any
+      finish. The empty fields of rows 1..N get PLACEHOLDER ('-'); rows after
+      N stay empty (a '-' left there by an earlier run is cleared). With no
+      real value at all (N = 0) nothing is filled - previous behaviour.
+      Rule B - with tag_index, the room identifier tags are planned to switch
+      to the REVESTIMENTOS type for N rows (plan_tags)."""
     for rec in records:
         rec["changes"] = OrderedDict()
         room = rec["room"]
+        ok = rec["boundary"] == "ok"
+        # step 1 - values from the Keynotes (unchanged rule)
+        plan = []
         for key, slots in FINISH_SLOTS.items():
             fields = targets.get(key) or [None] * len(slots)
             fin = rec["finishes"].get(key)
@@ -1480,35 +1515,188 @@ def compute_changes(records, targets):
             for kv, i in zip(keys, available):
                 new_vals[i] = kv
             overflow = keys[len(available):]
+            curs = [t.read(room) if t is not None else u"" for t in fields]
+            if keys:
+                final = new_vals
+            else:
+                # nothing found for this finish: real values stay, '-' is re-planned
+                final = [c if is_real(c) else u"" for c in curs]
+            plan.append((key, slots, fields, keys, curs, final, overflow))
+
+        # step 2 - rule A: how many rows have real information
+        n_rows = 0
+        if ok:
+            for _, _, fields, _, _, final, _ in plan:
+                for i, v in enumerate(final):
+                    if fields[i] is not None and is_real(v):
+                        n_rows = max(n_rows, i + 1)
+        rec["rows"] = n_rows
+
+        for key, slots, fields, keys, curs, final, overflow in plan:
             out = []
             for i, (name, _) in enumerate(slots):
-                t = fields[i]
-                cur = t.read(room) if t is not None else u""
-                new = new_vals[i]
+                t, cur, new = fields[i], curs[i], final[i]
+                if t is not None and not new and i < n_rows:
+                    new = PLACEHOLDER
                 if t is None:
                     kind = "No parameter"
-                elif rec["boundary"] != "ok":
-                    kind = "Skipped"
-                elif not keys:
-                    kind = "Keep" if cur else "Nothing found"
+                elif not ok:
+                    kind, new = "Skipped", cur
                 elif new == cur:
-                    kind = "No change"
-                elif not new:
-                    kind = "Clear"
-                elif not cur:
-                    kind = "Fill"
+                    kind = "Keep" if (not keys and is_real(cur)) else "No change"
+                elif is_real(new):
+                    kind = "Overwrite" if is_real(cur) else "Fill"
+                elif is_real(cur) or not new:
+                    kind = "Clear"          # old value removed, or a stale '-' removed
                 else:
-                    kind = "Overwrite"
+                    kind = "Fill"           # '-' into an empty field
                 out.append({"name": name, "current": cur, "new": new, "kind": kind})
             rec["changes"][key] = {
                 "slots": out, "overflow": overflow,
-                "current": join_keys([s["current"] for s in out if s["current"]]),
+                "current": join_keys([s["current"] for s in out if is_real(s["current"])]),
                 "new": join_keys(keys),
             }
+    if tag_index is not None:
+        plan_tags(records, tag_index)
+
+
+def rows_in_room(room, targets):
+    """Rows with a real value in the room as it is now (read back after
+    writing, so unticked preview rows are respected)."""
+    n = 0
+    for key, fields in targets.items():
+        for i, t in enumerate(fields):
+            if t is not None and is_real(t.read(room)):
+                n = max(n, i + 1)
+    return n
+
+
+# ==================================================================
+# Rule B - room identifier (Room Tag) type by number of rows
+# ==================================================================
+def type_name(t):
+    try:
+        return to_unicode(DB.Element.Name.GetValue(t))
+    except Exception:
+        try:
+            return param_str(t.get_Parameter(BIP.SYMBOL_NAME_PARAM))
+        except Exception:
+            return u""
+
+
+def tag_rows_in_name(name):
+    m = TAG_ROWS_RE.search(name or u"")
+    return int(m.group(2)) if m else None
+
+
+class TagIndex(object):
+    """Room tags already placed in the project whose family has REVESTIMENTOS
+    types, and those types by number of rows. Read only."""
+    def __init__(self, d):
+        self.doc = d
+        self.families = OrderedDict()     # family name -> {rows: [RoomTagType]}
+        self.by_room = {}                 # room id -> [RoomTag]
+        self._views = {}
+        try:
+            types = (DB.FilteredElementCollector(d).OfCategory(DB.BuiltInCategory.OST_RoomTags)
+                     .WhereElementIsElementType().ToElements())
+        except Exception:
+            types = []
+        for t in types:
+            n = tag_rows_in_name(type_name(t))
+            if n is None:
+                continue
+            fam = to_unicode(getattr(t, "FamilyName", u""))
+            self.families.setdefault(fam, {}).setdefault(n, []).append(t)
+        if not self.families:
+            return
+        for tag in (DB.FilteredElementCollector(d).OfCategory(DB.BuiltInCategory.OST_RoomTags)
+                    .WhereElementIsNotElementType()):
+            try:
+                t = d.GetElement(tag.GetTypeId())
+                if t is None or to_unicode(t.FamilyName) not in self.families:
+                    continue
+                try:
+                    rid = tag.TaggedLocalRoomId
+                except Exception:
+                    rid = tag.Room.Id if tag.Room is not None else None
+                if is_valid_id(rid):
+                    self.by_room.setdefault(eid_int(rid), []).append(tag)
+            except Exception:
+                continue
+
+    def tags_for(self, room):
+        return self.by_room.get(eid_int(room.Id), [])
+
+    def family_of(self, tag):
+        t = self.doc.GetElement(tag.GetTypeId())
+        return to_unicode(t.FamilyName) if t is not None else u""
+
+    def current_name(self, tag):
+        t = self.doc.GetElement(tag.GetTypeId())
+        return type_name(t) if t is not None else u""
+
+    def view_name(self, tag):
+        k = eid_int(tag.OwnerViewId)
+        if k not in self._views:
+            v = self.doc.GetElement(tag.OwnerViewId)
+            self._views[k] = to_unicode(v.Name) if v is not None else u""
+        return self._views[k]
+
+    def missing(self):
+        """[(family, [missing type labels])] for rows 1..TAG_MAX_ROWS."""
+        out = []
+        for fam, by_n in self.families.items():
+            gone = [u"REVESTIMENTOS {:02d}".format(n) for n in range(1, TAG_MAX_ROWS + 1) if n not in by_n]
+            if gone:
+                out.append((fam, gone))
+        return out
+
+    def target(self, tag, n):
+        """Type of the tag's own family for n rows -> (type or None, name, message).
+        The current type name with its number swapped is preferred, so
+        prefixes / suffixes in the names ('1:50', 'X', ...) are kept."""
+        cur_type = self.doc.GetElement(tag.GetTypeId())
+        fam = to_unicode(cur_type.FamilyName) if cur_type is not None else u""
+        cur_name = type_name(cur_type) if cur_type is not None else u""
+        by_n = self.families.get(fam, {})
+        wanted = None
+        m = TAG_ROWS_RE.search(cur_name)
+        if m:
+            wanted = (cur_name[:m.start()] + m.group(1) + str(n).zfill(len(m.group(2))) +
+                      (m.group(3) or u"") + cur_name[m.end():])
+            for t in by_n.get(n, []):
+                if type_name(t) == wanted:
+                    return t, wanted, u""
+        cands = sorted(by_n.get(n, []), key=type_name)
+        if cands:
+            note = u"" if len(cands) == 1 else u"{} tipos para {} linha(s); usado '{}'".format(
+                len(cands), n, type_name(cands[0]))
+            return cands[0], type_name(cands[0]), note
+        label = wanted or u"REVESTIMENTOS {:02d}".format(n)
+        return None, label, u"O tipo '{}' não foi encontrado na família de identificador '{}'.".format(label, fam)
+
+
+def plan_tags(records, tag_index):
+    """rec['tags'] = identifier tags of the room that need another type."""
+    for rec in records:
+        rec["tags"] = []
+        n = rec.get("rows", 0)
+        if rec["boundary"] != "ok" or not n:
+            continue
+        for tag in tag_index.tags_for(rec["room"]):
+            target, name, msg = tag_index.target(tag, n)
+            if target is not None and eid_int(target.Id) == eid_int(tag.GetTypeId()):
+                continue                                     # already the right type
+            rec["tags"].append({
+                "tag": tag, "id": eid_int(tag.Id), "view": tag_index.view_name(tag),
+                "current": tag_index.current_name(tag), "new": name,
+                "type": target, "msg": msg, "rows": n,
+            })
 
 
 def worksharing_block(room):
-    """Reason this room can't be edited right now, or u''."""
+    """Reason this element (room or tag) can't be edited right now, or u''."""
     if not doc.IsWorkshared:
         return u""
     try:
@@ -1530,7 +1718,8 @@ def worksharing_block(room):
     return u""
 
 
-def build_json(records, targets, mode, keynote_texts, problems, contain_stats=None, search_above_m=SEARCH_ABOVE_M):
+def build_json(records, targets, mode, keynote_texts, problems, contain_stats=None, search_above_m=SEARCH_ABOVE_M,
+               tag_index=None):
     rooms = []
     for rec in records:
         info = rec["info"]
@@ -1563,6 +1752,9 @@ def build_json(records, targets, mode, keynote_texts, problems, contain_stats=No
             "status": rec["status"], "updated": bool(rec.get("updated")),
             "writeError": rec.get("write_error") or u"",
             "finishes": fins, "issues": rec.get("issues", []), "others": rec.get("others", []),
+            "rows": rec.get("rows", 0),
+            "tags": [{"id": t["id"], "view": t["view"], "current": t["current"], "new": t["new"],
+                      "missing": t["type"] is None, "msg": t["msg"]} for t in rec.get("tags", [])],
         })
     return {
         "project": to_unicode(doc.Title),
@@ -1579,6 +1771,9 @@ def build_json(records, targets, mode, keynote_texts, problems, contain_stats=No
         "paramProblems": problems,
         "keynotes": keynote_texts,
         "rooms": rooms,
+        "tagFamilies": list(tag_index.families.keys()) if tag_index else [],
+        "tagMissing": [{"family": f, "types": m} for f, m in (tag_index.missing() if tag_index else [])],
+        "placeholder": PLACEHOLDER,
         "containStats": dict((k, v) for k, v in (contain_stats or {}).items() if k != "unassigned"),
         "unassigned": (contain_stats or {}).get("unassigned", []),
     }
@@ -1627,7 +1822,8 @@ def log_link(item):
 
 
 STATUS_LABELS = {"OK": u"OK", "WARNING": u"ATENÇÃO", "ERROR": u"ERRO"}
-CHANGE_LABELS = {"Fill": u"Preencher", "Overwrite": u"Sobrescrever", "Clear": u"Limpar"}
+CHANGE_LABELS = {"Fill": u"Preencher", "Overwrite": u"Sobrescrever", "Clear": u"Limpar",
+                 "Tag": u"Trocar tipo", "TagMissing": u"Tipo ausente"}
 BOUNDARY_LABELS = {
     "unplaced": u"não colocado",
     "unenclosed": u"não fechado ou redundante",
@@ -1789,6 +1985,12 @@ XAML = u"""
         <DataTrigger Binding="{Binding Kind}" Value="Clear">
           <Setter Property="Foreground" Value="#FF8FB5"/>
         </DataTrigger>
+        <DataTrigger Binding="{Binding Kind}" Value="Tag">
+          <Setter Property="Foreground" Value="#9D8CFF"/>
+        </DataTrigger>
+        <DataTrigger Binding="{Binding Kind}" Value="TagMissing">
+          <Setter Property="Foreground" Value="#FF4F9A"/>
+        </DataTrigger>
         <DataTrigger Binding="{Binding Editable}" Value="False">
           <Setter Property="Foreground" Value="#7A8FA9"/>
         </DataTrigger>
@@ -1852,7 +2054,7 @@ XAML = u"""
                     CanUserDeleteRows="False" HeadersVisibility="Column" GridLinesVisibility="Horizontal"
                     HorizontalGridLinesBrush="#1B2740" Background="#0B1120" BorderBrush="#23324F"
                     RowHeaderWidth="0" SelectionMode="Extended" ToolTipService.ShowDuration="20000"
-                    ToolTip="Pré-visualização, um campo por linha: todas vêm marcadas. Desmarque uma linha para não gravar aquele valor. Âmbar = substitui um valor existente; rosa = limpa um campo que sobrou.">
+                    ToolTip="Pré-visualização, um campo por linha: todas vêm marcadas. Desmarque uma linha para não gravar aquele valor. Âmbar = substitui um valor existente; rosa = limpa um campo que sobrou; lilás = troca o tipo do identificador do ambiente.">
             <DataGrid.Columns>
               <DataGridTemplateColumn Header="Aplicar" Width="60">
                 <DataGridTemplateColumn.CellTemplate>
@@ -1888,6 +2090,9 @@ XAML = u"""
 
             <TextBlock Style="{StaticResource HelpTitle}" Text="ONDE OS ELEMENTOS SÃO PROCURADOS"/>
             <TextBlock x:Name="tb_help_search" Style="{StaticResource HelpBody}"/>
+
+            <TextBlock Style="{StaticResource HelpTitle}" Text="LINHAS COM &quot;-&quot; E IDENTIFICADOR DO AMBIENTE"/>
+            <TextBlock Style="{StaticResource HelpBody}" Text="• Cada número de campo é uma linha do identificador: linha 01 = Parede 01, Piso 01, Teto 01, Rodapé 01, Rodateto 01 e Soleira 01; linha 02 = os campos 02; e assim por diante.&#10;• Se pelo menos uma linha tiver valor, os campos vazios das linhas preenchidas recebem &quot;-&quot;. Linhas sem nenhum valor continuam vazias. Ambiente sem nenhum acabamento: nada muda.&#10;• O número de linhas com valor escolhe o tipo do identificador: 1 linha = REVESTIMENTOS 01, 2 linhas = REVESTIMENTOS 02 ... até 05. Vale para nomes como &quot;REVESTIMENTOS 3X&quot; ou com outros textos antes e depois.&#10;• Só os identificadores já colocados no projeto são trocados, sempre dentro da mesma família. Nada é criado.&#10;• Se o tipo necessário não existir na família, a ferramenta avisa qual tipo está faltando e não troca aquele identificador."/>
 
             <TextBlock Style="{StaticResource HelpTitle}" Text="PROTEÇÕES"/>
             <TextBlock Style="{StaticResource HelpBody}" Text="• Piso, rodapé e parede do pavimento de cima ou de baixo não entram no ambiente.&#10;• Nada é gravado até você clicar em Atualizar Ambientes.&#10;• Valores diferentes dos atuais aparecem em âmbar na pré-visualização e na confirmação antes de gravar; desmarque a linha para manter o valor atual.&#10;• Cada acabamento é regravado por inteiro: se sobrar um campo com valor antigo (ex.: Parede 04 quando agora só há 3 revestimentos), ele aparece em rosa como Limpar.&#10;• Se houver mais Keynotes do que campos, as que sobrarem aparecem como aviso - nada é descartado sem aviso.&#10;• Se nada for encontrado para um parâmetro, o valor atual é mantido - nunca é apagado.&#10;• Tudo é gravado em uma única transação: Ctrl+Z no Revit desfaz a atualização inteira.&#10;• Ambientes em uso por outro usuário (workset) aparecem bloqueados na pré-visualização."/>
@@ -1938,6 +2143,11 @@ class RoomFinishWindow(forms.WPFWindow):
         self._fill_help_search()
 
         self.sample_room = rooms[0]
+        try:
+            self.tag_index = TagIndex(doc)
+        except Exception as ex:
+            self.tag_index = None
+            output.print_md(u"**ERRO:** não foi possível ler os identificadores de ambiente: `{}`".format(to_unicode(ex)))
         self._resolve_params()
 
         self.btn_scan.Click += self.on_scan
@@ -1969,6 +2179,16 @@ class RoomFinishWindow(forms.WPFWindow):
             found = len([t for t in self.targets[key] if t is not None])
             lines.append(u"{}: {} de {} campos ({} a {})".format(
                 finish_label(key), found, len(slots), slots[0][0], slots[-1][0][-2:]))
+        ti = self.tag_index
+        if ti is None or not ti.families:
+            lines.append(u"Identificador: nenhum tipo REVESTIMENTOS encontrado - os identificadores não serão trocados.")
+        else:
+            for fam in ti.families:
+                n_rooms = len([1 for tags in ti.by_room.values()
+                               if any(ti.family_of(t) == fam for t in tags)])
+                lines.append(u"Identificador '{}': colocado em {} ambiente(s)".format(fam, n_rooms))
+            for fam, gone in ti.missing():
+                lines.append(u"Identificador '{}': faltando {}".format(fam, u", ".join(gone)))
         lines.extend(self.problems)
         self.tb_params.Text = u"\n".join(lines)
 
@@ -2056,7 +2276,7 @@ class RoomFinishWindow(forms.WPFWindow):
                 log_link({"id": r["info"]["id"], "link": u""}), r["info"]["number"],
                 BOUNDARY_LABELS.get(r["boundary"], r["boundary"])))
 
-        compute_changes(self.records, self.targets)
+        compute_changes(self.records, self.targets, self.tag_index)
         for r in self.records:
             r["status"] = room_status(r)
         self._log_keynotes()
@@ -2064,6 +2284,26 @@ class RoomFinishWindow(forms.WPFWindow):
         self.btn_report.IsEnabled = True
         self.show_preview()
         self.tb_status.Text = self._summary() + u" " + self.tb_status.Text
+        self._alert_missing_tags()
+
+    def _alert_missing_tags(self):
+        """Rule B error handling: tell exactly which identifier type is missing."""
+        need = OrderedDict()
+        for rec in self.records:
+            for t in rec.get("tags", []):
+                if t["type"] is None:
+                    need.setdefault(t["msg"], []).append(rec["info"]["number"])
+        if not need:
+            return
+        lines = []
+        for msg, rooms in need.items():
+            uniq = sorted(set(rooms), key=natural_key)
+            lines.append(u"{}\n   Necessário para {} ambiente(s): {}{}".format(
+                msg, len(uniq), u", ".join(uniq[:15]), u"..." if len(uniq) > 15 else u""))
+            output.print_md(u"**ERRO - identificador:** {} Ambientes: {}".format(msg, u", ".join(uniq)))
+        forms.alert(u"Tipo de identificador não encontrado no projeto:\n\n" + u"\n\n".join(lines) +
+                    u"\n\nOs acabamentos desses ambientes podem ser gravados normalmente; apenas o "
+                    u"identificador deles não será trocado.")
 
     def _log_keynotes(self):
         issues = [(r, iss) for r in self.records for iss in r.get("issues", [])]
@@ -2093,7 +2333,7 @@ class RoomFinishWindow(forms.WPFWindow):
     def _write_report(self):
         try:
             data = build_json(self.records, self.targets, self.mode, self.keynote_texts, self.problems,
-                              self.contain_stats, self.search_above_m)
+                              self.contain_stats, self.search_above_m, self.tag_index)
             write_report(data)
         except Exception as ex:
             output.print_md(u"**ERRO:** não foi possível gerar o relatório HTML: `{}`".format(to_unicode(ex)))
@@ -2104,14 +2344,14 @@ class RoomFinishWindow(forms.WPFWindow):
         overwrites are shown in amber and counted in the confirmation."""
         if not self.records:
             return
-        compute_changes(self.records, self.targets)       # re-read current values
+        compute_changes(self.records, self.targets, self.tag_index)   # re-read current values
         t = DataTable("preview")
         for col, typ in (("Apply", Boolean), ("Editable", Boolean), ("Kind", String), ("Room", String),
                          ("Name", String), ("Level", String), ("Parameter", String), ("Current", String),
                          ("New", String), ("Change", String), ("Note", String)):
             t.Columns.Add(col, clr.GetClrType(typ))
         self.row_keys = []
-        counts = {"Fill": 0, "Overwrite": 0, "Clear": 0, "Keep": 0, "Overflow": 0}
+        counts = {"Fill": 0, "Overwrite": 0, "Clear": 0, "Keep": 0, "Overflow": 0, "Tag": 0, "TagMissing": 0}
         overflow_log = []
         for rec in self.records:
             block = None
@@ -2147,13 +2387,36 @@ class RoomFinishWindow(forms.WPFWindow):
                     row["Note"] = u"; ".join(notes)
                     t.Rows.Add(row)
                     self.row_keys.append((rec, key, i))
+            # rule B: identifier tags of this room
+            for j, tg in enumerate(rec.get("tags", [])):
+                missing = tg["type"] is None
+                tblock = u"" if missing else worksharing_block(tg["tag"])
+                kind = "TagMissing" if missing else "Tag"
+                counts[kind] += 1
+                row = t.NewRow()
+                editable = not missing and not tblock
+                row["Editable"] = editable
+                row["Apply"] = editable
+                row["Kind"] = kind
+                row["Room"] = rec["info"]["number"]
+                row["Name"] = rec["info"]["name"]
+                row["Level"] = rec["info"]["level"]
+                row["Parameter"] = u"Identificador (vista: {})".format(tg["view"])
+                row["Current"] = tg["current"]
+                row["New"] = tg["new"]
+                row["Change"] = CHANGE_LABELS[kind]
+                row["Note"] = u"; ".join([x for x in (u"{} linha(s)".format(tg["rows"]), tblock, tg["msg"]) if x])
+                t.Rows.Add(row)
+                self.row_keys.append((rec, "__tag__", j))
         self.table = t
         self.grid.ItemsSource = t.DefaultView
-        self.btn_update.IsEnabled = t.Rows.Count > 0
+        self.btn_update.IsEnabled = any(bool(r["Editable"]) for r in t.Rows)
         if log:
             output.print_md(u"**[5/6] Pré-visualização gerada:** {} campo(s) a preencher, {} a substituir, {} a limpar, "
-                            u"{} campo(s) mantidos onde nada foi encontrado.".format(
-                                counts["Fill"], counts["Overwrite"], counts["Clear"], counts["Keep"]))
+                            u"{} campo(s) mantidos onde nada foi encontrado; {} identificador(es) a trocar de tipo, "
+                            u"{} com tipo ausente.".format(
+                                counts["Fill"], counts["Overwrite"], counts["Clear"], counts["Keep"],
+                                counts["Tag"], counts["TagMissing"]))
             for rec, key, extra in overflow_log[:40]:
                 output.print_md(u"- **Sem campo livre** Ambiente `{}` {}: {} (só há {} campos)".format(
                     rec["info"]["number"], finish_label(key), join_keys(extra), len(FINISH_SLOTS[key])))
@@ -2162,9 +2425,12 @@ class RoomFinishWindow(forms.WPFWindow):
         if t.Rows.Count == 0:
             self.tb_status.Text = u"Nada a atualizar - todos os valores encontrados já estão nos ambientes." + msg_over
         else:
-            self.tb_status.Text = (u"{} campo(s) a preencher, {} a substituir (âmbar) e {} a limpar (rosa). Desmarque "
-                                   u"o que não quiser gravar e clique em Atualizar Ambientes.{}".format(
-                                       counts["Fill"], counts["Overwrite"], counts["Clear"], msg_over))
+            self.tb_status.Text = (u"{} campo(s) a preencher, {} a substituir (âmbar), {} a limpar (rosa) e {} "
+                                   u"identificador(es) a trocar (lilás). Desmarque o que não quiser gravar e clique em "
+                                   u"Atualizar Ambientes.{}{}".format(
+                                       counts["Fill"], counts["Overwrite"], counts["Clear"], counts["Tag"], msg_over,
+                                       u" {} identificador(es) sem o tipo necessário - veja a coluna Observação.".format(
+                                           counts["TagMissing"]) if counts["TagMissing"] else u""))
 
     # ---------------- CONFIRM + TRANSACTION + WRITE ----------------
     def on_update(self, sender, args):
@@ -2174,17 +2440,21 @@ class RoomFinishWindow(forms.WPFWindow):
             self.grid.CommitEdit()
         except Exception:
             pass
-        todo = []
+        todo, tag_todo = [], []
         for i in range(self.table.Rows.Count):
             row = self.table.Rows[i]
             if bool(row["Apply"]) and bool(row["Editable"]):
                 rec, key, slot = self.row_keys[i]
+                if key == "__tag__":
+                    tag_todo.append((rec, rec["tags"][slot]))
+                    continue
                 sl = rec["changes"][key]["slots"][slot]
                 todo.append((rec, key, slot, sl["new"], sl["kind"]))
-        if not todo:
+        if not todo and not tag_todo:
             forms.alert(u"Nenhuma linha está marcada na pré-visualização.")
             return
-        n_rooms = len(set(eid_int(r["room"].Id) for r, _, _, _, _ in todo))
+        n_rooms = len(set([eid_int(r["room"].Id) for r, _, _, _, _ in todo] +
+                          [eid_int(r["room"].Id) for r, _ in tag_todo]))
         n_ow = len([1 for _, _, _, _, k in todo if k == "Overwrite"])
         n_clear = len([1 for _, _, _, _, k in todo if k == "Clear"])
         msg = u"Gravar {} campo(s) em {} ambiente(s)?".format(len(todo), n_rooms)
@@ -2192,10 +2462,12 @@ class RoomFinishWindow(forms.WPFWindow):
             msg += u"\n\n{} deles SUBSTITUEM um valor existente diferente.".format(n_ow)
         if n_clear:
             msg += u"\n{} campo(s) com valor antigo serão LIMPOS.".format(n_clear)
+        if tag_todo:
+            msg += u"\n\n{} identificador(es) de ambiente terão o tipo trocado.".format(len(tag_todo))
         if not forms.alert(msg, yes=True, no=True):
             return
 
-        written, errors = [], []
+        written, errors, tags_done = [], [], []
         tx = DB.Transaction(doc, u"Acabamentos por Keynote - atualizar ambientes")
         try:
             tx.Start()
@@ -2212,6 +2484,25 @@ class RoomFinishWindow(forms.WPFWindow):
                         errors.append((rec, label, u"o Revit recusou o valor"))
                 except Exception as ex:
                     errors.append((rec, label, to_unicode(ex)))
+            # rule B - after the fields are written, count the rows really
+            # filled in the room and switch its identifier tags to that type
+            for rec, tg in tag_todo:
+                tag = tg["tag"]
+                try:
+                    n_now = rows_in_room(rec["room"], self.targets)
+                    if not n_now:
+                        continue
+                    target, name, tmsg = self.tag_index.target(tag, n_now)
+                    if target is None:
+                        errors.append((rec, u"Identificador", tmsg))
+                    elif eid_int(target.Id) != eid_int(tag.GetTypeId()):
+                        try:
+                            tag.ChangeTypeId(target.Id)
+                        except Exception:
+                            tag.RoomTagType = target          # same change, RoomTag API
+                        tags_done.append((rec, name))
+                except Exception as ex:
+                    errors.append((rec, u"Identificador", to_unicode(ex)))
             status = tx.Commit()
             if status != DB.TransactionStatus.Committed:
                 raise Exception(u"A transação terminou com status {}".format(status))
@@ -2224,23 +2515,24 @@ class RoomFinishWindow(forms.WPFWindow):
         finally:
             tx.Dispose()
 
-        for rec, key in written:
+        for rec, key in written + tags_done:
             rec["updated"] = True
         for rec, key, err in errors:
             rec["write_error"] = (rec.get("write_error") or u"") + u"{}: {}. ".format(key, err)
-        output.print_md(u"**[6/6] Ambientes atualizados:** {} campo(s) gravados em {} ambiente(s), {} erro(s).".format(
-            len(written), len(set(eid_int(r["room"].Id) for r, _ in written)), len(errors)))
+        output.print_md(u"**[6/6] Ambientes atualizados:** {} campo(s) gravados em {} ambiente(s), {} identificador(es) "
+                        u"com tipo trocado, {} erro(s).".format(
+                            len(written), len(set(eid_int(r["room"].Id) for r, _ in written)), len(tags_done), len(errors)))
         for rec, key, err in errors[:40]:
             output.print_md(u"- **ERRO** Ambiente {} `{}` {}: {}".format(
                 log_link({"id": rec["info"]["id"], "link": u""}), rec["info"]["number"], key, err))
 
-        compute_changes(self.records, self.targets)      # read back what is in Revit now
+        compute_changes(self.records, self.targets, self.tag_index)   # read back what is in Revit now
         for r in self.records:
             r["status"] = room_status(r)
         self._write_report()
         self.show_preview(log=False)                     # what is left (unticked / blocked rows)
-        self.tb_status.Text = u"{} campo(s) gravados{}. Abra o relatório HTML para conferir.".format(
-            len(written), u" - {} erro(s), veja o log".format(len(errors)) if errors else u"")
+        self.tb_status.Text = u"{} campo(s) gravados e {} identificador(es) trocados{}. Abra o relatório HTML para conferir.".format(
+            len(written), len(tags_done), u" - {} erro(s), veja o log".format(len(errors)) if errors else u"")
 
     # ---------------- report / close ----------------
     def on_report(self, sender, args):
