@@ -129,6 +129,7 @@
 </div>
 <div class="toolrow">
   <button class="btn" id="resetBtn">Limpar filtros</button>
+  <button class="btn" id="xlsxBtn" title="Baixa uma planilha Excel com os ambientes que estão na tabela (respeita os filtros): resumo, campos de cada ambiente, elementos encontrados e pendências.">&#x2913; Baixar Excel</button>
   <span class="count" id="count"></span>
 </div>
 <div class="tablewrap" id="tableWrap"></div>
@@ -365,6 +366,140 @@ document.getElementById("meta").innerHTML =
       : `nenhuma família com tipos REVESTIMENTOS - os identificadores não são trocados`) +
   ` · linhas vazias recebem "${esc(DATA.placeholder||"-")}" quando o ambiente tem pelo menos uma linha preenchida` +
   `<br><b>Arquivo de Keynotes:</b> ${Object.keys(KN).length ? fmt(Object.keys(KN).length)+" chaves carregadas" : "não carregado - as chaves não são validadas"}`;
+
+/* ---- Excel export: .xlsx built in the browser, no library, works offline ----
+   Exports the rooms currently shown in the table (filters are respected). */
+const XLSX_WRITER = (()=>{
+  const CRC = (()=>{ const t = new Uint32Array(256);
+    for(let n=0;n<256;n++){ let c=n; for(let k=0;k<8;k++) c=(c&1)?(0xEDB88320^(c>>>1)):(c>>>1); t[n]=c>>>0; }
+    return t; })();
+  const crc32 = b=>{ let c=0xFFFFFFFF; for(let i=0;i<b.length;i++) c=CRC[(c^b[i])&0xFF]^(c>>>8); return (c^0xFFFFFFFF)>>>0; };
+  const enc = s=>new TextEncoder().encode(s);
+  const xml = s=>String(s).replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F]/g,"")
+    .replace(/[<>&"']/g, m=>({"<":"&lt;",">":"&gt;","&":"&amp;",'"':"&quot;","'":"&apos;"}[m]));
+  const colRef = i=>{ let s=""; i++; while(i>0){ const m=(i-1)%26; s=String.fromCharCode(65+m)+s; i=(i-m-1)/26|0; } return s; };
+  const sheetName = n=>String(n).replace(/[\[\]:*?\/\\]/g," ").slice(0,31);
+
+  // sheets: [[name, rows, {noFilter}]]; filter only on real tables with data rows
+  const hasFilter = sh=>sh[1].length > 1 && !(sh[2] && sh[2].noFilter);
+
+  function sheetXml(rows, filtered){
+    const ncol = Math.max(1, ...rows.map(r=>r.length));
+    const widths = Array.from({length:ncol}, (_,c)=>Math.min(60, Math.max(8,
+      ...rows.map(r=>String(r[c]==null?"":r[c]).length + 2))));
+    const cols = `<cols>${widths.map((w,i)=>`<col min="${i+1}" max="${i+1}" width="${w}" customWidth="1"/>`).join("")}</cols>`;
+    const data = rows.map((r,ri)=>`<row r="${ri+1}">${r.map((v,ci)=>{
+      if(v==null || v==="") return "";
+      const ref = colRef(ci)+(ri+1), st = ri===0 ? ' s="1"' : "";
+      if(typeof v==="number" && isFinite(v)) return `<c r="${ref}"${st}><v>${v}</v></c>`;
+      return `<c r="${ref}"${st} t="inlineStr"><is><t xml:space="preserve">${xml(v)}</t></is></c>`;
+    }).join("")}</row>`).join("");
+    const filter = filtered ? `<autoFilter ref="A1:${colRef(ncol-1)}${rows.length}"/>` : "";
+    return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetViews><sheetView workbookViewId="0"><pane ySplit="1" topLeftCell="A2" activePane="bottomLeft" state="frozen"/></sheetView></sheetViews>${cols}<sheetData>${data}</sheetData>${filter}</worksheet>`;
+  }
+
+  const STYLES = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><fonts count="2"><font><sz val="11"/><name val="Calibri"/></font><font><b/><sz val="11"/><color rgb="FFFFFFFF"/><name val="Calibri"/></font></fonts><fills count="3"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill><fill><patternFill patternType="solid"><fgColor rgb="FF0E1526"/><bgColor indexed="64"/></patternFill></fill></fills><borders count="1"><border><left/><right/><top/><bottom/><diagonal/></border></borders><cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs><cellXfs count="2"><xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/><xf numFmtId="0" fontId="1" fillId="2" borderId="0" xfId="0" applyFont="1" applyFill="1"/></cellXfs><cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles></styleSheet>`;
+
+  function zip(parts){
+    const chunks = [], central = []; let offset = 0;
+    const u16 = n=>[n&0xFF,(n>>8)&0xFF], u32 = n=>[n&0xFF,(n>>8)&0xFF,(n>>16)&0xFF,(n>>>24)&0xFF];
+    parts.forEach(([name, content])=>{
+      const nameB = enc(name), dataB = enc(content), crc = crc32(dataB);
+      const local = [].concat(u32(0x04034b50),u16(20),u16(0x0800),u16(0),u16(0),u16(0x21),
+        u32(crc),u32(dataB.length),u32(dataB.length),u16(nameB.length),u16(0));
+      chunks.push(new Uint8Array(local), nameB, dataB);
+      central.push({nameB, crc, size:dataB.length, offset});
+      offset += local.length + nameB.length + dataB.length;
+    });
+    const cdStart = offset, cd = [];
+    central.forEach(e=>{ cd.push(new Uint8Array([].concat(u32(0x02014b50),u16(20),u16(20),u16(0x0800),u16(0),u16(0),u16(0x21),
+      u32(e.crc),u32(e.size),u32(e.size),u16(e.nameB.length),u16(0),u16(0),u16(0),u16(0),u32(0),u32(e.offset))), e.nameB); });
+    const cdBytes = cd.reduce((a,b)=>a+b.length, 0);
+    const end = new Uint8Array([].concat(u32(0x06054b50),u16(0),u16(0),u16(central.length),u16(central.length),
+      u32(cdBytes),u32(cdStart),u16(0)));
+    return new Blob([...chunks, ...cd, end], {type:"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"});
+  }
+
+  // sheets: [[name, rows]]
+  return function build(sheets){
+    const names = sheets.map(([n])=>sheetName(n));
+    const defined = sheets.map((sh, i)=> hasFilter(sh)
+      ? `<definedName name="_xlnm._FilterDatabase" localSheetId="${i}" hidden="1">'${xml(names[i]).replace(/'/g,"''")}'!$A$1:$${colRef(Math.max(1,...sh[1].map(r=>r.length))-1)}$${sh[1].length}</definedName>` : "").join("");
+    const parts = [
+      ["[Content_Types].xml", `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/><Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/>${
+        names.map((_,i)=>`<Override PartName="/xl/worksheets/sheet${i+1}.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>`).join("")}</Types>`],
+      ["_rels/.rels", `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/></Relationships>`],
+      ["xl/workbook.xml", `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets>${
+        names.map((n,i)=>`<sheet name="${xml(n)}" sheetId="${i+1}" r:id="rId${i+1}"/>`).join("")}</sheets>${defined ? `<definedNames>${defined}</definedNames>` : ""}</workbook>`],
+      ["xl/_rels/workbook.xml.rels", `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">${
+        names.map((_,i)=>`<Relationship Id="rId${i+1}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet${i+1}.xml"/>`).join("")}<Relationship Id="rId${names.length+1}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/></Relationships>`],
+      ["xl/styles.xml", STYLES],
+      ...sheets.map((sh, i)=>[`xl/worksheets/sheet${i+1}.xml`, sheetXml(sh[1], hasFilter(sh))]),
+    ];
+    return zip(parts);
+  };
+})();
+
+function exportSheets(){
+  const list = ROOMS.filter(matches);
+  const fields = GROUPS.flatMap(g=>g.slots.map(s=>s.name));
+  const ambientes = [["Número","Nome do ambiente","Pavimento","Fase","Situação","Linhas com valor","Atualizado",
+    ...fields, "Identificador - tipo atual","Identificador - tipo novo","Pendências"]];
+  const campos = [["Número","Nome do ambiente","Pavimento","Acabamento","Campo","Valor encontrado","Valor no Revit","Ação"]];
+  const elementos = [["Número","Nome do ambiente","Acabamento","Categoria","Id do elemento","Keynote","Origem da Keynote","Relação com o ambiente","Vínculo"]];
+  const pend = [["Número","Nome do ambiente","Tipo","Acabamento","Descrição","Id do elemento"]];
+  for(const r of list){
+    const base = [r.number, r.name];
+    const before = pend.length;
+    const vals = {};
+    if(r.boundaryMsg) pend.push([...base, "Ambiente", "", r.boundaryMsg, ""]);
+    if(r.writeError) pend.push([...base, "Erro ao gravar", "", r.writeError, ""]);
+    (r.issues||[]).forEach(i=>pend.push([...base, "Keynote ausente", "", `${i.cat}: ${i.msg}`, i.id]));
+    for(const k of FIN){
+      const f = r.finishes[k];
+      (f.slots||[]).forEach(s=>{
+        vals[s.name] = s.new || "";
+        campos.push([...base, r.level, FIN_LABEL[k], s.name, s.new||"", s.current||"", s.change||""]);
+      });
+      (f.items||[]).forEach(i=>elementos.push([...base, FIN_LABEL[k], i.cat, i.id, (i.kn||[]).join(" / "),
+        (i.src||[]).join(", "), (i.rels||[]).join(", "), i.link||""]));
+      (f.mismatches||[]).forEach(m=>pend.push([...base, "Inconsistência", FIN_LABEL[k], m, ""]));
+      (f.warnings||[]).forEach(w=>pend.push([...base, "Aviso", FIN_LABEL[k], w, ""]));
+      if((f.overflow||[]).length) pend.push([...base, "Sem campo livre", FIN_LABEL[k], `Não couberam: ${f.overflow.join(", ")}`, ""]);
+    }
+    (r.others||[]).forEach(o=>elementos.push([...base, "(ignorada)", o.cat, o.id, (o.kn||[]).join(" / "), o.msg, (o.rels||[]).join(", "), o.link||""]));
+    const tags = r.tags||[];
+    tags.filter(t=>t.missing).forEach(t=>pend.push([...base, "Identificador", "", t.msg, t.id]));
+    ambientes.push([...base, r.level, r.phase||"", STATUS_PT[r.status]||r.status, r.rows||0, r.updated ? "Sim" : "Não",
+      ...fields.map(n=>vals[n]||""),
+      tags.map(t=>t.current).join(" / "), tags.map(t=>t.new + (t.missing ? " (não encontrado)" : "")).join(" / "),
+      pend.length - before]);
+  }
+  const resumo = [["Indicador","Ambientes exportados","Total do relatório"],
+    ...STATS.map(s=>[s.l, list.filter(s.f).length, ROOMS.filter(s.f).length]),
+    [], ["Projeto", String(DATA.project||"").replace(/\.rvt$/i,"")], ["Gerado em", DATA.generated||""],
+    ["Ambientes exportados", `${list.length} de ${ROOMS.length} (filtros da tabela aplicados)`]];
+  const naoAtrib = [["Categoria","Id do elemento","Keynote","Motivo","Vínculo"],
+    ...(DATA.unassigned||[]).map(u=>[u.cat, u.id, u.kn||"", u.reason, u.link||""])];
+  return [["Resumo", resumo, {noFilter:true}], ["Ambientes", ambientes], ["Campos", campos], ["Elementos", elementos],
+          ["Pendências", pend], ["Não atribuídos", naoAtrib]];
+}
+
+document.getElementById("xlsxBtn").onclick = ()=>{
+  const blob = XLSX_WRITER(exportSheets());
+  const proj = String(DATA.project||"projeto").replace(/\.rvt$/i,"").replace(/[\\/:*?"<>|]+/g,"_");
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = `${proj}_acabamentos.xlsx`;
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(()=>URL.revokeObjectURL(a.href), 2000);
+};
 
 renderCards();
 renderTable();
