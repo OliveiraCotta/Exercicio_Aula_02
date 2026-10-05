@@ -2049,6 +2049,22 @@ XAML = u"""
         </Setter.Value>
       </Setter>
     </Style>
+    <!-- room group of the preview; attached by code only once there are rows
+         (a GroupStyle declared on the empty DataGrid squeezed its columns) -->
+    <Style x:Key="RoomGroupItem" TargetType="GroupItem">
+      <Setter Property="Template">
+        <Setter.Value>
+          <ControlTemplate TargetType="GroupItem">
+            <Expander Style="{StaticResource RoomGroup}" IsExpanded="False">
+              <Expander.Header>
+                <TextBlock Text="{Binding Name}" Foreground="#D9E8F5" FontWeight="SemiBold"/>
+              </Expander.Header>
+              <ItemsPresenter/>
+            </Expander>
+          </ControlTemplate>
+        </Setter.Value>
+      </Setter>
+    </Style>
   </Window.Resources>
 
   <Grid Margin="18">
@@ -2111,28 +2127,8 @@ XAML = u"""
                     HorizontalGridLinesBrush="#1B2740" Background="#0B1120" BorderBrush="#23324F"
                     RowHeaderWidth="0" SelectionMode="Extended" ToolTipService.ShowDuration="20000"
                     ToolTip="Pré-visualização agrupada por ambiente: clique no ambiente para ver o que muda nele. Todas as linhas vêm marcadas; desmarque uma linha para não gravar aquele valor. Âmbar = substitui um valor existente; rosa = limpa um campo que sobrou; lilás = troca o tipo do identificador do ambiente.">
-            <DataGrid.GroupStyle>
-              <GroupStyle>
-                <GroupStyle.ContainerStyle>
-                  <Style TargetType="GroupItem">
-                    <Setter Property="Template">
-                      <Setter.Value>
-                        <ControlTemplate TargetType="GroupItem">
-                          <Expander Style="{StaticResource RoomGroup}" IsExpanded="False">
-                            <Expander.Header>
-                              <TextBlock Text="{Binding Name}" Foreground="#D9E8F5" FontWeight="SemiBold"/>
-                            </Expander.Header>
-                            <ItemsPresenter/>
-                          </Expander>
-                        </ControlTemplate>
-                      </Setter.Value>
-                    </Setter>
-                  </Style>
-                </GroupStyle.ContainerStyle>
-              </GroupStyle>
-            </DataGrid.GroupStyle>
             <DataGrid.Columns>
-              <DataGridTemplateColumn Header="Aplicar" Width="60">
+              <DataGridTemplateColumn Header="Aplicar" Width="60" MinWidth="60">
                 <DataGridTemplateColumn.CellTemplate>
                   <DataTemplate>
                     <CheckBox HorizontalAlignment="Center" VerticalAlignment="Center"
@@ -2141,14 +2137,14 @@ XAML = u"""
                   </DataTemplate>
                 </DataGridTemplateColumn.CellTemplate>
               </DataGridTemplateColumn>
-              <DataGridTextColumn Header="Ambiente" Binding="{Binding Room}" IsReadOnly="True" Width="75"/>
-              <DataGridTextColumn Header="Nome" Binding="{Binding Name}" IsReadOnly="True" Width="140"/>
-              <DataGridTextColumn Header="Pavimento" Binding="{Binding Level}" IsReadOnly="True" Width="100"/>
-              <DataGridTextColumn Header="Parâmetro" Binding="{Binding Parameter}" IsReadOnly="True" Width="190"/>
-              <DataGridTextColumn Header="Valor atual" Binding="{Binding Current}" IsReadOnly="True" Width="*"/>
-              <DataGridTextColumn Header="Novo valor" Binding="{Binding New}" IsReadOnly="True" Width="*"/>
-              <DataGridTextColumn Header="Alteração" Binding="{Binding Change}" IsReadOnly="True" Width="95"/>
-              <DataGridTextColumn Header="Observação" Binding="{Binding Note}" IsReadOnly="True" Width="170"/>
+              <DataGridTextColumn Header="Ambiente" Binding="{Binding Room}" IsReadOnly="True" Width="75" MinWidth="70"/>
+              <DataGridTextColumn Header="Nome" Binding="{Binding Name}" IsReadOnly="True" Width="140" MinWidth="90"/>
+              <DataGridTextColumn Header="Pavimento" Binding="{Binding Level}" IsReadOnly="True" Width="100" MinWidth="80"/>
+              <DataGridTextColumn Header="Parâmetro" Binding="{Binding Parameter}" IsReadOnly="True" Width="190" MinWidth="160"/>
+              <DataGridTextColumn Header="Valor atual" Binding="{Binding Current}" IsReadOnly="True" Width="*" MinWidth="80"/>
+              <DataGridTextColumn Header="Novo valor" Binding="{Binding New}" IsReadOnly="True" Width="*" MinWidth="80"/>
+              <DataGridTextColumn Header="Alteração" Binding="{Binding Change}" IsReadOnly="True" Width="95" MinWidth="85"/>
+              <DataGridTextColumn Header="Observação" Binding="{Binding Note}" IsReadOnly="True" Width="170" MinWidth="110"/>
             </DataGrid.Columns>
           </DataGrid>
         </Grid>
@@ -2247,6 +2243,9 @@ class RoomFinishWindow(forms.WPFWindow):
             output.print_md(u"**ERRO:** não foi possível ler os identificadores de ambiente: `{}`".format(to_unicode(ex)))
         self._resolve_params()
 
+        self._col_widths = None
+        self._reset_columns()                     # remember the XAML widths before any layout
+        self.Loaded += self._reset_columns
         self.btn_scan.Click += self.on_scan
         self.btn_expand.Click += self.on_expand
         self.btn_collapse.Click += self.on_collapse
@@ -2303,8 +2302,7 @@ class RoomFinishWindow(forms.WPFWindow):
         self.table = None
         self.row_keys = []
         self.btn_update.IsEnabled = False
-        self.btn_expand.IsEnabled = False
-        self.btn_collapse.IsEnabled = False
+        self._group_by_room()                     # no rows: ungrouped, all columns back
 
     # ---------------- READ + ANALYZE ----------------
     def on_scan(self, sender, args):
@@ -2547,10 +2545,16 @@ class RoomFinishWindow(forms.WPFWindow):
         """One collapsible group per room (header = room + summary of its
         changes). If WPF refuses the grouping, the flat list stays usable."""
         grouped = False
+        has_rows = self.table is not None and self.table.Rows.Count > 0
         try:
+            from System.Windows.Controls import GroupStyle
             from System.Windows.Data import CollectionViewSource, PropertyGroupDescription
+            self.grid.GroupStyle.Clear()
             view = CollectionViewSource.GetDefaultView(self.grid.ItemsSource)
-            if view is not None and view.CanGroup:
+            if has_rows and view is not None and view.CanGroup:
+                gs = GroupStyle()
+                gs.ContainerStyle = self.FindResource("RoomGroupItem")
+                self.grid.GroupStyle.Add(gs)
                 view.GroupDescriptions.Clear()
                 view.GroupDescriptions.Add(PropertyGroupDescription("Group"))
                 grouped = True
@@ -2563,9 +2567,21 @@ class RoomFinishWindow(forms.WPFWindow):
                 self.grid.Columns[i].Visibility = Visibility.Collapsed if grouped else Visibility.Visible
         except Exception:
             pass
-        has_rows = self.table is not None and self.table.Rows.Count > 0
+        self._reset_columns()
         self.btn_expand.IsEnabled = grouped and has_rows
         self.btn_collapse.IsEnabled = grouped and has_rows
+
+    def _reset_columns(self, *args):
+        """Re-apply the XAML column widths: WPF can keep columns squeezed to
+        their minimum after a layout pass at a small size."""
+        try:
+            from System.Windows.Controls import DataGridLength
+            if not getattr(self, "_col_widths", None):
+                self._col_widths = [(c.Width.Value, c.Width.UnitType) for c in self.grid.Columns]
+            for col, (value, unit) in zip(self.grid.Columns, self._col_widths):
+                col.Width = DataGridLength(value, unit)
+        except Exception:
+            pass
 
     def _expand_all(self, value):
         try:
