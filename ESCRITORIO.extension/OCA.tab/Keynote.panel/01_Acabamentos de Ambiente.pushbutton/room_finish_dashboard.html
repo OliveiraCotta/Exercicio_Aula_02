@@ -114,7 +114,7 @@
     <div class="eyebrow">Acabamentos dos ambientes // Automação por Keynote</div>
     <h1 id="proj"></h1>
   </div>
-  <div class="stamp mono">GERADO EM <b id="stamp"></b><br>ORIGEM <b>REVIT · PYREVIT</b></div>
+  <div class="stamp mono">GERADO EM <b id="stamp"></b><br>ORIGEM <b id="origin">REVIT · PYREVIT</b></div>
 </header>
 
 <div id="banner"></div>
@@ -129,7 +129,7 @@
 </div>
 <div class="toolrow">
   <button class="btn" id="resetBtn">Limpar filtros</button>
-  <button class="btn" id="xlsxBtn" title="Baixa uma planilha Excel com os ambientes que estão na tabela (respeita os filtros): resumo, campos de cada ambiente, elementos encontrados e pendências.">&#x2913; Baixar Excel</button>
+  <button class="btn" id="xlsxBtn" title="Baixa uma planilha Excel com os ambientes que estão na tabela (respeita os filtros): Resumo e Ambientes (Parede, Piso, Rodapé, Soleira, Teto e Rodateto). Edite a aba Ambientes e use Carregar Excel no Revit para gravar de volta.">&#x2913; Baixar Excel</button>
   <span class="count" id="count"></span>
 </div>
 <div class="tablewrap" id="tableWrap"></div>
@@ -352,6 +352,7 @@ if(UN.length){
 }
 const CS = DATA.containStats || {};
 
+if(DATA.origin) document.getElementById("origin").textContent = DATA.origin.toUpperCase();
 const RULES = DATA.prefixRules || {};
 document.getElementById("meta").innerHTML =
   `<b>Classificação (somente pelo prefixo da Keynote):</b> ` +
@@ -380,14 +381,16 @@ const XLSX_WRITER = (()=>{
   const colRef = i=>{ let s=""; i++; while(i>0){ const m=(i-1)%26; s=String.fromCharCode(65+m)+s; i=(i-m-1)/26|0; } return s; };
   const sheetName = n=>String(n).replace(/[\[\]:*?\/\\]/g," ").slice(0,31);
 
-  // sheets: [[name, rows, {noFilter}]]; filter only on real tables with data rows
+  // sheets: [[name, rows, {noFilter, hidden:[column index]}]]; filter only on
+  // real tables with data rows
   const hasFilter = sh=>sh[1].length > 1 && !(sh[2] && sh[2].noFilter);
 
-  function sheetXml(rows, filtered){
+  function sheetXml(rows, filtered, opt){
+    const hidden = new Set((opt && opt.hidden) || []);
     const ncol = Math.max(1, ...rows.map(r=>r.length));
     const widths = Array.from({length:ncol}, (_,c)=>Math.min(60, Math.max(8,
       ...rows.map(r=>String(r[c]==null?"":r[c]).length + 2))));
-    const cols = `<cols>${widths.map((w,i)=>`<col min="${i+1}" max="${i+1}" width="${w}" customWidth="1"/>`).join("")}</cols>`;
+    const cols = `<cols>${widths.map((w,i)=>`<col min="${i+1}" max="${i+1}" width="${w}" customWidth="1"${hidden.has(i) ? ' hidden="1"' : ""}/>`).join("")}</cols>`;
     const data = rows.map((r,ri)=>`<row r="${ri+1}">${r.map((v,ci)=>{
       if(v==null || v==="") return "";
       const ref = colRef(ci)+(ri+1), st = ri===0 ? ' s="1"' : "";
@@ -440,55 +443,33 @@ const XLSX_WRITER = (()=>{
 <Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">${
         names.map((_,i)=>`<Relationship Id="rId${i+1}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet${i+1}.xml"/>`).join("")}<Relationship Id="rId${names.length+1}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/></Relationships>`],
       ["xl/styles.xml", STYLES],
-      ...sheets.map((sh, i)=>[`xl/worksheets/sheet${i+1}.xml`, sheetXml(sh[1], hasFilter(sh))]),
+      ...sheets.map((sh, i)=>[`xl/worksheets/sheet${i+1}.xml`, sheetXml(sh[1], hasFilter(sh), sh[2])]),
     ];
     return zip(parts);
   };
 })();
 
+/* Ambientes: one column per finish with its values joined by " / " (the
+   "-" placeholder is left out - Revit puts it back). The hidden "Id Revit"
+   column lets "Carregar Excel" in Revit find each room; the file can be
+   edited and loaded back into the model. Keep these headers in sync with
+   EXCEL_FINISH_COLUMNS / EXCEL_ID_HEADER in script.py. */
+const EXCEL_FINISHES = ["wall", "floor", "base", "sill", "ceiling", "crown"];
 function exportSheets(){
   const list = ROOMS.filter(matches);
-  const fields = GROUPS.flatMap(g=>g.slots.map(s=>s.name));
-  const ambientes = [["Número","Nome do ambiente","Pavimento","Fase","Situação","Linhas com valor","Atualizado",
-    ...fields, "Identificador - tipo atual","Identificador - tipo novo","Pendências"]];
-  const campos = [["Número","Nome do ambiente","Pavimento","Acabamento","Campo","Valor encontrado","Valor no Revit","Ação"]];
-  const elementos = [["Número","Nome do ambiente","Acabamento","Categoria","Id do elemento","Keynote","Origem da Keynote","Relação com o ambiente","Vínculo"]];
-  const pend = [["Número","Nome do ambiente","Tipo","Acabamento","Descrição","Id do elemento"]];
+  const fins = EXCEL_FINISHES.filter(k=>FIN.includes(k));
+  const isReal = v=>v && v !== (DATA.placeholder||"-");
+  const ambientes = [["Número","Nome do ambiente","Pavimento", ...fins.map(k=>FIN_LABEL[k]), "Id Revit"]];
   for(const r of list){
-    const base = [r.number, r.name];
-    const before = pend.length;
-    const vals = {};
-    if(r.boundaryMsg) pend.push([...base, "Ambiente", "", r.boundaryMsg, ""]);
-    if(r.writeError) pend.push([...base, "Erro ao gravar", "", r.writeError, ""]);
-    (r.issues||[]).forEach(i=>pend.push([...base, "Keynote ausente", "", `${i.cat}: ${i.msg}`, i.id]));
-    for(const k of FIN){
-      const f = r.finishes[k];
-      (f.slots||[]).forEach(s=>{
-        vals[s.name] = s.new || "";
-        campos.push([...base, r.level, FIN_LABEL[k], s.name, s.new||"", s.current||"", s.change||""]);
-      });
-      (f.items||[]).forEach(i=>elementos.push([...base, FIN_LABEL[k], i.cat, i.id, (i.kn||[]).join(" / "),
-        (i.src||[]).join(", "), (i.rels||[]).join(", "), i.link||""]));
-      (f.mismatches||[]).forEach(m=>pend.push([...base, "Inconsistência", FIN_LABEL[k], m, ""]));
-      (f.warnings||[]).forEach(w=>pend.push([...base, "Aviso", FIN_LABEL[k], w, ""]));
-      if((f.overflow||[]).length) pend.push([...base, "Sem campo livre", FIN_LABEL[k], `Não couberam: ${f.overflow.join(", ")}`, ""]);
-    }
-    (r.others||[]).forEach(o=>elementos.push([...base, "(ignorada)", o.cat, o.id, (o.kn||[]).join(" / "), o.msg, (o.rels||[]).join(", "), o.link||""]));
-    const tags = r.tags||[];
-    tags.filter(t=>t.missing).forEach(t=>pend.push([...base, "Identificador", "", t.msg, t.id]));
-    ambientes.push([...base, r.level, r.phase||"", STATUS_PT[r.status]||r.status, r.rows||0, r.updated ? "Sim" : "Não",
-      ...fields.map(n=>vals[n]||""),
-      tags.map(t=>t.current).join(" / "), tags.map(t=>t.new + (t.missing ? " (não encontrado)" : "")).join(" / "),
-      pend.length - before]);
+    ambientes.push([r.number, r.name, r.level,
+      ...fins.map(k=>(r.finishes[k].slots||[]).map(s=>s.new).filter(isReal).join(DATA.separator||" / ")),
+      r.id]);
   }
   const resumo = [["Indicador","Ambientes exportados","Total do relatório"],
     ...STATS.map(s=>[s.l, list.filter(s.f).length, ROOMS.filter(s.f).length]),
     [], ["Projeto", String(DATA.project||"").replace(/\.rvt$/i,"")], ["Gerado em", DATA.generated||""],
     ["Ambientes exportados", `${list.length} de ${ROOMS.length} (filtros da tabela aplicados)`]];
-  const naoAtrib = [["Categoria","Id do elemento","Keynote","Motivo","Vínculo"],
-    ...(DATA.unassigned||[]).map(u=>[u.cat, u.id, u.kn||"", u.reason, u.link||""])];
-  return [["Resumo", resumo, {noFilter:true}], ["Ambientes", ambientes], ["Campos", campos], ["Elementos", elementos],
-          ["Pendências", pend], ["Não atribuídos", naoAtrib]];
+  return [["Resumo", resumo, {noFilter:true}], ["Ambientes", ambientes, {hidden:[ambientes[0].length-1]}]];
 }
 
 document.getElementById("xlsxBtn").onclick = ()=>{

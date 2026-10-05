@@ -72,6 +72,7 @@ Analise, confira a pré-visualização e confirme."""
 
 import os
 import re
+import sys
 import math
 import json
 import codecs
@@ -1506,7 +1507,9 @@ def compute_changes(records, targets, tag_index=None):
     least one Keynote was found, the finish is rewritten as a whole: fields
     past the last Keynote are cleared ("Clear"). When nothing was found, the
     real values already in the room are kept. Keynotes beyond the last field
-    overflow and are reported. Nothing is written here.
+    overflow and are reported. Nothing is written here. A finish loaded
+    from Excel ("exact") is the complete list even when empty: a value
+    removed in the file is cleared.
 
     On top of that (step 2, after the values are known):
       Rule A - N = the last row (field number) holding a real value in any
@@ -1531,7 +1534,7 @@ def compute_changes(records, targets, tag_index=None):
                 new_vals[i] = kv
             overflow = keys[len(available):]
             curs = [t.read(room) if t is not None else u"" for t in fields]
-            if keys:
+            if keys or (fin and fin.get("exact")):
                 final = new_vals
             else:
                 # nothing found for this finish: real values stay, '-' is re-planned
@@ -1734,7 +1737,7 @@ def worksharing_block(room):
 
 
 def build_json(records, targets, mode, keynote_texts, problems, contain_stats=None, search_above_m=SEARCH_ABOVE_M,
-               tag_index=None):
+               tag_index=None, origin=None):
     rooms = []
     for rec in records:
         info = rec["info"]
@@ -1789,6 +1792,7 @@ def build_json(records, targets, mode, keynote_texts, problems, contain_stats=No
         "tagFamilies": list(tag_index.families.keys()) if tag_index else [],
         "tagMissing": [{"family": f, "types": m} for f, m in (tag_index.missing() if tag_index else [])],
         "placeholder": PLACEHOLDER,
+        "origin": origin or u"",
         "containStats": dict((k, v) for k, v in (contain_stats or {}).items() if k != "unassigned"),
         "unassigned": (contain_stats or {}).get("unassigned", []),
     }
@@ -1824,6 +1828,364 @@ def open_in_browser(path):
         return webbrowser.open("file:///" + path.replace("\\", "/"))
     except Exception:
         return False
+
+
+# ==================================================================
+# Excel round trip - the dashboard's "Baixar Excel" file, edited by the
+# user, loaded back with "Carregar Excel". Read only here: it only builds
+# room records; the preview / confirmation / transaction are the same as
+# after Analisar Modelo.
+# ==================================================================
+EXCEL_SHEET = u"Ambientes"
+EXCEL_ID_HEADER = u"Id Revit"
+# Finish columns, in the order the dashboard writes them (headers are the
+# FINISH_LABELS texts). Keep in sync with EXCEL_FINISHES in the HTML.
+EXCEL_FINISH_COLUMNS = ["wall", "floor", "base", "sill", "ceiling", "crown"]
+EXCEL_SPLIT_RE = re.compile(u"[/;,\r\n]+")
+
+_XML_TAG_RE = re.compile(r"<[^>]*>|[^<]+")
+_XML_ATTR_RE = re.compile(r"([^\s=/]+)\s*=\s*(?:\"([^\"]*)\"|'([^']*)')")
+_XML_ENT_RE = re.compile(r"&(#[xX][0-9A-Fa-f]+|#[0-9]+|[A-Za-z]+);")
+_XML_ENTS = {"lt": u"<", "gt": u">", "amp": u"&", "quot": u"\"", "apos": u"'"}
+_CELL_REF_RE = re.compile(r"^\$?([A-Za-z]+)\$?(\d+)$")
+
+
+def _xml_unescape(text):
+    def ent(m):
+        e = m.group(1)
+        if e[0] == "#":
+            try:
+                n = int(e[2:], 16) if e[1] in "xX" else int(e[1:])
+                try:
+                    return unichr(n)
+                except NameError:
+                    return chr(n)
+            except (ValueError, OverflowError):
+                return u""
+        return _XML_ENTS.get(e, m.group(0))
+    return _XML_ENT_RE.sub(ent, text) if u"&" in text else text
+
+
+def _xml_events(text):
+    """('start'|'end'|'text', local name or text, attrs) for the plain
+    machine-written XML of an .xlsx part. No DTD / CDATA support needed."""
+    for m in _XML_TAG_RE.finditer(text):
+        tok = m.group(0)
+        if tok[0] != u"<":
+            yield "text", _xml_unescape(tok), None
+            continue
+        if tok.startswith(u"<?") or tok.startswith(u"<!"):
+            continue
+        if tok.startswith(u"</"):
+            yield "end", tok[2:-1].strip().split(u":")[-1], None
+            continue
+        body = tok[1:-1]
+        closed = body.endswith(u"/")
+        if closed:
+            body = body[:-1]
+        parts = body.split(None, 1)
+        if not parts:
+            continue
+        name = parts[0].split(u":")[-1]
+        attrs = {}
+        if len(parts) > 1:
+            for a in _XML_ATTR_RE.finditer(parts[1]):
+                v = a.group(2) if a.group(2) is not None else a.group(3)
+                attrs[a.group(1).split(u":")[-1]] = _xml_unescape(v)
+        yield "start", name, attrs
+        if closed:
+            yield "end", name, None
+
+
+def _zip_texts(path):
+    """{part name: text} of the .xlsx (a zip). .NET first - it opens the file
+    even while Excel has it open; Python's zipfile as fallback."""
+    if sys.platform == "cli":
+        try:
+            clr.AddReference("System.IO.Compression")
+            from System.IO import File, FileMode, FileAccess, FileShare, StreamReader
+            from System.IO.Compression import ZipArchive, ZipArchiveMode
+            from System.Text import Encoding
+            out = {}
+            fs = File.Open(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite)
+            try:
+                za = ZipArchive(fs, ZipArchiveMode.Read)
+                try:
+                    for e in za.Entries:
+                        name = to_unicode(e.FullName).replace(u"\\", u"/")
+                        if name.lower().endswith(u".xml") or name.lower().endswith(u".rels"):
+                            sr = StreamReader(e.Open(), Encoding.UTF8)
+                            try:
+                                out[name] = to_unicode(sr.ReadToEnd())
+                            finally:
+                                sr.Dispose()
+                finally:
+                    za.Dispose()
+            finally:
+                fs.Dispose()
+            return out
+        except Exception:
+            pass
+    import zipfile
+    out = {}
+    zf = zipfile.ZipFile(path, "r")
+    try:
+        for name in zf.namelist():
+            if name.lower().endswith(".xml") or name.lower().endswith(".rels"):
+                out[to_unicode(name).replace(u"\\", u"/")] = zf.read(name).decode("utf-8")
+    finally:
+        zf.close()
+    return out
+
+
+def _col_index(letters):
+    n = 0
+    for ch in letters.upper():
+        n = n * 26 + (ord(ch) - 64)
+    return n - 1
+
+
+def _num_text(v):
+    """'101' stays '101'; '101.0' (a number retyped in Excel) -> '101'."""
+    try:
+        f = float(v)
+    except (TypeError, ValueError):
+        return v
+    if f == int(f) and abs(f) < 1e15:
+        return unicode(int(f))
+    return v
+
+
+def read_xlsx(path):
+    """OrderedDict sheet name -> rows (lists of unicode, '' for empty cells)."""
+    parts = _zip_texts(path)
+    if u"xl/workbook.xml" not in parts:
+        raise ValueError(u"o arquivo não é uma planilha .xlsx")
+    rels = {}
+    for kind, name, attrs in _xml_events(parts.get(u"xl/_rels/workbook.xml.rels", u"")):
+        if kind == "start" and name == "Relationship":
+            tgt = attrs.get("Target", u"")
+            tgt = tgt.lstrip(u"/") if tgt.startswith(u"/") else u"xl/" + tgt
+            rels[attrs.get("Id")] = tgt
+    shared, cur, skip = [], None, 0
+    for kind, name, attrs in _xml_events(parts.get(u"xl/sharedStrings.xml", u"")):
+        if kind == "start" and name == "si":
+            cur = []
+        elif kind == "start" and name in ("rPh", "phoneticPr"):
+            skip += 1
+        elif kind == "end" and name in ("rPh", "phoneticPr"):
+            skip -= 1
+        elif kind == "end" and name == "si":
+            shared.append(u"".join(cur))
+            cur = None
+        elif kind == "text" and cur is not None and not skip:
+            cur.append(name)
+    sheets = OrderedDict()
+    for kind, name, attrs in _xml_events(parts[u"xl/workbook.xml"]):
+        if kind == "start" and name == "sheet":
+            sheets[attrs.get("name", u"")] = rels.get(attrs.get("id"))
+    out = OrderedDict()
+    for sname, part in sheets.items():
+        cells = {}
+        row_i, col_i, ctype, buf, in_val, skip = -1, -1, None, None, False, 0
+        for kind, name, attrs in _xml_events(parts.get(part or u"", u"")):
+            if kind == "start":
+                if name == "row":
+                    r = attrs.get("r")
+                    row_i = int(r) - 1 if r and r.isdigit() else row_i + 1
+                    col_i = -1
+                elif name == "c":
+                    m = _CELL_REF_RE.match(attrs.get("r", u""))
+                    if m:
+                        col_i = _col_index(m.group(1))
+                        row_i = int(m.group(2)) - 1
+                    else:
+                        col_i += 1
+                    ctype, buf = attrs.get("t", u"n"), []
+                elif name in ("v", "t") and buf is not None and not skip:
+                    in_val = True
+                elif name == "rPh":
+                    skip += 1
+            elif kind == "end":
+                if name in ("v", "t"):
+                    in_val = False
+                elif name == "rPh":
+                    skip -= 1
+                elif name == "c" and buf is not None:
+                    raw = u"".join(buf)
+                    if ctype == "s":
+                        try:
+                            val = shared[int(raw)]
+                        except (ValueError, IndexError):
+                            val = u""
+                    elif ctype in ("inlineStr", "str"):
+                        val = raw
+                    elif ctype == "b":
+                        val = u"VERDADEIRO" if raw.strip() == u"1" else u"FALSO"
+                    elif ctype == "e":
+                        val = u""
+                    else:
+                        val = _num_text(raw.strip())
+                    if val.strip():
+                        cells[(row_i, col_i)] = val.strip()
+                    buf = None
+            elif kind == "text" and in_val and buf is not None:
+                buf.append(name)
+        rows = []
+        if cells:
+            n_rows = max(r for r, _ in cells) + 1
+            n_cols = max(c for _, c in cells) + 1
+            rows = [[cells.get((r, c), u"") for c in range(n_cols)] for r in range(n_rows)]
+        out[sname] = rows
+    return out
+
+
+def _fold(text):
+    """Header / name comparison: no accents, lower case, single spaces."""
+    t = to_unicode(text).strip().lower()
+    for a, b in ((u"áàâãä", u"a"), (u"éèêë", u"e"), (u"íìîï", u"i"), (u"óòôõö", u"o"),
+                 (u"úùûü", u"u"), (u"ç", u"c")):
+        for ch in a:
+            t = t.replace(ch, b)
+    return u" ".join(t.split())
+
+
+def excel_project(sheets):
+    """Project name written in the Resumo sheet, or u''."""
+    for name, rows in sheets.items():
+        if _fold(name) == u"resumo":
+            for r in rows:
+                if len(r) > 1 and _fold(r[0]) == u"projeto":
+                    return r[1]
+    return u""
+
+
+def _excel_header(rows):
+    """(header row index, {column: field}) - field = 'number' | 'name' |
+    'level' | 'id' | finish key. None when no header is found."""
+    names = {u"numero": "number", u"nome do ambiente": "name", u"nome": "name",
+             u"pavimento": "level", u"nivel": "level", _fold(EXCEL_ID_HEADER): "id"}
+    for key, label in FINISH_LABELS.items():
+        names[_fold(label)] = key
+        names[_fold(u"Acabamento de " + label)] = key
+    for i, row in enumerate(rows[:15]):
+        cols = {}
+        for c, v in enumerate(row):
+            f = names.get(_fold(v.split(u"(")[0]))
+            if f and f not in cols.values():
+                cols[c] = f
+        if "number" in cols.values():
+            return i, cols
+    return None
+
+
+def excel_keys(text, key, keynote_texts):
+    """Cell text -> (keys in the order typed, warnings). '-' is ignored (the
+    placeholder is re-planned); a value whose prefix belongs to another
+    finish is not written."""
+    keys, warns = [], []
+    for raw in EXCEL_SPLIT_RE.split(to_unicode(text)):
+        raw = raw.strip()
+        if not raw or raw == PLACEHOLDER:
+            continue
+        norm, fk = classify(raw)
+        if fk is None:
+            warns.append(u"'{}' não tem prefixo de acabamento ({}) - ignorado.".format(
+                raw, u", ".join(PREFIX_RULES.keys())))
+        elif fk != key:
+            warns.append(u"'{}' é de {} e está na coluna {} - ignorado.".format(
+                norm, FINISH_LABELS[fk], FINISH_LABELS[key]))
+        elif norm not in keys:
+            keys.append(norm)
+            if keynote_texts and norm not in keynote_texts:
+                warns.append(u"'{}' não existe no arquivo de Keynotes carregado.".format(norm))
+    return keys, warns
+
+
+def excel_records(sheets, rooms, keynote_texts):
+    """Rows of the Ambientes sheet -> (room records, problems). Each row is
+    the complete list for the finish columns present in the file: a value
+    removed in Excel is cleared in the room. Finishes without a column and
+    rooms without a row are not touched. records is None when the file
+    can't be used at all."""
+    rows, sname = None, None
+    for name, r in sheets.items():
+        if _fold(name) == _fold(EXCEL_SHEET):
+            rows, sname = r, name
+    if rows is None:
+        for name, r in sheets.items():
+            if _excel_header(r):
+                rows, sname = r, name
+                break
+    if rows is None:
+        return None, [u"A planilha não tem a aba '{}'.".format(EXCEL_SHEET)]
+    head = _excel_header(rows)
+    if head is None:
+        return None, [u"A aba '{}' não tem a coluna 'Número'.".format(sname)]
+    h, cols = head
+    fin_cols = [(c, f) for c, f in sorted(cols.items()) if f in FINISH_SLOTS]
+    if not fin_cols:
+        return None, [u"A aba '{}' não tem nenhuma coluna de acabamento ({}).".format(
+            sname, u", ".join(FINISH_LABELS[k] for k in EXCEL_FINISH_COLUMNS))]
+    col_of = dict((f, c) for c, f in cols.items())
+
+    by_id, by_num, by_num_lvl = {}, {}, {}
+    for room in rooms:
+        num = to_unicode(room.Number).strip()
+        by_id[eid_int(room.Id)] = room
+        by_num.setdefault(_fold(num), []).append(room)
+        by_num_lvl.setdefault((_fold(num), _fold(room_info(room)["level"])), []).append(room)
+
+    def cell(row, field):
+        c = col_of.get(field)
+        return row[c].strip() if c is not None and c < len(row) else u""
+
+    records, problems, seen = [], [], {}
+    for i, row in enumerate(rows[h + 1:]):
+        line = h + i + 2                                 # Excel row number
+        num, lvl, rid = cell(row, "number"), cell(row, "level"), cell(row, "id")
+        if not any(v.strip() for v in row):
+            continue
+        where = u"Linha {} (ambiente '{}')".format(line, num)
+        room = None
+        try:
+            room = by_id.get(int(float(rid))) if rid else None
+        except (ValueError, OverflowError):
+            room = None
+        if room is not None and num and _fold(room.Number) != _fold(num):
+            room = None                                  # id from another file / room
+        if room is None:
+            if not num:
+                problems.append(u"Linha {}: sem número de ambiente - ignorada.".format(line))
+                continue
+            cands = by_num_lvl.get((_fold(num), _fold(lvl)), []) if lvl else []
+            if not cands:
+                cands = by_num.get(_fold(num), [])
+            if not cands:
+                problems.append(u"{}: não existe no projeto - ignorada.".format(where))
+                continue
+            if len(cands) > 1:
+                problems.append(u"{}: há {} ambientes com esse número - mantenha a coluna '{}' ou o "
+                                u"Pavimento do arquivo exportado - ignorada.".format(where, len(cands), EXCEL_ID_HEADER))
+                continue
+            room = cands[0]
+        rkey = eid_int(room.Id)
+        if rkey in seen:
+            problems.append(u"{}: o mesmo ambiente já está na linha {} - ignorada.".format(where, seen[rkey]))
+            continue
+        seen[rkey] = line
+        fins = {}
+        for c, key in fin_cols:
+            keys, warns = excel_keys(row[c] if c < len(row) else u"", key, keynote_texts)
+            for w in warns:
+                if u"arquivo de Keynotes" not in w:
+                    problems.append(u"{}, {}: {}".format(where, FINISH_LABELS[key], w))
+            fins[key] = {"state": "ok" if keys else "missing", "keys": keys, "items": [],
+                         "notes": [u"valores do Excel (linha {})".format(line)],
+                         "warnings": warns, "mismatches": [], "exact": True}
+        records.append({"room": room, "info": room_info(room), "boundary": "ok", "finishes": fins,
+                        "issues": [], "others": [], "error": None, "raw": None, "excel_line": line})
+    return records, problems
 
 
 def log_link(item):
@@ -2104,11 +2466,14 @@ XAML = u"""
             <TextBlock Style="{StaticResource HelpTitle}" Text="LINHAS COM &quot;-&quot; E IDENTIFICADOR DO AMBIENTE"/>
             <TextBlock Style="{StaticResource HelpBody}" Text="• Cada número de campo é uma linha do identificador: linha 01 = Parede 01, Piso 01, Teto 01, Rodapé 01, Rodateto 01 e Soleira 01; linha 02 = os campos 02; e assim por diante.&#10;• Se pelo menos uma linha tiver valor, os campos vazios das linhas preenchidas recebem &quot;-&quot;. Linhas sem nenhum valor continuam vazias. Ambiente sem nenhum acabamento: nada muda.&#10;• O número de linhas com valor escolhe o tipo do identificador: 1 linha = REVESTIMENTOS 01, 2 linhas = REVESTIMENTOS 02 ... até 05. Vale para nomes como &quot;REVESTIMENTOS 3X&quot; ou com outros textos antes e depois.&#10;• Só os identificadores já colocados no projeto são trocados, sempre dentro da mesma família. Nada é criado.&#10;• Se o tipo necessário não existir na família, a ferramenta avisa qual tipo está faltando e não troca aquele identificador."/>
 
+            <TextBlock Style="{StaticResource HelpTitle}" Text="EXCEL (BAIXAR E CARREGAR)"/>
+            <TextBlock Style="{StaticResource HelpBody}" Text="• No relatório HTML, Baixar Excel gera as abas Resumo e Ambientes (Número, Nome do ambiente, Pavimento, Parede, Piso, Rodapé, Soleira, Teto e Rodateto). Só os ambientes visíveis na tabela entram.&#10;• Cada célula de acabamento traz os valores separados por &quot; / &quot; (ex.: RE01 / RE02). A ordem da célula é a ordem dos campos 01, 02, 03...&#10;• Carregar Excel lê a planilha editada e mostra a pré-visualização. A célula é a lista completa: valor apagado no Excel é limpo no ambiente. Ambientes fora da planilha não mudam.&#10;• O &quot;-&quot; e o tipo do identificador são recalculados no Revit; não precisam ser digitados.&#10;• Valor com prefixo de outro acabamento (ex.: PI01 na coluna Parede) ou sem prefixo conhecido é ignorado e listado no aviso.&#10;• Os ambientes são localizados pela coluna oculta Id Revit; sem ela, pelo Número (e Pavimento). Número, nome e pavimento não são alterados pela planilha."/>
+
             <TextBlock Style="{StaticResource HelpTitle}" Text="PROTEÇÕES"/>
             <TextBlock Style="{StaticResource HelpBody}" Text="• Piso, rodapé e parede do pavimento de cima ou de baixo não entram no ambiente.&#10;• Nada é gravado até você clicar em Atualizar Ambientes.&#10;• Valores diferentes dos atuais aparecem em âmbar na pré-visualização e na confirmação antes de gravar; desmarque a linha para manter o valor atual.&#10;• Cada acabamento é regravado por inteiro: se sobrar um campo com valor antigo (ex.: Parede 04 quando agora só há 3 revestimentos), ele aparece em rosa como Limpar.&#10;• Se houver mais Keynotes do que campos, as que sobrarem aparecem como aviso - nada é descartado sem aviso.&#10;• Se nada for encontrado para um parâmetro, o valor atual é mantido - nunca é apagado.&#10;• Tudo é gravado em uma única transação: Ctrl+Z no Revit desfaz a atualização inteira.&#10;• Ambientes em uso por outro usuário (workset) aparecem bloqueados na pré-visualização."/>
 
             <TextBlock Style="{StaticResource HelpTitle}" Text="PASSO A PASSO"/>
-            <TextBlock Style="{StaticResource HelpBody}" Text="1. Analisar Modelo - lê todos os ambientes e já mostra a pré-visualização: valor atual e novo valor de cada parâmetro. Não altera nada.&#10;2. Confira a lista. Todas as linhas vêm marcadas; desmarque as que não quer gravar. Linhas em âmbar substituem um valor existente.&#10;3. Atualizar Ambientes - grava as linhas marcadas.&#10;4. Abrir Relatório HTML - resumo, filtros e o detalhe de onde veio cada Keynote."/>
+            <TextBlock Style="{StaticResource HelpBody}" Text="1. Analisar Modelo - lê todos os ambientes e já mostra a pré-visualização: valor atual e novo valor de cada parâmetro. Não altera nada.&#10;2. Confira a lista. Todas as linhas vêm marcadas; desmarque as que não quer gravar. Linhas em âmbar substituem um valor existente.&#10;3. Atualizar Ambientes - grava as linhas marcadas.&#10;4. Abrir Relatório HTML - resumo, filtros e o detalhe de onde veio cada Keynote.&#10;5. Opcional: Baixar Excel no relatório, editar e Carregar Excel aqui - volta para o passo 2 com os valores da planilha."/>
 
             <TextBlock Style="{StaticResource HelpTitle}" Text="QUANDO ALGO NÃO APARECE"/>
             <TextBlock Style="{StaticResource HelpBody}" Text="• Forro não encontrado: aumente a margem de busca do forro ou o Limit Offset do ambiente e analise de novo.&#10;• Elemento sem Keynote: aparece no relatório como &quot;Keynote ausente&quot;.&#10;• Elemento com Keynote de acabamento fora de qualquer ambiente: seção &quot;Não atribuídos a nenhum ambiente&quot; no relatório.&#10;• Prefixo que não combina com a categoria (ex.: RE01 num piso): aparece como inconsistência, mas o valor é gravado pela regra do prefixo.&#10;• No relatório, clique num ambiente para ver cada elemento encontrado, a Keynote e o motivo de cada valor ignorado."/>
@@ -2120,6 +2485,8 @@ XAML = u"""
     <StackPanel Grid.Row="3" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,14,0,0">
       <Button x:Name="btn_scan" Content="Analisar Modelo" ToolTipService.ShowDuration="20000"
               ToolTip="Lê o modelo, analisa todos os ambientes e mostra a pré-visualização com o valor atual e o novo valor de cada parâmetro. Não altera nada."/>
+      <Button x:Name="btn_excel" Content="Carregar Excel" ToolTipService.ShowDuration="20000"
+              ToolTip="Lê a planilha baixada no relatório HTML (Baixar Excel), já editada, e mostra a pré-visualização com esses valores. Não altera nada até você clicar em Atualizar Ambientes."/>
       <Button x:Name="btn_update" Content="Atualizar Ambientes" IsEnabled="False" Foreground="#3DDCB4" BorderBrush="#2F7F6B"
               ToolTipService.ShowDuration="20000"
               ToolTip="Grava as linhas marcadas na pré-visualização, em uma única transação (Ctrl+Z desfaz)."/>
@@ -2144,6 +2511,7 @@ class RoomFinishWindow(forms.WPFWindow):
         self.search_above_m = SEARCH_ABOVE_M
         self.keynote_texts = {}
         self.contain_stats = {"tested": 0, "sweeps": 0, "sweeps_in_rooms": 0, "unassigned": []}
+        self.origin = None          # None = model scan; u"Excel: <file>" after Carregar Excel
 
         self.tb_margin.Text = fmt_m(SEARCH_ABOVE_M)
         self.tb_help_rules.Text = help_rules_text()
@@ -2158,6 +2526,7 @@ class RoomFinishWindow(forms.WPFWindow):
         self._resolve_params()
 
         self.btn_scan.Click += self.on_scan
+        self.btn_excel.Click += self.on_load_excel
         self.btn_update.Click += self.on_update
         self.btn_report.Click += self.on_report
         self.btn_cancel.Click += self.on_cancel
@@ -2221,6 +2590,7 @@ class RoomFinishWindow(forms.WPFWindow):
             return
         self.search_above_m = margin
         self.mode = KEYNOTE_MODE
+        self.origin = None
         self._invalidate_preview()
         output.print_md(u"**[2/6] Ambientes coletados:** {} ambiente(s).".format(len(self.rooms)))
         try:
@@ -2292,6 +2662,60 @@ class RoomFinishWindow(forms.WPFWindow):
         self.tb_status.Text = self._summary() + u" " + self.tb_status.Text
         self._alert_missing_tags()
 
+    # ---------------- READ from Excel ----------------
+    def on_load_excel(self, sender, args):
+        """The dashboard's Excel, edited, back into the preview. Same rules as
+        the scan from here on: '-' rows, REVESTIMENTOS type, confirmation."""
+        path = forms.pick_file(file_ext="xlsx", title=u"Carregar Excel de acabamentos")
+        if not path:
+            return
+        fname = os.path.basename(path)
+        try:
+            sheets = read_xlsx(path)
+        except Exception as ex:
+            forms.alert(u"Não foi possível ler '{}':\n\n{}".format(fname, to_unicode(ex)))
+            return
+        proj = excel_project(sheets)
+        here = re.sub(u"(?i)\\.rvt$", u"", to_unicode(doc.Title))
+        if proj and _fold(proj) != _fold(here):
+            if not forms.alert(u"Esta planilha foi gerada no projeto '{}' e o projeto aberto é '{}'.\n\n"
+                               u"Carregar mesmo assim? Os ambientes são localizados pelo Id e pelo número."
+                               .format(proj, here), yes=True, no=True):
+                return
+        if not self.keynote_texts:
+            self.keynote_texts = dict((k.upper(), v) for k, v in load_keynote_table(doc).items())
+        records, problems = excel_records(sheets, self.rooms, self.keynote_texts)
+        if records is None:
+            forms.alert(u"'{}' não pode ser carregado:\n\n{}".format(fname, u"\n".join(problems)))
+            return
+        output.print_md(u"**Excel carregado:** `{}` - {} ambiente(s), {} aviso(s).".format(
+            fname, len(records), len(problems)))
+        for msg in problems[:80]:
+            output.print_md(u"- {}".format(msg))
+        if len(problems) > 80:
+            output.print_md(u"- ... e mais {}.".format(len(problems) - 80))
+        if not records:
+            forms.alert(u"Nenhum ambiente da planilha foi encontrado no projeto.\n\n" +
+                        u"\n".join(problems[:15]))
+            return
+        self._invalidate_preview()
+        self.origin = u"Excel: " + fname
+        self.contain_stats = {"tested": 0, "sweeps": 0, "sweeps_in_rooms": 0, "unassigned": []}
+        self.records = sort_records(records)
+        compute_changes(self.records, self.targets, self.tag_index)
+        for r in self.records:
+            r["status"] = room_status(r)
+        self._write_report()
+        self.btn_report.IsEnabled = True
+        self.show_preview()
+        self.tb_status.Text = (u"Excel '{}': {} ambiente(s) carregados{}. ".format(
+            fname, len(records), u", {} linha(s)/valor(es) ignorados - veja o log".format(len(problems))
+            if problems else u"") + self.tb_status.Text)
+        if problems:
+            forms.alert(u"Alguns valores da planilha foram ignorados:\n\n" + u"\n".join(problems[:15]) +
+                        (u"\n... e mais {} (veja o log).".format(len(problems) - 15) if len(problems) > 15 else u""))
+        self._alert_missing_tags()
+
     def _alert_missing_tags(self):
         """Rule B error handling: tell exactly which identifier type is missing."""
         need = OrderedDict()
@@ -2339,7 +2763,7 @@ class RoomFinishWindow(forms.WPFWindow):
     def _write_report(self):
         try:
             data = build_json(self.records, self.targets, self.mode, self.keynote_texts, self.problems,
-                              self.contain_stats, self.search_above_m, self.tag_index)
+                              self.contain_stats, self.search_above_m, self.tag_index, self.origin)
             write_report(data)
         except Exception as ex:
             output.print_md(u"**ERRO:** não foi possível gerar o relatório HTML: `{}`".format(to_unicode(ex)))
