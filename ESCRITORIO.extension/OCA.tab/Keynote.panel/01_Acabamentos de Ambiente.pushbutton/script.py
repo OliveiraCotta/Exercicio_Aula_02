@@ -2373,6 +2373,44 @@ XAML = u"""
         </DataTrigger>
       </Style.Triggers>
     </Style>
+    <Style x:Key="RoomGroup" TargetType="Expander">
+      <Setter Property="Template">
+        <Setter.Value>
+          <ControlTemplate TargetType="Expander">
+            <DockPanel>
+              <ToggleButton DockPanel.Dock="Top" Cursor="Hand" Content="{TemplateBinding Header}"
+                            IsChecked="{Binding IsExpanded, Mode=TwoWay, RelativeSource={RelativeSource TemplatedParent}}">
+                <ToggleButton.Template>
+                  <ControlTemplate TargetType="ToggleButton">
+                    <Border x:Name="bd" Background="#141E33" BorderBrush="#23324F" BorderThickness="0,0,0,1" Padding="8,6">
+                      <DockPanel>
+                        <TextBlock x:Name="arrow" Text="&#x25B6;" Foreground="#65E3FF" Width="20" FontSize="10"
+                                   VerticalAlignment="Center"/>
+                        <ContentPresenter VerticalAlignment="Center"/>
+                      </DockPanel>
+                    </Border>
+                    <ControlTemplate.Triggers>
+                      <Trigger Property="IsChecked" Value="True">
+                        <Setter TargetName="arrow" Property="Text" Value="&#x25BC;"/>
+                      </Trigger>
+                      <Trigger Property="IsMouseOver" Value="True">
+                        <Setter TargetName="bd" Property="Background" Value="#16304A"/>
+                      </Trigger>
+                    </ControlTemplate.Triggers>
+                  </ControlTemplate>
+                </ToggleButton.Template>
+              </ToggleButton>
+              <ContentPresenter x:Name="body" Visibility="Collapsed"/>
+            </DockPanel>
+            <ControlTemplate.Triggers>
+              <Trigger Property="IsExpanded" Value="True">
+                <Setter TargetName="body" Property="Visibility" Value="Visible"/>
+              </Trigger>
+            </ControlTemplate.Triggers>
+          </ControlTemplate>
+        </Setter.Value>
+      </Setter>
+    </Style>
   </Window.Resources>
 
   <Grid Margin="18">
@@ -2419,14 +2457,42 @@ XAML = u"""
             </StackPanel>
           </Grid>
 
-          <TextBlock Grid.Row="1" x:Name="tb_status" TextWrapping="Wrap" FontSize="12" Foreground="#3DDCB4" Margin="0,4,0,8"
-                     Text="Clique em Analisar Modelo para começar. Nada é gravado até você clicar em Atualizar Ambientes."/>
+          <DockPanel Grid.Row="1" Margin="0,4,0,8">
+            <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Bottom" Margin="12,0,0,0">
+              <Button x:Name="btn_expand" Content="Expandir todos" MinWidth="0" Height="26" Margin="0,0,6,0" FontSize="11"
+                      IsEnabled="False" ToolTip="Mostra os campos de todos os ambientes."/>
+              <Button x:Name="btn_collapse" Content="Recolher todos" MinWidth="0" Height="26" Margin="0" FontSize="11"
+                      IsEnabled="False" ToolTip="Mostra só uma linha por ambiente."/>
+            </StackPanel>
+            <TextBlock x:Name="tb_status" TextWrapping="Wrap" FontSize="12" Foreground="#3DDCB4" VerticalAlignment="Bottom"
+                       Text="Clique em Analisar Modelo para começar. Nada é gravado até você clicar em Atualizar Ambientes."/>
+          </DockPanel>
 
           <DataGrid Grid.Row="2" x:Name="grid" AutoGenerateColumns="False" CanUserAddRows="False"
                     CanUserDeleteRows="False" HeadersVisibility="Column" GridLinesVisibility="Horizontal"
                     HorizontalGridLinesBrush="#1B2740" Background="#0B1120" BorderBrush="#23324F"
                     RowHeaderWidth="0" SelectionMode="Extended" ToolTipService.ShowDuration="20000"
-                    ToolTip="Pré-visualização, um campo por linha: todas vêm marcadas. Desmarque uma linha para não gravar aquele valor. Âmbar = substitui um valor existente; rosa = limpa um campo que sobrou; lilás = troca o tipo do identificador do ambiente.">
+                    ToolTip="Pré-visualização agrupada por ambiente: clique no ambiente para ver o que muda nele. Todas as linhas vêm marcadas; desmarque uma linha para não gravar aquele valor. Âmbar = substitui um valor existente; rosa = limpa um campo que sobrou; lilás = troca o tipo do identificador do ambiente.">
+            <DataGrid.GroupStyle>
+              <GroupStyle>
+                <GroupStyle.ContainerStyle>
+                  <Style TargetType="GroupItem">
+                    <Setter Property="Template">
+                      <Setter.Value>
+                        <ControlTemplate TargetType="GroupItem">
+                          <Expander Style="{StaticResource RoomGroup}" IsExpanded="False">
+                            <Expander.Header>
+                              <TextBlock Text="{Binding Name}" Foreground="#D9E8F5" FontWeight="SemiBold"/>
+                            </Expander.Header>
+                            <ItemsPresenter/>
+                          </Expander>
+                        </ControlTemplate>
+                      </Setter.Value>
+                    </Setter>
+                  </Style>
+                </GroupStyle.ContainerStyle>
+              </GroupStyle>
+            </DataGrid.GroupStyle>
             <DataGrid.Columns>
               <DataGridTemplateColumn Header="Aplicar" Width="60">
                 <DataGridTemplateColumn.CellTemplate>
@@ -2500,6 +2566,27 @@ XAML = u"""
 """
 
 
+def group_header(rec, rows):
+    """Preview group title: 'Ambiente 1 · TESTE 02 · TÉRREO - 3 alterações:
+    2 a preencher, 1 identificador a trocar'."""
+    info = rec["info"]
+    kinds = [r["Kind"] for r in rows]
+    parts = []
+    for kind, one, many in (("Fill", u"a preencher", u"a preencher"), ("Overwrite", u"a substituir", u"a substituir"),
+                            ("Clear", u"a limpar", u"a limpar"),
+                            ("Tag", u"identificador a trocar", u"identificadores a trocar"),
+                            ("TagMissing", u"tipo de identificador ausente", u"tipos de identificador ausentes")):
+        n = kinds.count(kind)
+        if n:
+            parts.append(u"{} {}".format(n, one if n == 1 else many))
+    blocked = len([1 for r in rows if not bool(r["Editable"]) and r["Kind"] != "TagMissing"])
+    if blocked:
+        parts.append(u"{} bloqueada(s)".format(blocked))
+    title = u" · ".join(x for x in (u"Ambiente " + info["number"], info["name"], info["level"]) if x)
+    return u"{}   —   {} {}: {}".format(title, len(rows), u"alteração" if len(rows) == 1 else u"alterações",
+                                       u", ".join(parts))
+
+
 class RoomFinishWindow(forms.WPFWindow):
     def __init__(self, rooms):
         forms.WPFWindow.__init__(self, XAML, literal_string=True)
@@ -2526,6 +2613,8 @@ class RoomFinishWindow(forms.WPFWindow):
         self._resolve_params()
 
         self.btn_scan.Click += self.on_scan
+        self.btn_expand.Click += self.on_expand
+        self.btn_collapse.Click += self.on_collapse
         self.btn_excel.Click += self.on_load_excel
         self.btn_update.Click += self.on_update
         self.btn_report.Click += self.on_report
@@ -2580,6 +2669,8 @@ class RoomFinishWindow(forms.WPFWindow):
         self.table = None
         self.row_keys = []
         self.btn_update.IsEnabled = False
+        self.btn_expand.IsEnabled = False
+        self.btn_collapse.IsEnabled = False
 
     # ---------------- READ + ANALYZE ----------------
     def on_scan(self, sender, args):
@@ -2778,12 +2869,14 @@ class RoomFinishWindow(forms.WPFWindow):
         t = DataTable("preview")
         for col, typ in (("Apply", Boolean), ("Editable", Boolean), ("Kind", String), ("Room", String),
                          ("Name", String), ("Level", String), ("Parameter", String), ("Current", String),
-                         ("New", String), ("Change", String), ("Note", String)):
+                         ("New", String), ("Change", String), ("Note", String), ("Group", String)):
             t.Columns.Add(col, clr.GetClrType(typ))
         self.row_keys = []
         counts = {"Fill": 0, "Overwrite": 0, "Clear": 0, "Keep": 0, "Overflow": 0, "Tag": 0, "TagMissing": 0}
         overflow_log = []
+        headers = set()
         for rec in self.records:
+            first_row = t.Rows.Count
             block = None
             for key, ch in rec["changes"].items():
                 if ch["overflow"]:
@@ -2838,8 +2931,17 @@ class RoomFinishWindow(forms.WPFWindow):
                 row["Note"] = u"; ".join([x for x in (u"{} linha(s)".format(tg["rows"]), tblock, tg["msg"]) if x])
                 t.Rows.Add(row)
                 self.row_keys.append((rec, "__tag__", j))
+            rows = [t.Rows[k] for k in range(first_row, t.Rows.Count)]
+            if rows:
+                header = group_header(rec, rows)
+                if header in headers:                     # same number / name / level twice
+                    header += u"  (Id {})".format(rec["info"]["id"])
+                headers.add(header)
+                for row in rows:
+                    row["Group"] = header
         self.table = t
         self.grid.ItemsSource = t.DefaultView
+        self._group_by_room()
         self.btn_update.IsEnabled = any(bool(r["Editable"]) for r in t.Rows)
         if log:
             output.print_md(u"**[5/6] Pré-visualização gerada:** {} campo(s) a preencher, {} a substituir, {} a limpar, "
@@ -2861,6 +2963,54 @@ class RoomFinishWindow(forms.WPFWindow):
                                        counts["Fill"], counts["Overwrite"], counts["Clear"], counts["Tag"], msg_over,
                                        u" {} identificador(es) sem o tipo necessário - veja a coluna Observação.".format(
                                            counts["TagMissing"]) if counts["TagMissing"] else u""))
+
+    def _group_by_room(self):
+        """One collapsible group per room (header = room + summary of its
+        changes). If WPF refuses the grouping, the flat list stays usable."""
+        grouped = False
+        try:
+            from System.Windows.Data import CollectionViewSource, PropertyGroupDescription
+            view = CollectionViewSource.GetDefaultView(self.grid.ItemsSource)
+            if view is not None and view.CanGroup:
+                view.GroupDescriptions.Clear()
+                view.GroupDescriptions.Add(PropertyGroupDescription("Group"))
+                grouped = True
+        except Exception as ex:
+            output.print_md(u"_Agrupamento por ambiente indisponível ({}) - lista simples._".format(to_unicode(ex)))
+        try:
+            from System.Windows import Visibility
+            # number / name / level are in the group header
+            for i in (1, 2, 3):
+                self.grid.Columns[i].Visibility = Visibility.Collapsed if grouped else Visibility.Visible
+        except Exception:
+            pass
+        has_rows = self.table is not None and self.table.Rows.Count > 0
+        self.btn_expand.IsEnabled = grouped and has_rows
+        self.btn_collapse.IsEnabled = grouped and has_rows
+
+    def _expand_all(self, value):
+        try:
+            from System.Windows.Media import VisualTreeHelper
+            from System.Windows.Controls import Expander
+            stack = [self.grid]
+            while stack:
+                el = stack.pop()
+                if isinstance(el, Expander):
+                    el.IsExpanded = value
+                try:
+                    n = VisualTreeHelper.GetChildrenCount(el)
+                except Exception:
+                    continue
+                for i in range(n):
+                    stack.append(VisualTreeHelper.GetChild(el, i))
+        except Exception as ex:
+            output.print_md(u"_Não foi possível expandir/recolher: {}_".format(to_unicode(ex)))
+
+    def on_expand(self, sender, args):
+        self._expand_all(True)
+
+    def on_collapse(self, sender, args):
+        self._expand_all(False)
 
     # ---------------- CONFIRM + TRANSACTION + WRITE ----------------
     def on_update(self, sender, args):
