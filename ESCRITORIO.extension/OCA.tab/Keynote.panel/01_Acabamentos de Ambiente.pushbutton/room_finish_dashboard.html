@@ -129,7 +129,7 @@
 </div>
 <div class="toolrow">
   <button class="btn" id="resetBtn">Limpar filtros</button>
-  <button class="btn" id="xlsxBtn" title="Baixa uma planilha Excel com os ambientes que estão na tabela (respeita os filtros): Resumo e Ambientes (Parede, Piso, Rodapé, Soleira, Teto e Rodateto).">&#x2913; Baixar Excel</button>
+  <button class="btn" id="xlsxBtn" title="Baixa uma planilha Excel com os ambientes que estão na tabela (respeita os filtros): aba Ambientes com Número, Nome, Pavimento, Parede, Piso, Rodapé, Soleira, Teto e Rodateto.">&#x2913; Baixar Excel</button>
   <span class="count" id="count"></span>
 </div>
 <div class="tablewrap" id="tableWrap"></div>
@@ -380,8 +380,8 @@ const XLSX_WRITER = (()=>{
   const colRef = i=>{ let s=""; i++; while(i>0){ const m=(i-1)%26; s=String.fromCharCode(65+m)+s; i=(i-m-1)/26|0; } return s; };
   const sheetName = n=>String(n).replace(/[\[\]:*?\/\\]/g," ").slice(0,31);
 
-  // sheets: [[name, rows, {noFilter}]]; filter only on real tables with data rows
-  const hasFilter = sh=>sh[1].length > 1 && !(sh[2] && sh[2].noFilter);
+  // sheets: [[name, rows]]; filter only on tables with data rows
+  const hasFilter = sh=>sh[1].length > 1;
 
   function sheetXml(rows, filtered){
     const ncol = Math.max(1, ...rows.map(r=>r.length));
@@ -458,11 +458,7 @@ function exportSheets(){
     ambientes.push([r.number, r.name, r.level,
       ...fins.map(k=>(r.finishes[k].slots||[]).map(s=>s.new).filter(isReal).join(DATA.separator||" / "))]);
   }
-  const resumo = [["Indicador","Ambientes exportados","Total do relatório"],
-    ...STATS.map(s=>[s.l, list.filter(s.f).length, ROOMS.filter(s.f).length]),
-    [], ["Projeto", String(DATA.project||"").replace(/\.rvt$/i,"")], ["Gerado em", DATA.generated||""],
-    ["Ambientes exportados", `${list.length} de ${ROOMS.length} (filtros da tabela aplicados)`]];
-  return [["Resumo", resumo, {noFilter:true}], ["Ambientes", ambientes]];
+  return [["Ambientes", ambientes]];
 }
 
 document.getElementById("xlsxBtn").onclick = ()=>{
