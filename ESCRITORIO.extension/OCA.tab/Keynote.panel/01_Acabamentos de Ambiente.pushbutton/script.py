@@ -100,22 +100,36 @@ output.set_title(u"Acabamentos de Ambiente - log")
 # ==================================================================
 # Settings
 # ==================================================================
-# Room finish parameters - shared parameters "Parametros de Ambiente".
-# Each finish has numbered fields; its unique Keynotes (natural order) fill
-# them in sequence: 01, 02, 03... Looked up by GUID, then by exact name.
+# Room finish parameters - shared parameters "Parametros de Ambiente"
+# (OCA_Parametros_Template.txt). Each finish has fields 01 to 05; its unique
+# Keynotes (natural order) fill them in sequence: 01, 02, 03... Looked up by
+# GUID, then by exact name.
 FINISH_SLOTS = OrderedDict([
     ("sill", [(u"Acabamento de Soleira 01", "53c7ce2b-cb20-4fcf-88ca-92b096d7ac16"),
               (u"Acabamento de Soleira 02", "cd25c084-0b6d-4c3e-b62d-db150376a95f"),
-              (u"Acabamento de Soleira 03", "73f3ae00-cda5-4427-9de8-10161b23bed7")]),
+              (u"Acabamento de Soleira 03", "73f3ae00-cda5-4427-9de8-10161b23bed7"),
+              (u"Acabamento de Soleira 04", "53701d9a-fc54-437a-b7bd-cdfb346db9d0"),
+              (u"Acabamento de Soleira 05", "25070ec2-470d-4d36-b812-089c253fffa7")]),
     ("crown", [(u"Acabamento de Rodateto 01", "af22da2c-43fb-4397-bb0b-480195daa6e1"),
-               (u"Acabamento de Rodateto 02", "c0cc8f63-9088-4b6a-b88b-21bfb0747fe2")]),
+               (u"Acabamento de Rodateto 02", "c0cc8f63-9088-4b6a-b88b-21bfb0747fe2"),
+               (u"Acabamento de Rodateto 03", "06179583-d511-4b0e-ab9d-26fe47ba31e2"),
+               (u"Acabamento de Rodateto 04", "cf9af1ce-e72b-4fd7-bc0f-d9276ac0fe2f"),
+               (u"Acabamento de Rodateto 05", "d789f873-bda6-4362-b446-49d40ca1ab85")]),
     ("floor", [(u"Acabamento de Piso 01", "cc2fa173-836d-4b2f-8ab2-907b932d05c0"),
                (u"Acabamento de Piso 02", "ce590775-fef4-460b-86c2-6798e9b44301"),
-               (u"Acabamento de Piso 03", "2100cb48-c4f4-4e4c-94a5-59bfc0ee54f4")]),
+               (u"Acabamento de Piso 03", "2100cb48-c4f4-4e4c-94a5-59bfc0ee54f4"),
+               (u"Acabamento de Piso 04", "044158c5-0085-49d5-9b5e-c54b363b7f67"),
+               (u"Acabamento de Piso 05", "51b8c21a-dd7d-4f2b-8dfd-ad065482421c")]),
     ("ceiling", [(u"Acabamento de Teto 01", "f5a77c4e-a48c-44f0-89ff-fe8ea8242d3e"),
-                 (u"Acabamento de Teto 02", "49faa0d2-3f47-4167-b438-3a1f7a817d2e")]),
+                 (u"Acabamento de Teto 02", "49faa0d2-3f47-4167-b438-3a1f7a817d2e"),
+                 (u"Acabamento de Teto 03", "32dfa3eb-1d00-4564-8bb9-2e5878fb3ef4"),
+                 (u"Acabamento de Teto 04", "4690b55e-dbca-493a-b898-79bcaeea4544"),
+                 (u"Acabamento de Teto 05", "9d6cdfae-2b13-4515-867f-66ea1ed7dd35")]),
     ("base", [(u"Acabamento de Rodapé 01", "7a09d8e3-4501-4ec3-b81f-e1f225b387ee"),
-              (u"Acabamento de Rodapé 02", "3ce3c29f-4607-41c7-b2b9-80c856043b55")]),
+              (u"Acabamento de Rodapé 02", "3ce3c29f-4607-41c7-b2b9-80c856043b55"),
+              (u"Acabamento de Rodapé 03", "659e50fb-df51-44f1-a544-726c6cc29485"),
+              (u"Acabamento de Rodapé 04", "6949f296-1c82-4601-b86e-842fe38b8aa4"),
+              (u"Acabamento de Rodapé 05", "e02b1c7a-3f10-4af3-9f30-82c3b152e08d")]),
     ("wall", [(u"Acabamento de Parede 01", "896c4028-fc02-4e4e-b01e-67db6b4914bb"),
               (u"Acabamento de Parede 02", "5c6598d4-596b-4578-96ac-092e71a7d338"),
               (u"Acabamento de Parede 03", "481190fa-1b6d-4834-bbff-e895e01a4dd2"),
