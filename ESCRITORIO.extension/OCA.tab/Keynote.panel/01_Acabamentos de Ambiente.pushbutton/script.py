@@ -1,69 +1,72 @@
 # -*- coding: utf-8 -*-
-"""Room Finish Keynote Automation.
-
-Reads the Keynotes of the elements that bound each Room and writes them to the
-Room finish parameters (shared parameters "Acabamento de Soleira/Rodateto/
-Piso/Teto/Rodapé/Parede 01..05"). Each finish has numbered fields that its
-unique Keynotes fill in order (see FINISH_SLOTS / compute_changes).
-
-    READ -> ANALYZE -> PREVIEW -> USER CONFIRMATION -> TRANSACTION -> WRITE -> REPORT
-
-Which parameter a value goes to is decided ONLY by the Keynote prefix
-(case-insensitive, value normalised to upper case), never by the element's
-category:
-
-  SL -> Soleira   RT -> Rodateto   PI -> Piso   FR / CB -> Teto
-  RD -> Rodapé    RE -> Parede     anything else: ignored
-
-The category is only used afterwards to REPORT mismatches (e.g. RE01 on a
-Floor). Nothing but the Room finish parameters is ever written.
-
-Elements considered for a room (all through Revit API relationships):
-  - Room.GetBoundarySegments(): BoundarySegment.ElementId (+ LinkElementId
-    for linked models) - the elements forming the room outline.
-  - SpatialElementGeometryCalculator: every element bounding the room volume
-    (side / top / bottom subfaces) and the material of the face touching it.
-  - Wall sweeps on the room-facing side of the bounding walls (standalone
-    WallSweep elements and sweeps built into the wall type).
-  - Family instances located in the room (FamilyInstance.Room for the room's
-    phase) - only those whose Keynote has one of the four prefixes.
-  - Geometric search of the room's surfaces: the room outline (finish
-    boundary) extruded from just below the room base to SEARCH_ABOVE_M above
-    its top, tested with ElementIntersectsSolidFilter against every element
-    (host + loaded links) whose Keynote has one of the four prefixes. This is
-    what finds skirtings (low walls, sweeps, families) and ceilings that the
-    Revit room relations don't report: elements below the room computation
-    height, not Room Bounding, or above a low room Limit Offset.
-  The zone is grown 2 cm outwards so elements flush with the room faces
-  count too, and every Wall Sweep and Ceiling is tested even without a
-  finish-prefix type Keynote, so one without a Keynote is reported.
-  - Room containment (Document.GetRoomAtPoint) for every element with a
-    finish Keynote that no room claimed above, and for EVERY wall sweep:
-    points are sampled inside the element's own geometry along its whole
-    length, so a sweep running through several rooms goes to all of them.
-    Elements with a finish Keynote that end up in no room are listed in the
-    log and the report ("not assigned to any room").
-  Exception to the prefix rule: a Wall Sweep ("Moldura de parede") fills
-  Rodapé (BASE_CATEGORIES) unless its Keynote starts with RT or RD.
-  Height guard: a value is only used if the element sits where that finish
-  can be for THIS room - PI starts below the room's mid-height, FR is not
-  entirely below the room floor, RE / RD overlap the room's height. This keeps the floor finish,
-  skirting and walls of the storey above out of the room below. Rejected
-  values are reported, not written.
-
-Keynote lookup, per element (KEYNOTE_MODE = "type": only step 1 is used;
-the other modes in KEYNOTE_SOURCES are kept in code but not offered in the UI):
-  1. Keynote on the element itself (rare - most categories only have it on
-     the type), then the Keynote of its type (BuiltInParameter.KEYNOTE_PARAM).
-  2. Keynote of the material on the face that actually touches the room
-     (painted material first, then the face material), read through the
-     room geometry calculator - so compound-wall layers and the Paint tool
-     are both honoured.
-
-Engine: IronPython 2.7 (pyRevit default). The syntax is kept py2/py3 neutral,
-but the WPF window relies on pyRevit's WPFWindow + DataTable binding, which is
-only exercised on IronPython.
-"""
+# NOTE: this description is a comment, not a module docstring: pyRevit 5.2
+# (IronPython) fails to read a docstring with accents and then drops the
+# button tooltip (__doc__ below).
+#
+# Room Finish Keynote Automation.
+#
+# Reads the Keynotes of the elements that bound each Room and writes them to the
+# Room finish parameters (shared parameters "Acabamento de Soleira/Rodateto/
+# Piso/Teto/Rodapé/Parede 01..05"). Each finish has numbered fields that its
+# unique Keynotes fill in order (see FINISH_SLOTS / compute_changes).
+#
+#     READ -> ANALYZE -> PREVIEW -> USER CONFIRMATION -> TRANSACTION -> WRITE -> REPORT
+#
+# Which parameter a value goes to is decided ONLY by the Keynote prefix
+# (case-insensitive, value normalised to upper case), never by the element's
+# category:
+#
+#   SL -> Soleira   RT -> Rodateto   PI -> Piso   FR / CB -> Teto
+#   RD -> Rodapé    RE -> Parede     anything else: ignored
+#
+# The category is only used afterwards to REPORT mismatches (e.g. RE01 on a
+# Floor). Nothing but the Room finish parameters is ever written.
+#
+# Elements considered for a room (all through Revit API relationships):
+#   - Room.GetBoundarySegments(): BoundarySegment.ElementId (+ LinkElementId
+#     for linked models) - the elements forming the room outline.
+#   - SpatialElementGeometryCalculator: every element bounding the room volume
+#     (side / top / bottom subfaces) and the material of the face touching it.
+#   - Wall sweeps on the room-facing side of the bounding walls (standalone
+#     WallSweep elements and sweeps built into the wall type).
+#   - Family instances located in the room (FamilyInstance.Room for the room's
+#     phase) - only those whose Keynote has one of the four prefixes.
+#   - Geometric search of the room's surfaces: the room outline (finish
+#     boundary) extruded from just below the room base to SEARCH_ABOVE_M above
+#     its top, tested with ElementIntersectsSolidFilter against every element
+#     (host + loaded links) whose Keynote has one of the four prefixes. This is
+#     what finds skirtings (low walls, sweeps, families) and ceilings that the
+#     Revit room relations don't report: elements below the room computation
+#     height, not Room Bounding, or above a low room Limit Offset.
+#   The zone is grown 2 cm outwards so elements flush with the room faces
+#   count too, and every Wall Sweep and Ceiling is tested even without a
+#   finish-prefix type Keynote, so one without a Keynote is reported.
+#   - Room containment (Document.GetRoomAtPoint) for every element with a
+#     finish Keynote that no room claimed above, and for EVERY wall sweep:
+#     points are sampled inside the element's own geometry along its whole
+#     length, so a sweep running through several rooms goes to all of them.
+#     Elements with a finish Keynote that end up in no room are listed in the
+#     log and the report ("not assigned to any room").
+#   Exception to the prefix rule: a Wall Sweep ("Moldura de parede") fills
+#   Rodapé (BASE_CATEGORIES) unless its Keynote starts with RT or RD.
+#   Height guard: a value is only used if the element sits where that finish
+#   can be for THIS room - PI starts below the room's mid-height, FR is not
+#   entirely below the room floor, RE / RD overlap the room's height. This keeps the floor finish,
+#   skirting and walls of the storey above out of the room below. Rejected
+#   values are reported, not written.
+#
+# Keynote lookup, per element (KEYNOTE_MODE = "type": only step 1 is used;
+# the other modes in KEYNOTE_SOURCES are kept in code but not offered in the UI):
+#   1. Keynote on the element itself (rare - most categories only have it on
+#      the type), then the Keynote of its type (BuiltInParameter.KEYNOTE_PARAM).
+#   2. Keynote of the material on the face that actually touches the room
+#      (painted material first, then the face material), read through the
+#      room geometry calculator - so compound-wall layers and the Paint tool
+#      are both honoured.
+#
+# Engine: IronPython 2.7 (pyRevit default). The syntax is kept py2/py3 neutral,
+# but the WPF window relies on pyRevit's WPFWindow + DataTable binding, which is
+# only exercised on IronPython.
 
 __title__ = "Acabamentos\nde Ambiente"
 __doc__ = u"""Preenche automaticamente os acabamentos dos ambientes com base nas Keynotes dos elementos ao redor e ajusta o tipo do identificador conforme o número de linhas de acabamento.
