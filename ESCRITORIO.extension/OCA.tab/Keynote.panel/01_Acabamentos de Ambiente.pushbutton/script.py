@@ -94,7 +94,38 @@ except NameError:          # IronPython 3 / CPython
 doc = revit.doc
 BIP = DB.BuiltInParameter
 output = script.get_output()
-output.set_title(u"Acabamentos de Ambiente - log")
+
+
+def _shift_click():
+    try:
+        from pyrevit import EXEC_PARAMS
+        return bool(EXEC_PARAMS.config_mode)
+    except Exception:
+        return bool(globals().get("__shiftclick__"))
+
+
+# Step-by-step log in the pyRevit output window: off by default - the preview
+# and the HTML report already show everything. Shift+click the button to see
+# it. Errors (nothing written, report not generated, a field refused) are
+# always logged.
+SHOW_LOG = _shift_click()
+_log_started = [False]
+
+
+def log(text, error=False):
+    if not (SHOW_LOG or error):
+        return
+    if not _log_started[0]:
+        _log_started[0] = True
+        try:
+            output.set_title(u"Acabamentos de Ambiente - log")
+        except Exception:
+            pass
+    output.print_md(text)
+
+
+def log_error(text):
+    log(text, error=True)
 
 
 # ==================================================================
@@ -2176,7 +2207,7 @@ XAML = u"""
             <TextBlock Style="{StaticResource HelpBody}" Text="1. Analisar Modelo - lê todos os ambientes e já mostra a pré-visualização: valor atual e novo valor de cada parâmetro. Não altera nada.&#10;2. Confira a lista. Todas as linhas vêm marcadas; desmarque as que não quer gravar. Linhas em âmbar substituem um valor existente.&#10;3. Atualizar Ambientes - grava as linhas marcadas.&#10;4. Abrir Relatório HTML - resumo, filtros e o detalhe de onde veio cada Keynote."/>
 
             <TextBlock Style="{StaticResource HelpTitle}" Text="QUANDO ALGO NÃO APARECE"/>
-            <TextBlock Style="{StaticResource HelpBody}" Text="• Forro não encontrado: aumente a margem de busca do forro ou o Limit Offset do ambiente e analise de novo.&#10;• Elemento sem Keynote: aparece no relatório como &quot;Keynote ausente&quot;.&#10;• Elemento com Keynote de acabamento fora de qualquer ambiente: seção &quot;Não atribuídos a nenhum ambiente&quot; no relatório.&#10;• Prefixo que não combina com a categoria (ex.: RE01 num piso): aparece como inconsistência, mas o valor é gravado pela regra do prefixo.&#10;• No relatório, clique num ambiente para ver cada elemento encontrado, a Keynote e o motivo de cada valor ignorado."/>
+            <TextBlock Style="{StaticResource HelpBody}" Text="• Forro não encontrado: aumente a margem de busca do forro ou o Limit Offset do ambiente e analise de novo.&#10;• Elemento sem Keynote: aparece no relatório como &quot;Keynote ausente&quot;.&#10;• Elemento com Keynote de acabamento fora de qualquer ambiente: seção &quot;Não atribuídos a nenhum ambiente&quot; no relatório.&#10;• Prefixo que não combina com a categoria (ex.: RE01 num piso): aparece como inconsistência, mas o valor é gravado pela regra do prefixo.&#10;• No relatório, clique num ambiente para ver cada elemento encontrado, a Keynote e o motivo de cada valor ignorado.&#10;• Shift + clique no botão do comando abre também o log passo a passo do pyRevit (no clique normal ele só aparece se houver erro)."/>
           </StackPanel>
         </ScrollViewer>
       </TabItem>
@@ -2240,7 +2271,7 @@ class RoomFinishWindow(forms.WPFWindow):
             self.tag_index = TagIndex(doc)
         except Exception as ex:
             self.tag_index = None
-            output.print_md(u"**ERRO:** não foi possível ler os identificadores de ambiente: `{}`".format(to_unicode(ex)))
+            log_error(u"**ERRO:** não foi possível ler os identificadores de ambiente: `{}`".format(to_unicode(ex)))
         self._resolve_params()
 
         self._col_widths = None
@@ -2314,11 +2345,11 @@ class RoomFinishWindow(forms.WPFWindow):
         self.search_above_m = margin
         self.mode = KEYNOTE_MODE
         self._invalidate_preview()
-        output.print_md(u"**[2/6] Ambientes coletados:** {} ambiente(s).".format(len(self.rooms)))
+        log(u"**[2/6] Ambientes coletados:** {} ambiente(s).".format(len(self.rooms)))
         try:
             scanner = Scanner(doc, self.mode, margin)
         except Exception as ex:
-            output.print_md(u"**ERRO:** não foi possível iniciar a análise: `{}`".format(to_unicode(ex)))
+            log_error(u"**ERRO:** não foi possível iniciar a análise: `{}`".format(to_unicode(ex)))
             forms.alert(u"Não foi possível iniciar a análise:\n\n{}".format(to_unicode(ex)))
             return
         self.keynote_texts = scanner.keynote_texts
@@ -2349,30 +2380,30 @@ class RoomFinishWindow(forms.WPFWindow):
                 self.contain_stats = scanner.contain_pass(records, progress)
                 cancelled = pb.cancelled
         if cancelled:
-            output.print_md(u"Análise cancelada - nenhum relatório foi gerado.")
+            log(u"Análise cancelada - nenhum relatório foi gerado.")
             self.tb_status.Text = u"Análise cancelada."
             return
         for rec in records:
             scanner.finish_room(rec)
         cs = self.contain_stats
-        output.print_md(u"**Ambiente por ponto:** {} elemento(s) testados com GetRoomAtPoint; molduras de parede: "
-                        u"{} no modelo, {} dentro de um ambiente. **{} elemento(s) com Keynote de acabamento não "
-                        u"estão em nenhum ambiente.**".format(
-                            cs["tested"], cs["sweeps"], cs["sweeps_in_rooms"], len(cs["unassigned"])))
+        log(u"**Ambiente por ponto:** {} elemento(s) testados com GetRoomAtPoint; molduras de parede: "
+            u"{} no modelo, {} dentro de um ambiente. **{} elemento(s) com Keynote de acabamento não "
+            u"estão em nenhum ambiente.**".format(
+                cs["tested"], cs["sweeps"], cs["sweeps_in_rooms"], len(cs["unassigned"])))
         for u in cs["unassigned"][:40]:
-            output.print_md(u"- {} {} `{}` - {}".format(u["cat"], log_link(u), u["kn"] or u"(sem Keynote)", u["reason"]))
+            log(u"- {} {} `{}` - {}".format(u["cat"], log_link(u), u["kn"] or u"(sem Keynote)", u["reason"]))
         if len(cs["unassigned"]) > 40:
-            output.print_md(u"- ... e mais {} (veja o relatório HTML).".format(len(cs["unassigned"]) - 40))
+            log(u"- ... e mais {} (veja o relatório HTML).".format(len(cs["unassigned"]) - 40))
 
         self.records = sort_records(records)
         no_bound = [r for r in self.records if r["boundary"] != "ok"]
-        output.print_md(u"**[3/6] Contornos analisados:** {} ambiente(s) com contorno, {} sem contorno "
-                        u"(contorno na face de acabamento; margem de busca do forro: {} m).".format(
-                            len(self.records) - len(no_bound), len(no_bound), fmt_m(margin)))
+        log(u"**[3/6] Contornos analisados:** {} ambiente(s) com contorno, {} sem contorno "
+            u"(contorno na face de acabamento; margem de busca do forro: {} m).".format(
+                len(self.records) - len(no_bound), len(no_bound), fmt_m(margin)))
         for r in no_bound[:30]:
-            output.print_md(u"- Ambiente {} `{}` - {}".format(
-                log_link({"id": r["info"]["id"], "link": u""}), r["info"]["number"],
-                BOUNDARY_LABELS.get(r["boundary"], r["boundary"])))
+            log(u"- Ambiente {} `{}` - {}".format(
+    log_link({"id": r["info"]["id"], "link": u""}), r["info"]["number"],
+    BOUNDARY_LABELS.get(r["boundary"], r["boundary"])))
 
         compute_changes(self.records, self.targets, self.tag_index)
         for r in self.records:
@@ -2398,7 +2429,7 @@ class RoomFinishWindow(forms.WPFWindow):
             uniq = sorted(set(rooms), key=natural_key)
             lines.append(u"{}\n   Necessário para {} ambiente(s): {}{}".format(
                 msg, len(uniq), u", ".join(uniq[:15]), u"..." if len(uniq) > 15 else u""))
-            output.print_md(u"**ERRO - identificador:** {} Ambientes: {}".format(msg, u", ".join(uniq)))
+            log(u"**ERRO - identificador:** {} Ambientes: {}".format(msg, u", ".join(uniq)))
         forms.alert(u"Tipo de identificador não encontrado no projeto:\n\n" + u"\n\n".join(lines) +
                     u"\n\nOs acabamentos desses ambientes podem ser gravados normalmente; apenas o "
                     u"identificador deles não será trocado.")
@@ -2406,22 +2437,22 @@ class RoomFinishWindow(forms.WPFWindow):
     def _log_keynotes(self):
         issues = [(r, iss) for r in self.records for iss in r.get("issues", [])]
         mismatches = [(r, m) for r in self.records for f in r["finishes"].values() for m in f["mismatches"]]
-        output.print_md(u"**[4/6] Keynotes coletadas** (fonte: {}; classificação pelo prefixo: {}). "
-                        u"{} elemento(s) sem Keynote, {} inconsistência(s) de prefixo/categoria.".format(
-                            dict(KEYNOTE_SOURCES)[self.mode],
-                            u", ".join(u"{} = {}".format(p, finish_label(f)) for p, f in PREFIX_RULES.items()),
-                            len(issues), len(mismatches)))
+        log(u"**[4/6] Keynotes coletadas** (fonte: {}; classificação pelo prefixo: {}). "
+            u"{} elemento(s) sem Keynote, {} inconsistência(s) de prefixo/categoria.".format(
+                dict(KEYNOTE_SOURCES)[self.mode],
+                u", ".join(u"{} = {}".format(p, finish_label(f)) for p, f in PREFIX_RULES.items()),
+                len(issues), len(mismatches)))
         if not self.keynote_texts:
-            output.print_md(u"_Arquivo de Keynotes não carregado ou vazio - as chaves não são validadas._")
+            log(u"_Arquivo de Keynotes não carregado ou vazio - as chaves não são validadas._")
         for r, iss in issues[:60]:
-            output.print_md(u"- Ambiente `{}`: {} {} - {}".format(
-                r["info"]["number"], iss["cat"], log_link(iss), iss["msg"]))
+            log(u"- Ambiente `{}`: {} {} - {}".format(
+    r["info"]["number"], iss["cat"], log_link(iss), iss["msg"]))
         if len(issues) > 60:
-            output.print_md(u"- ... e mais {} (veja o relatório HTML).".format(len(issues) - 60))
+            log(u"- ... e mais {} (veja o relatório HTML).".format(len(issues) - 60))
         for r, m in mismatches[:40]:
-            output.print_md(u"- **Inconsistência** Ambiente `{}`: {}".format(r["info"]["number"], m))
+            log(u"- **Inconsistência** Ambiente `{}`: {}".format(r["info"]["number"], m))
         if len(mismatches) > 40:
-            output.print_md(u"- ... e mais {} inconsistências (veja o relatório HTML).".format(len(mismatches) - 40))
+            log(u"- ... e mais {} inconsistências (veja o relatório HTML).".format(len(mismatches) - 40))
 
     def _summary(self):
         st = [r["status"] for r in self.records]
@@ -2434,10 +2465,10 @@ class RoomFinishWindow(forms.WPFWindow):
                               self.contain_stats, self.search_above_m, self.tag_index)
             write_report(data)
         except Exception as ex:
-            output.print_md(u"**ERRO:** não foi possível gerar o relatório HTML: `{}`".format(to_unicode(ex)))
+            log_error(u"**ERRO:** não foi possível gerar o relatório HTML: `{}`".format(to_unicode(ex)))
 
     # ---------------- PREVIEW ----------------
-    def show_preview(self, log=True):
+    def show_preview(self, verbose=True):
         """Fill the preview grid. Every Fill / Overwrite row starts ticked;
         overwrites are shown in amber and counted in the confirmation."""
         if not self.records:
@@ -2520,15 +2551,15 @@ class RoomFinishWindow(forms.WPFWindow):
         self.grid.ItemsSource = t.DefaultView
         self._group_by_room()
         self.btn_update.IsEnabled = any(bool(r["Editable"]) for r in t.Rows)
-        if log:
-            output.print_md(u"**[5/6] Pré-visualização gerada:** {} campo(s) a preencher, {} a substituir, {} a limpar, "
-                            u"{} campo(s) mantidos onde nada foi encontrado; {} identificador(es) a trocar de tipo, "
-                            u"{} com tipo ausente.".format(
-                                counts["Fill"], counts["Overwrite"], counts["Clear"], counts["Keep"],
-                                counts["Tag"], counts["TagMissing"]))
+        if verbose:
+            log(u"**[5/6] Pré-visualização gerada:** {} campo(s) a preencher, {} a substituir, {} a limpar, "
+                u"{} campo(s) mantidos onde nada foi encontrado; {} identificador(es) a trocar de tipo, "
+                u"{} com tipo ausente.".format(
+                    counts["Fill"], counts["Overwrite"], counts["Clear"], counts["Keep"],
+                    counts["Tag"], counts["TagMissing"]))
             for rec, key, extra in overflow_log[:40]:
-                output.print_md(u"- **Sem campo livre** Ambiente `{}` {}: {} (só há {} campos)".format(
-                    rec["info"]["number"], finish_label(key), join_keys(extra), len(FINISH_SLOTS[key])))
+                log(u"- **Sem campo livre** Ambiente `{}` {}: {} (só há {} campos)".format(
+        rec["info"]["number"], finish_label(key), join_keys(extra), len(FINISH_SLOTS[key])))
         msg_over = (u" {} Keynote(s) não couberam nos campos - veja a coluna Observação.".format(counts["Overflow"])
                     if counts["Overflow"] else u"")
         if t.Rows.Count == 0:
@@ -2559,7 +2590,7 @@ class RoomFinishWindow(forms.WPFWindow):
                 view.GroupDescriptions.Add(PropertyGroupDescription("Group"))
                 grouped = True
         except Exception as ex:
-            output.print_md(u"_Agrupamento por ambiente indisponível ({}) - lista simples._".format(to_unicode(ex)))
+            log_error(u"_Agrupamento por ambiente indisponível ({}) - lista simples._".format(to_unicode(ex)))
         try:
             from System.Windows import Visibility
             # number / name / level are in the group header
@@ -2599,7 +2630,7 @@ class RoomFinishWindow(forms.WPFWindow):
                 for i in range(n):
                     stack.append(VisualTreeHelper.GetChild(el, i))
         except Exception as ex:
-            output.print_md(u"_Não foi possível expandir/recolher: {}_".format(to_unicode(ex)))
+            log_error(u"_Não foi possível expandir/recolher: {}_".format(to_unicode(ex)))
 
     def on_expand(self, sender, args):
         self._expand_all(True)
@@ -2684,7 +2715,7 @@ class RoomFinishWindow(forms.WPFWindow):
         except Exception as ex:
             if tx.HasStarted() and not tx.HasEnded():
                 tx.RollBack()
-            output.print_md(u"**ERRO:** atualização desfeita - nada foi gravado. `{}`".format(to_unicode(ex)))
+            log_error(u"**ERRO:** atualização desfeita - nada foi gravado. `{}`".format(to_unicode(ex)))
             forms.alert(u"A atualização falhou e foi desfeita. Nada foi gravado.\n\n{}".format(to_unicode(ex)))
             return
         finally:
@@ -2694,18 +2725,19 @@ class RoomFinishWindow(forms.WPFWindow):
             rec["updated"] = True
         for rec, key, err in errors:
             rec["write_error"] = (rec.get("write_error") or u"") + u"{}: {}. ".format(key, err)
-        output.print_md(u"**[6/6] Ambientes atualizados:** {} campo(s) gravados em {} ambiente(s), {} identificador(es) "
-                        u"com tipo trocado, {} erro(s).".format(
-                            len(written), len(set(eid_int(r["room"].Id) for r, _ in written)), len(tags_done), len(errors)))
+        log(u"**[6/6] Ambientes atualizados:** {} campo(s) gravados em {} ambiente(s), {} identificador(es) "
+u"com tipo trocado, {} erro(s).".format(
+    len(written), len(set(eid_int(r["room"].Id) for r, _ in written)), len(tags_done), len(errors)),
+            error=bool(errors))
         for rec, key, err in errors[:40]:
-            output.print_md(u"- **ERRO** Ambiente {} `{}` {}: {}".format(
+            log_error(u"- **ERRO** Ambiente {} `{}` {}: {}".format(
                 log_link({"id": rec["info"]["id"], "link": u""}), rec["info"]["number"], key, err))
 
         compute_changes(self.records, self.targets, self.tag_index)   # read back what is in Revit now
         for r in self.records:
             r["status"] = room_status(r)
         self._write_report()
-        self.show_preview(log=False)                     # what is left (unticked / blocked rows)
+        self.show_preview(verbose=False)                   # what is left (unticked / blocked rows)
         self.tb_status.Text = u"{} campo(s) gravados e {} identificador(es) trocados{}. Abra o relatório HTML para conferir.".format(
             len(written), len(tags_done), u" - {} erro(s), veja o log".format(len(errors)) if errors else u"")
 
@@ -2734,7 +2766,7 @@ def collect_rooms():
 
 
 def main():
-    output.print_md(u"**[1/6] Script iniciado.** Documento: `{}`".format(to_unicode(doc.Title)))
+    log(u"**[1/6] Script iniciado.** Documento: `{}`".format(to_unicode(doc.Title)))
     if doc.IsFamilyDocument:
         forms.alert(u"Abra um projeto, não uma família.", exitscript=True)
     rooms = collect_rooms()
@@ -2742,7 +2774,7 @@ def main():
         forms.alert(u"Nenhum ambiente encontrado neste projeto.", exitscript=True)
     win = RoomFinishWindow(rooms)
     for msg in win.problems:
-        output.print_md(u"**ERRO:** {}".format(msg))
+        log(u"**ERRO:** {}".format(msg))
     if win.problems:
         forms.alert(u"\n".join(win.problems) +
                     u"\n\nEsses parâmetros aparecem no relatório, mas não serão gravados. "
