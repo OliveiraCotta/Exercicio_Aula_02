@@ -738,7 +738,8 @@ def folder_prefix(name):
 
 
 def name_prefix(folder):
-    """Prefixo do View Name: da pasta onde a vista fica; 'Não definir pasta' = nenhum."""
+    """Prefixo do View Name: da pasta escolhida (o View Template não interfere);
+    'Não definir pasta' = nenhum."""
     return folder_prefix(folder["name"]) if folder["mode"] != "none" else u""
 
 
@@ -1145,9 +1146,9 @@ class CropWindow(forms.WPFWindow):
         return "none"
 
     def folder_choice(self):
-        """{"mode", "chosen", "name", "by_template"}: chosen = pasta escolhida no
-        diálogo; name = pasta onde a vista fica de fato (o View Template vence
-        quando controla o parâmetro 'Pasta')."""
+        """{"mode", "name", "template_folder"}: name = pasta escolhida (define o
+        prefixo); template_folder = valor de 'Pasta' imposto pelo View Template
+        (None se ele não controla a pasta) - só para avisar."""
         f = self.ctx["folders"]
         mode = self.folder_mode
         chosen = u""
@@ -1158,9 +1159,7 @@ class CropWindow(forms.WPFWindow):
             chosen = to_unicode(self.folder_new.Text).strip()
         template = self.template_choice
         forced = f.template_value(template["id"]) if template else None
-        return {"mode": mode, "chosen": chosen,
-                "name": forced if forced is not None else chosen,
-                "by_template": forced is not None}
+        return {"mode": mode, "name": chosen, "template_folder": forced}
 
     def _on_folder(self, sender, args):
         if self._ready:
@@ -1229,11 +1228,16 @@ class CropWindow(forms.WPFWindow):
             self.vname.SelectedIndex = next(
                 (i for i, o in enumerate(self._names) if o["room"]), 0)
 
-        # complemento traz o nome do nível da vista resultante
+        # complemento traz o nome do nível da vista resultante; com eventos
+        # travados, senão a seleção vazia (-1) da troca de itens vira a escolha
         if self.vsuffix.SelectedIndex >= 0 and not self._forced:
             self._suffix_idx = self.vsuffix.SelectedIndex
-        self.vsuffix.ItemsSource = suffix_labels(self.ctx["level"][mode])
-        self.vsuffix.SelectedIndex = self._suffix_idx
+        self._busy = True
+        try:
+            self.vsuffix.ItemsSource = suffix_labels(self.ctx["level"][mode])
+            self.vsuffix.SelectedIndex = self._suffix_idx
+        finally:
+            self._busy = False
         self._refresh_templates()
         self._update_names()
 
@@ -1259,10 +1263,12 @@ class CropWindow(forms.WPFWindow):
         """PAV./AMPLIAÇÃO só nas plantas 2..6: nas demais o combo fica em
         'Sem nomenclatura' e a escolha anterior volta depois (igual ao 01)."""
         if opt["suffix"]:
-            if self._forced:
-                self.vsuffix.SelectedIndex = self._suffix_idx
+            if self._forced or self.vsuffix.SelectedIndex < 0:
+                if self.vsuffix.Items.Count:
+                    self.vsuffix.SelectedIndex = self._suffix_idx
                 self._forced = False
-            self._suffix_idx = self.vsuffix.SelectedIndex
+            if self.vsuffix.SelectedIndex >= 0:   # combo ainda vazio: mantém a escolha salva
+                self._suffix_idx = self.vsuffix.SelectedIndex
         else:
             self._forced = True
             self.vsuffix.SelectedIndex = 0
@@ -1303,10 +1309,7 @@ class CropWindow(forms.WPFWindow):
         self.pv_name.Text = vname or u"(nome padrão do Revit)"
         self.pv_title.Text = title or u"—"
         self.pv_en.Text = en or u"—"
-        if folder["by_template"]:
-            self.pv_folder.Text = u"{}  (definida pelo View Template)".format(folder["name"] or u"???")
-        else:
-            self.pv_folder.Text = folder["name"] or u"(não definida pelo comando)"
+        self.pv_folder.Text = folder["name"] or u"(não definida pelo comando)"
         self.pv_template.Text = template["label"] if template else NO_TEMPLATE
         self.live_hint.Text = u"\n".join(self._live_hints(folder, template))
 
@@ -1315,15 +1318,20 @@ class CropWindow(forms.WPFWindow):
         if folder["mode"] != "none" and folder["name"] and not folder_prefix(folder["name"]):
             hints.append(u"A pasta '{}' não tem '_': o View Name fica sem prefixo."
                          .format(folder["name"]))
-        if folder["mode"] == "new" and folder["chosen"] in [e["name"] for e in
-                                                            self.ctx["folders"].entries]:
-            hints.append(u"A pasta '{}' já existe: as vistas vão para ela.".format(folder["chosen"]))
-        if folder["by_template"] and folder["name"] != folder["chosen"]:
-            hints.append(u"O View Template '{}' controla o parâmetro '{}' (= '{}'): as vistas "
-                         u"ficam nessa pasta e o prefixo vem dela. Para usar a pasta escolhida, "
-                         u"desmarque '{}' no template ou use outro.".format(
-                             template["label"], FOLDER_PARAM, folder["name"] or u"vazio",
-                             FOLDER_PARAM))
+        if folder["mode"] == "new" and folder["name"] in [e["name"] for e in
+                                                          self.ctx["folders"].entries]:
+            hints.append(u"A pasta '{}' já existe: as vistas vão para ela.".format(folder["name"]))
+        tf = folder["template_folder"]
+        if folder["name"] and tf is not None and tf != folder["name"]:
+            # o nome não muda; só a posição no navegador fica presa ao template
+            hints.append(u"Atenção: o View Template '{}' controla o parâmetro '{}' (= '{}'). "
+                         u"O nome das vistas usa '{}', mas no Navegador elas ficarão em '{}'. "
+                         u"Para a pasta funcionar, desmarque '{}' (Include) nesse template."
+                         .format(template["label"], FOLDER_PARAM, tf or u"vazio",
+                                 folder["name"], tf or u"???", FOLDER_PARAM))
+        if self.ctx["count"] > 1 and not self.name_opt["room"]:
+            hints.append(u"Nomes sem <Nº> - <AMBIENTE> se repetem entre as vistas e recebem "
+                         u"(2), (3)...; no nome manual, use # para numerar.")
         return hints
 
     def _ok(self, sender, args):
@@ -1333,10 +1341,10 @@ class CropWindow(forms.WPFWindow):
             self.error.Text = u"Margem inválida: informe um número em metros entre 0 e 100 (ex.: 0,50)."
             return
         folder = self.folder_choice()
-        if folder["mode"] == "new" and not folder["chosen"]:
+        if folder["mode"] == "new" and not folder["name"]:
             self.error.Text = u"Informe o nome da nova pasta (ex.: D003_DETALHAMENTO)."
             return
-        if folder["mode"] == "existing" and not folder["chosen"]:
+        if folder["mode"] == "existing" and not folder["name"]:
             self.error.Text = u"Selecione a pasta de destino."
             return
         self.confirmed = True
@@ -1411,9 +1419,6 @@ no_en = [g for g in geoms if not room_info(g.el)[2]]
 if no_en:
     name_hints.append(u"'{}' vazio em {} ambiente(s): o título em inglês usará o nome em português."
                       .format(ROOM_EN_PARAM, len(no_en)))
-if len(geoms) > 1:
-    name_hints.append(u"Nomes sem <Nº> - <AMBIENTE> se repetem entre as vistas e recebem "
-                      u"(2), (3)...; no nome manual, use # para numerar.")
 if not en_param_bound():
     name_hints.append(u"'{}' não está vinculado à categoria Vistas: o título em inglês "
                       u"não será gravado.".format(EN_TITLE_PARAM))
@@ -1428,6 +1433,7 @@ dialog_ctx = {
     "level": {"plans": room_levels[0], "callout": active_level},
     "room": geoms[0].el,
     "example": geoms[0].label,
+    "count": len(geoms),
     "hints": name_hints,
     "folders": folders,
 }
@@ -1515,7 +1521,7 @@ def create_room_view(g, level):
     vname, title, en = resolve_names(prefix, title, en)
     apply_names(view, vname, en, room_notes)      # View Name (com prefixo) + English
     apply_title_on_sheet(view, title, room_notes)  # Title on Sheet (sem prefixo)
-    ProjectFolders.apply(view, folder["chosen"], room_notes)
+    ProjectFolders.apply(view, folder["name"], room_notes)
     doc.Regenerate()
 
     # recalcula no sistema da vista-alvo (igual ao 01)
