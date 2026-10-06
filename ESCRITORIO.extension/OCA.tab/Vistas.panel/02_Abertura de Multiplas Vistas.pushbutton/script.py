@@ -721,17 +721,14 @@ def apply_title_on_sheet(view, title, notes):
 
 
 # ------------------------------------------------------------------
-# 6b. Pasta do Navegador de Projeto (organização nativa do Revit)
+# 6b. Pasta do Navegador de Projeto = parâmetro de projeto "Pasta"
 # ------------------------------------------------------------------
-# O Revit monta as pastas do navegador a partir de parâmetros das vistas
-# (BrowserOrganization). "Mandar a vista para a pasta" = gravar o valor da
-# pasta nesse parâmetro. Só níveis feitos com parâmetro de projeto ou
-# compartilhado podem ser gravados; os internos (Tipo de vista, Fase...)
-# o Revit preenche sozinho.
-BROWSER_VIEWTYPES = PLAN_VIEWTYPES + (VT.AreaPlan, VT.Section, VT.Elevation, VT.Detail,
-                                      VT.ThreeD, VT.DraftingView, VT.Legend)
+# A organização do navegador do escritório agrupa as vistas pelo parâmetro
+# de projeto "Pasta" (texto, instância, categoria Vistas). As pastas
+# existentes são os valores já usados nas vistas; "mandar a vista para a
+# pasta" = gravar o valor nesse parâmetro. Nova pasta = valor novo.
+FOLDER_PARAM = u"Pasta"
 _FOLDER_PREFIX = re.compile(u"^([^_]+)_")
-EMPTY_FOLDER = (u"", u"???")
 
 
 def folder_prefix(name):
@@ -740,116 +737,89 @@ def folder_prefix(name):
     return m.group(1).strip() if m else u""
 
 
-class BrowserFolders(object):
-    """Pastas da organização atual do Navegador de Projeto para vistas."""
+def name_prefix(folder):
+    """Prefixo do View Name: da pasta onde a vista fica; 'Não definir pasta' = nenhum."""
+    return folder_prefix(folder["name"]) if folder["mode"] != "none" else u""
+
+
+class ProjectFolders(object):
+    """Pastas existentes: valores do parâmetro 'Pasta' nas vistas do modelo."""
 
     def __init__(self):
-        self.org_name = u""
+        self.param_name = FOLDER_PARAM
+        self.param_id = None
         self.reason = None
-        self.levels = []    # níveis graváveis: [(param_id, Definition)], ordem do navegador
-        self.folder = None  # índice em self.levels do nível que define a pasta
-        self.entries = []   # pastas existentes: [{"label", "name", "path"}]
+        self.entries = []   # [{"label", "name"}]
         try:
             self._load()
         except Exception as exc:
-            self.reason = u"Não foi possível ler o Navegador de Projeto ({}).".format(to_unicode(exc))
+            self.reason = u"Não foi possível ler o parâmetro '{}' ({}).".format(
+                FOLDER_PARAM, to_unicode(exc))
             self.entries = []
 
     @property
     def available(self):
         return self.reason is None
 
-    @property
-    def param_name(self):
-        return to_unicode(self.levels[self.folder][1].Name) if self.available else u""
-
-    def _definition(self, pid):
-        if eid_int(pid) <= 0:
-            return None   # parâmetro interno
-        pe = doc.GetElement(pid)
-        return pe.GetDefinition() if isinstance(pe, DB.ParameterElement) else None
-
     def _load(self):
-        org = DB.BrowserOrganization.GetCurrentBrowserOrganizationForViews(doc)
-        if org is None:
-            self.reason = u"Nenhuma organização de navegador ativa para vistas."
-            return
-        self.org_name = to_unicode(org.Name)
-        level_defs = {}   # posição no navegador -> (param_id, Definition) ou None
-        rows = []         # por vista: {posição: nome da pasta}
+        values = set()
         for v in DB.FilteredElementCollector(doc).OfClass(DB.View):
-            if v.IsTemplate or v.ViewType not in BROWSER_VIEWTYPES:
+            # folhas e tabelas têm organização própria no navegador
+            if v.IsTemplate or isinstance(v, (DB.ViewSheet, DB.ViewSchedule)):
                 continue
-            try:
-                items = list(org.GetFolderItems(v.Id))
-            except Exception:
-                continue
-            row = {}
-            for i, item in enumerate(items):
-                if i not in level_defs:
-                    defn = self._definition(item.ElementId)
-                    level_defs[i] = (item.ElementId, defn) if defn is not None else None
-                if level_defs[i] is not None:
-                    row[i] = to_unicode(item.Name).strip()
-            rows.append(row)
-
-        positions = sorted(i for i, d in level_defs.items() if d is not None)
-        if not positions:
-            self.reason = (u"A organização '{}' do navegador não agrupa as vistas por "
-                           u"parâmetro de projeto; não há pasta para gravar.".format(self.org_name))
-            return
-        self.levels = [level_defs[i] for i in positions]
-
-        # nível da pasta: o que mais tem nomes "PREFIXO_..." (empate: o mais interno)
-        def score(k):
-            pos = positions[k]
-            return (sum(1 for r in rows if folder_prefix(r.get(pos, u""))), k)
-        self.folder = max(range(len(positions)), key=score)
-
-        seen = set()
-        for r in rows:
-            values = [r.get(pos, u"") for pos in positions[:self.folder + 1]]
-            name = values[-1]
-            if name in EMPTY_FOLDER or tuple(values) in seen:
-                continue
-            seen.add(tuple(values))
-            ancestors = [x for x in values[:-1] if x not in EMPTY_FOLDER]
-            self.entries.append({
-                "label": u" › ".join(ancestors + [name]),
-                "name": name,
-                "path": [(self.levels[k][0], self.levels[k][1], values[k])
-                         for k in range(self.folder + 1) if values[k] not in EMPTY_FOLDER]})
-        self.entries.sort(key=lambda e: natural_key(e["label"]))
-
-    def new_path(self, base, name):
-        """Nova pasta: mesmo grupo (níveis acima) da pasta existente 'base'."""
-        if not self.available:
-            return []
-        fid = eid_int(self.levels[self.folder][0])
-        path = [p for p in (base["path"] if base else []) if eid_int(p[0]) != fid]
-        return path + [(self.levels[self.folder][0], self.levels[self.folder][1], name)]
-
-    @staticmethod
-    def apply(view, path, notes):
-        for _pid, defn, value in path:
-            p = view.get_Parameter(defn)
+            p = v.LookupParameter(FOLDER_PARAM)
             if p is None:
-                notes.append(u"Parâmetro de pasta '{}' não existe na vista; pasta não definida."
-                             .format(to_unicode(defn.Name)))
-            elif p.IsReadOnly or p.StorageType != DB.StorageType.String:
-                notes.append(u"Parâmetro de pasta '{}' não aceita texto; pasta não definida."
-                             .format(to_unicode(defn.Name)))
-            else:
-                p.Set(value)
+                continue
+            if p.StorageType != DB.StorageType.String:
+                self.reason = u"O parâmetro '{}' não é de texto.".format(FOLDER_PARAM)
+                return
+            if self.param_id is None:
+                self.param_id = p.Id
+            value = to_unicode(p.AsString()).strip()
+            if value:
+                values.add(value)
+        if self.param_id is None:
+            self.reason = (u"Parâmetro de projeto '{}' não encontrado nas vistas (precisa ser "
+                           u"de texto, por instância, na categoria Vistas).".format(FOLDER_PARAM))
+            return
+        self.entries = [{"label": v, "name": v} for v in sorted(values, key=natural_key)]
+
+    def template_value(self, template_id):
+        """Valor de 'Pasta' imposto pelo View Template; None se ele não controla a pasta."""
+        if self.param_id is None or template_id is None:
+            return None
+        tpl = doc.GetElement(template_id)
+        try:
+            controlled = (set(eid_int(i) for i in tpl.GetTemplateParameterIds())
+                          - set(eid_int(i) for i in tpl.GetNonControlledTemplateParameterIds()))
+        except Exception:
+            return None
+        if eid_int(self.param_id) not in controlled:
+            return None
+        p = tpl.LookupParameter(FOLDER_PARAM)
+        return to_unicode(p.AsString()).strip() if p is not None and p.HasValue else u""
 
     @staticmethod
-    def check(view, path, notes):
-        """Depois do View Template: avisa se ele trocou a pasta."""
-        for _pid, defn, value in path:
-            p = view.get_Parameter(defn)
-            if p is not None and to_unicode(p.AsString()) != value:
-                notes.append(u"Pasta: '{}' ficou '{}' (controlado pelo View Template)."
-                             .format(to_unicode(defn.Name), to_unicode(p.AsString())))
+    def apply(view, name, notes):
+        if not name:
+            return
+        p = view.LookupParameter(FOLDER_PARAM)
+        if p is None or p.IsReadOnly:
+            notes.append(u"Parâmetro '{}' indisponível na vista; pasta não definida."
+                         .format(FOLDER_PARAM))
+        else:
+            p.Set(name)
+
+    @staticmethod
+    def check(view, name, notes):
+        """Depois do View Template: avisa se a vista não ficou na pasta esperada."""
+        if not name:
+            return
+        p = view.LookupParameter(FOLDER_PARAM)
+        got = to_unicode(p.AsString()).strip() if p is not None and p.HasValue else u""
+        if got != name:
+            notes.append(u"Pasta: ficou '{}' em vez de '{}' (controlada pelo View Template)."
+                         .format(got, name))
 
 
 # ------------------------------------------------------------------
@@ -868,22 +838,6 @@ def template_items(vt):
     allowed = (vt, VT.Section, VT.Elevation) if vt == VT.Detail else (vt,)
     return [{"label": to_unicode(t.Name), "id": t.Id}
             for t in VIEW_TEMPLATES if t.ViewType in allowed]
-
-
-def template_folder_conflicts(template_id, path):
-    """Parâmetros de pasta controlados pelo template: [(parâmetro, valor do template)]."""
-    tpl = doc.GetElement(template_id)
-    out = []
-    try:
-        controlled = (set(eid_int(i) for i in tpl.GetTemplateParameterIds())
-                      - set(eid_int(i) for i in tpl.GetNonControlledTemplateParameterIds()))
-    except Exception:
-        return out
-    for pid, defn, _value in path:
-        if eid_int(pid) in controlled:
-            p = tpl.get_Parameter(defn)
-            out.append((to_unicode(defn.Name), to_unicode(p.AsString()) if p is not None else u""))
-    return out
 
 
 def apply_template(view, template, notes):
@@ -1161,8 +1115,8 @@ class CropWindow(forms.WPFWindow):
         f = self.ctx["folders"]
         labels = [e["label"] for e in f.entries]
         if f.available:
-            self.folder_src.Text = u"Organização: {}  ·  parâmetro da pasta: {}".format(
-                f.org_name, f.param_name)
+            self.folder_src.Text = u"Parâmetro de projeto '{}'  ·  {} pasta(s) no modelo".format(
+                f.param_name, len(labels))
         else:
             self.folder_src.Text = u""
             self.folder_reason.Text = f.reason
@@ -1191,20 +1145,22 @@ class CropWindow(forms.WPFWindow):
         return "none"
 
     def folder_choice(self):
-        """{"mode", "name", "label", "path"} - path = [(param_id, Definition, valor)]."""
+        """{"mode", "chosen", "name", "by_template"}: chosen = pasta escolhida no
+        diálogo; name = pasta onde a vista fica de fato (o View Template vence
+        quando controla o parâmetro 'Pasta')."""
         f = self.ctx["folders"]
-        idx = self.folder_list.SelectedIndex
-        base = f.entries[idx] if 0 <= idx < len(f.entries) else None
         mode = self.folder_mode
-        if mode == "existing" and base is not None:
-            return {"mode": mode, "name": base["name"], "label": base["label"],
-                    "path": base["path"]}
-        if mode == "new":
-            name = to_unicode(self.folder_new.Text).strip()
-            path = f.new_path(base, name) if name else []
-            label = u" › ".join(v for _p, _d, v in path) if path else name
-            return {"mode": mode, "name": name, "label": label, "path": path}
-        return {"mode": "none", "name": u"", "label": u"", "path": []}
+        chosen = u""
+        if mode == "existing":
+            idx = self.folder_list.SelectedIndex
+            chosen = f.entries[idx]["name"] if 0 <= idx < len(f.entries) else u""
+        elif mode == "new":
+            chosen = to_unicode(self.folder_new.Text).strip()
+        template = self.template_choice
+        forced = f.template_value(template["id"]) if template else None
+        return {"mode": mode, "chosen": chosen,
+                "name": forced if forced is not None else chosen,
+                "by_template": forced is not None}
 
     def _on_folder(self, sender, args):
         if self._ready:
@@ -1297,7 +1253,7 @@ class CropWindow(forms.WPFWindow):
         title, en = compose_names(self.name_opt, self.suffix_key, self.ctx["level"][self.mode],
                                   self.ctx["room"], to_unicode(self.manual.Text),
                                   to_unicode(self.suffix_text.Text))
-        return resolve_names(folder_prefix(folder["name"]), title, en)
+        return resolve_names(name_prefix(folder), title, en)
 
     def _sync_suffix(self, opt):
         """PAV./AMPLIAÇÃO só nas plantas 2..6: nas demais o combo fica em
@@ -1334,14 +1290,11 @@ class CropWindow(forms.WPFWindow):
 
         folder = self.folder_choice()
         fmode = folder["mode"]
-        f = self.ctx["folders"]
-        nested = f.available and f.folder > 0   # há grupos acima da pasta
-        self.folder_list.IsEnabled = fmode == "existing" or (fmode == "new" and nested)
+        self.folder_list.IsEnabled = fmode == "existing"
         self.folder_new.IsEnabled = fmode == "new"
-        parent = u" › ".join(v for _p, _d, v in folder["path"][:-1]) if fmode == "new" else u""
-        self.folder_new_hint.Text = (u"Criada dentro de: {}  (grupo da pasta selecionada acima)"
-                                     .format(parent) if parent else u"")
-        prefix = folder_prefix(folder["name"])
+        self.folder_new_hint.Text = (u"Grava o novo valor no parâmetro '{}' das vistas criadas."
+                                     .format(FOLDER_PARAM) if fmode == "new" else u"")
+        prefix = name_prefix(folder)
         self.folder_prefix_txt.Text = (u"Prefixo do View Name:  {}".format(prefix) if prefix
                                        else u"Prefixo do View Name:  (nenhum)")
 
@@ -1350,7 +1303,10 @@ class CropWindow(forms.WPFWindow):
         self.pv_name.Text = vname or u"(nome padrão do Revit)"
         self.pv_title.Text = title or u"—"
         self.pv_en.Text = en or u"—"
-        self.pv_folder.Text = folder["label"] or u"(pasta definida pela organização do navegador)"
+        if folder["by_template"]:
+            self.pv_folder.Text = u"{}  (definida pelo View Template)".format(folder["name"] or u"???")
+        else:
+            self.pv_folder.Text = folder["name"] or u"(não definida pelo comando)"
         self.pv_template.Text = template["label"] if template else NO_TEMPLATE
         self.live_hint.Text = u"\n".join(self._live_hints(folder, template))
 
@@ -1359,13 +1315,15 @@ class CropWindow(forms.WPFWindow):
         if folder["mode"] != "none" and folder["name"] and not folder_prefix(folder["name"]):
             hints.append(u"A pasta '{}' não tem '_': o View Name fica sem prefixo."
                          .format(folder["name"]))
-        if folder["mode"] == "new" and folder["name"] in [e["name"] for e in
-                                                          self.ctx["folders"].entries]:
-            hints.append(u"A pasta '{}' já existe: as vistas vão para ela.".format(folder["name"]))
-        if template is not None:
-            for pname, value in template_folder_conflicts(template["id"], folder["path"]):
-                hints.append(u"O View Template '{}' controla '{}' (= '{}'): as vistas ficarão "
-                             u"nessa pasta, não na escolhida.".format(template["label"], pname, value))
+        if folder["mode"] == "new" and folder["chosen"] in [e["name"] for e in
+                                                            self.ctx["folders"].entries]:
+            hints.append(u"A pasta '{}' já existe: as vistas vão para ela.".format(folder["chosen"]))
+        if folder["by_template"] and folder["name"] != folder["chosen"]:
+            hints.append(u"O View Template '{}' controla o parâmetro '{}' (= '{}'): as vistas "
+                         u"ficam nessa pasta e o prefixo vem dela. Para usar a pasta escolhida, "
+                         u"desmarque '{}' no template ou use outro.".format(
+                             template["label"], FOLDER_PARAM, folder["name"] or u"vazio",
+                             FOLDER_PARAM))
         return hints
 
     def _ok(self, sender, args):
@@ -1375,10 +1333,10 @@ class CropWindow(forms.WPFWindow):
             self.error.Text = u"Margem inválida: informe um número em metros entre 0 e 100 (ex.: 0,50)."
             return
         folder = self.folder_choice()
-        if folder["mode"] == "new" and not folder["name"]:
+        if folder["mode"] == "new" and not folder["chosen"]:
             self.error.Text = u"Informe o nome da nova pasta (ex.: D003_DETALHAMENTO)."
             return
-        if folder["mode"] == "existing" and not folder["path"]:
+        if folder["mode"] == "existing" and not folder["chosen"]:
             self.error.Text = u"Selecione a pasta de destino."
             return
         self.confirmed = True
@@ -1442,7 +1400,7 @@ reasons = check_modes(plan_items, callout_items, plan_level)
 if len(reasons) == len(MODES):
     forms.alert(u"Nenhuma ação disponível:\n\n" + u"\n".join(reasons.values()), exitscript=True)
 
-folders = BrowserFolders()
+folders = ProjectFolders()
 
 name_hints = []
 level_ids = set(eid_int(l.Id) for l in room_levels if l is not None)
@@ -1460,7 +1418,7 @@ if not en_param_bound():
     name_hints.append(u"'{}' não está vinculado à categoria Vistas: o título em inglês "
                       u"não será gravado.".format(EN_TITLE_PARAM))
 if folders.available and not folders.entries:
-    name_hints.append(u"Nenhuma vista está em pasta por '{}' ainda: use 'Nova pasta'."
+    name_hints.append(u"Nenhuma vista tem o parâmetro '{}' preenchido ainda: use 'Nova pasta'."
                       .format(folders.param_name))
 
 active_level = getattr(active_view, "GenLevel", None)
@@ -1522,7 +1480,7 @@ if mode == "callout":
 vtype = opts["type"]
 name_opt = opts["name_opt"]
 folder = opts["folder"]
-prefix = folder_prefix(folder["name"])
+prefix = name_prefix(folder)
 template = opts["template"]
 notes = []
 created = []   # (ElemGeom, ElementId da vista), na ordem dos ambientes
@@ -1557,7 +1515,7 @@ def create_room_view(g, level):
     vname, title, en = resolve_names(prefix, title, en)
     apply_names(view, vname, en, room_notes)      # View Name (com prefixo) + English
     apply_title_on_sheet(view, title, room_notes)  # Title on Sheet (sem prefixo)
-    BrowserFolders.apply(view, folder["path"], room_notes)
+    ProjectFolders.apply(view, folder["chosen"], room_notes)
     doc.Regenerate()
 
     # recalcula no sistema da vista-alvo (igual ao 01)
@@ -1569,7 +1527,7 @@ def create_room_view(g, level):
     if template is not None:
         apply_template(view, template, room_notes)
         doc.Regenerate()
-        BrowserFolders.check(view, folder["path"], room_notes)
+        ProjectFolders.check(view, folder["name"], room_notes)
     return view, room_notes
 
 
