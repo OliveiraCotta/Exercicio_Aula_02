@@ -547,7 +547,7 @@ def view_type_label(view):
 # ------------------------------------------------------------------
 EN_TITLE_PARAM = u"Title on Sheet - English"
 ROOM_EN_PARAM = u"Room Name English"
-EN_DASH = u" – "
+EN_SEP = u" - "   # separador do complemento no título em inglês (hífen, como no PT)
 
 # (chave, VIEW NAME, Title on Sheet - English, leva complemento PAV./AMPLIAÇÃO)
 PLAN_TITLES = (
@@ -632,12 +632,12 @@ def compose_names(opt, suffix_key, level, room, manual, suffix_text=u""):
         extra = free_suffix(suffix_text)
         if extra:
             pt += u" - " + extra
-            en += EN_DASH + extra
+            en += EN_SEP + extra
     else:
         lv = level_text(level)
         _k, suf_pt, suf_en = next(s for s in SUFFIXES if s[0] == suffix_key)
         pt += u" - " + u" ".join(x for x in (suf_pt, lv) if x)
-        en += EN_DASH + u" ".join(x for x in (suf_en, lv) if x)
+        en += EN_SEP + u" ".join(x for x in (suf_en, lv) if x)
     if opt["room"] and room is not None:
         number, name, name_en = room_info(room)
         pt = u"{} - {} - {}".format(number, name, pt)
