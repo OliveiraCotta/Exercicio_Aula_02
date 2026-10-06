@@ -2,8 +2,10 @@
 """Abertura de Vistas - ajusta o recorte (CropView) de vistas a partir de elementos.
 
 Fluxo:
-  1. Usa a seleção atual (ou pede para selecionar) Linhas, Terreno, Pisos,
-     Paredes ou Ambientes.
+  1. Usa a seleção atual (ou pede para selecionar) - qualquer elemento do
+     modelo ou da vista: paredes, pisos, ambientes, colunas, property lines,
+     linhas, terreno, famílias, grupos, anotações... Elementos sem geometria
+     legível entram pela caixa envolvente (bounding box).
   2. Pergunta a margem (m) e o que fazer - sempre UMA vista para toda a seleção:
        - criar nova vista de planta (Piso, Forro, Estrutural, Área);
        - criar vista de chamada (Callout) na vista ativa;
@@ -74,45 +76,24 @@ N_BINS = int(round(HALF_PI / ANGLE_BIN))  # 180 bins cobrindo 0..90°
 ANGLE_SNAP = math.radians(0.01)           # abaixo disso o elemento está "alinhado"
 MIN_SEG = m_to_ft(0.001)                  # ignora arestas < 1 mm na projeção
 MIN_CROP = m_to_ft(0.01)                  # recorte mínimo de 1 cm por lado
-LOCATION_WEIGHT = 10.0                    # peso extra do eixo de paredes retas
+LOCATION_WEIGHT = 10.0                    # peso extra do eixo de elementos lineares retos
 
 
 # ------------------------------------------------------------------
-# 1. Categorias aceitas + seleção
+# 1. Seleção: qualquer elemento com categoria (exceto vistas e tipos)
 # ------------------------------------------------------------------
-def _bic_int(name):
-    bic = getattr(DB.BuiltInCategory, name, None)   # OST_Toposolid: Revit 2024+
-    if bic is None:
-        return None
+def is_target(el):
     try:
-        return int(bic)
+        if el is None or el.Category is None:
+            return False
     except Exception:
-        return None
+        return False
+    return not isinstance(el, (DB.View, DB.Viewport, DB.ElementType))
 
 
-ALLOWED_CATS = {}
-for _name, _label in (("OST_Lines", u"Linha"),
-                      ("OST_Topography", u"Terreno"),
-                      ("OST_Toposolid", u"Terreno"),
-                      ("OST_Floors", u"Piso"),
-                      ("OST_Walls", u"Parede"),
-                      ("OST_Rooms", u"Ambiente")):
-    _v = _bic_int(_name)
-    if _v is not None:
-        ALLOWED_CATS[_v] = _label
-
-
-def elem_cat_int(el):
-    try:
-        cat = el.Category
-        return eid_int(cat.Id) if cat is not None else None
-    except Exception:
-        return None
-
-
-class AllowedFilter(ISelectionFilter):
+class TargetFilter(ISelectionFilter):
     def AllowElement(self, el):
-        return elem_cat_int(el) in ALLOWED_CATS
+        return is_target(el)
 
     def AllowReference(self, ref, point):
         return False
@@ -121,14 +102,14 @@ class AllowedFilter(ISelectionFilter):
 def get_target_elements():
     """Seleção atual filtrada; se vazia, pede para o usuário selecionar."""
     current = list(revit.get_selection().elements)
-    picked = [el for el in current if elem_cat_int(el) in ALLOWED_CATS]
+    picked = [el for el in current if is_target(el)]
     ignored = len(current) - len(picked)
     if picked:
         return picked, ignored
     try:
         refs = uidoc.Selection.PickObjects(
-            ObjectType.Element, AllowedFilter(),
-            u"Selecione linhas, terreno, pisos, paredes ou ambientes e clique em Concluir")
+            ObjectType.Element, TargetFilter(),
+            u"Selecione os elementos da vista e clique em Concluir")
     except Exception:
         script.exit()   # Esc
     return [doc.GetElement(r) for r in refs], ignored
@@ -141,7 +122,7 @@ def elem_label(el):
         parts = [to_unicode(p.AsString()) for p in (num, name)
                  if p is not None and p.AsString()]
         return u" ".join(parts) or u"Ambiente [{}]".format(eid_int(el.Id))
-    kind = ALLOWED_CATS.get(elem_cat_int(el), u"Elemento")
+    kind = to_unicode(el.Category.Name) if el.Category is not None else u"Elemento"
     type_name = u""
     try:
         etype = doc.GetElement(el.GetTypeId())
@@ -159,6 +140,26 @@ GEOM_OPT = DB.Options()
 GEOM_OPT.DetailLevel = DB.ViewDetailLevel.Fine
 GEOM_OPT.ComputeReferences = False
 GEOM_OPT.IncludeNonVisibleObjects = False
+
+
+def owner_view(el):
+    """Vista dona de elementos específicos de vista (detalhes, anotações)."""
+    try:
+        if el.ViewSpecific:
+            return doc.GetElement(el.OwnerViewId)
+    except Exception:
+        pass
+    return None
+
+
+def geom_options(el):
+    view = owner_view(el)
+    if view is None:
+        return GEOM_OPT
+    opt = DB.Options()   # com View definida o DetailLevel vem da própria vista
+    opt.View = view
+    opt.ComputeReferences = False
+    return opt
 
 
 class ElemGeom(object):
@@ -180,6 +181,20 @@ class ElemGeom(object):
         except Exception:
             pass
 
+    def add_bbox(self):
+        """Fallback: 8 cantos da caixa envolvente (orientação pelo casco convexo)."""
+        try:
+            bb = self.el.get_BoundingBox(owner_view(self.el))
+        except Exception:
+            bb = None
+        if bb is None:
+            return
+        t, lo, hi = bb.Transform, bb.Min, bb.Max
+        for x in (lo.X, hi.X):
+            for y in (lo.Y, hi.Y):
+                for z in (lo.Z, hi.Z):
+                    self.points.append(t.OfPoint(DB.XYZ(x, y, z)))
+
     def walk(self, geom):
         if geom is None:
             return
@@ -199,28 +214,39 @@ class ElemGeom(object):
                 self.points.extend(obj.Vertices)
 
 
+# vínculos e importações: a geometria inteira seria pesada demais - só a caixa
+BBOX_ONLY = (DB.RevitLinkInstance, DB.ImportInstance)
+
+
 def extract_geometry(el):
     g = ElemGeom(el)
-    if isinstance(el, DB.SpatialElement):
-        loops = el.GetBoundarySegments(DB.SpatialElementBoundaryOptions()) or []
-        for loop in loops:
-            for seg in loop:
-                g.add_curve(seg.GetCurve())
-        if isinstance(el, Room):
-            try:
+    try:
+        if isinstance(el, BBOX_ONLY):
+            pass
+        elif isinstance(el, DB.SpatialElement):
+            loops = el.GetBoundarySegments(DB.SpatialElementBoundaryOptions()) or []
+            for loop in loops:
+                for seg in loop:
+                    g.add_curve(seg.GetCurve())
+            if isinstance(el, Room):
                 g.walk(el.ClosedShell)   # altura do ambiente (cortes/elevações)
-            except Exception:
-                pass
-    elif isinstance(el, DB.CurveElement):
-        g.add_curve(el.GeometryCurve)
-    else:
-        g.walk(el.get_Geometry(GEOM_OPT))
-        loc = getattr(el, "Location", None)
-        if (isinstance(el, DB.Wall) and isinstance(loc, DB.LocationCurve)
-                and isinstance(loc.Curve, DB.Line)):
-            # o eixo da parede reta manda na orientação (juntas em ângulo não)
-            c = loc.Curve
-            g.segs.append((c.GetEndPoint(0), c.GetEndPoint(1), LOCATION_WEIGHT))
+        elif isinstance(el, DB.CurveElement):
+            g.add_curve(el.GeometryCurve)
+        elif isinstance(el, DB.Grid):
+            g.add_curve(el.Curve)
+        elif isinstance(el, DB.ReferencePlane):
+            g.add_polyline([el.BubbleEnd, el.FreeEnd])
+        else:
+            g.walk(el.get_Geometry(geom_options(el)))
+            loc = getattr(el, "Location", None)
+            if isinstance(loc, DB.LocationCurve) and isinstance(loc.Curve, DB.Line):
+                # eixo de paredes/vigas/tubos retos manda na orientação
+                c = loc.Curve
+                g.segs.append((c.GetEndPoint(0), c.GetEndPoint(1), LOCATION_WEIGHT))
+    except Exception:
+        pass
+    if not g.points:
+        g.add_bbox()
     return g
 
 
@@ -523,13 +549,23 @@ PLAN_TITLES = (
     ("piso", u"PLANTA DE PISO", u"FLOOR FINISH PLAN", True),
     ("forro", u"PLANTA DE FORRO", u"REFLECTED CEILING PLAN", True),
 )
+# outros títulos principais de planta (sem versão por ambiente)
+EXTRA_PLAN_TITLES = (
+    ("memoria", u"MEMÓRIA DE CÁLCULO", u"CALCULATION REPORT", False),
+    ("implantacao", u"IMPLANTAÇÃO", u"SITE PLAN", False),
+    ("pavimentacao", u"PAVIMENTAÇÃO", u"PAVING PLAN", False),
+)
 VERTICAL_TITLES = (
     ("corte", u"CORTE", u"SECTION", False),
     ("elevacao", u"ELEVAÇÃO", u"ELEVATION", False),
 )
-# complemento das plantas 2..6: (chave, texto PT, texto EN) + nome do nível
-SUFFIXES = (("pav", u"- PAV.", u"LEVEL"),
-            ("amp", u"- AMPLIAÇÃO", u"ENLARGED"))
+# complemento: (chave, texto PT, texto EN). FREE_SUFFIX = texto digitado
+# (ou nada) e vale para todos os títulos; PAV./AMPLIAÇÃO + nível só para
+# as plantas 2..6. O complemento sempre entra depois de " - ".
+FREE_SUFFIX = "none"
+SUFFIXES = ((FREE_SUFFIX, u"", u""),
+            ("pav", u"PAV.", u"LEVEL"),
+            ("amp", u"AMPLIAÇÃO", u"ENLARGED"))
 MANUAL_KEY = "manual"
 
 
@@ -551,7 +587,8 @@ def room_prefix(room):
 def name_options(target, room):
     """VIEW NAME na ordem do padrão do escritório (1..11) para o tipo de vista."""
     if target == "plan":
-        base, room_base = PLAN_TITLES, PLAN_TITLES[1:]   # cobertura não tem versão por ambiente
+        # cobertura e os títulos extras não têm versão por ambiente
+        base, room_base = PLAN_TITLES + EXTRA_PLAN_TITLES, PLAN_TITLES[1:]
     else:
         base, room_base = VERTICAL_TITLES, VERTICAL_TITLES
     opts = [{"key": key, "label": pt, "pt": pt, "en": en, "suffix": suf, "room": False}
@@ -575,19 +612,33 @@ def level_text(level):
 def suffix_labels(level):
     """Itens do combo Complemento, já com o nome do nível."""
     lv = level_text(level)
-    return [(pt + u" " + lv).strip() for _k, pt, _en in SUFFIXES]
+    return [u"Sem complemento ou manual" if key == FREE_SUFFIX
+            else u" ".join(x for x in (u"-", pt, lv) if x)
+            for key, pt, _en in SUFFIXES]
 
 
-def compose_names(opt, suffix_key, level, room, manual):
+def free_suffix(text):
+    """Complemento digitado, sem hífens/travessões iniciais (o ' - ' é automático)."""
+    return re.sub(u"^[\\s\\-\u2013]+", u"", to_unicode(text)).strip()
+
+
+def compose_names(opt, suffix_key, level, room, manual, suffix_text=u""):
     """Devolve (VIEW NAME, Title on Sheet - English)."""
     if opt["key"] == MANUAL_KEY:
         return manual.strip(), u""
     pt, en = opt["pt"], opt["en"]
-    if opt["suffix"]:
+    if not opt["suffix"]:
+        suffix_key = FREE_SUFFIX   # PAV./AMPLIAÇÃO só nas plantas 2..6
+    if suffix_key == FREE_SUFFIX:
+        extra = free_suffix(suffix_text)
+        if extra:
+            pt += u" - " + extra
+            en += EN_DASH + extra
+    else:
         lv = level_text(level)
         _k, suf_pt, suf_en = next(s for s in SUFFIXES if s[0] == suffix_key)
-        pt = u" ".join(x for x in (pt, suf_pt, lv) if x)
-        en = en + EN_DASH + u" ".join(x for x in (suf_en, lv) if x)
+        pt += u" - " + u" ".join(x for x in (suf_pt, lv) if x)
+        en += EN_DASH + u" ".join(x for x in (suf_en, lv) if x)
     if opt["room"] and room is not None:
         number, name, name_en = room_info(room)
         pt = u"{} - {} - {}".format(number, name, pt)
@@ -756,6 +807,9 @@ CROP_XAML = u"""
     <ComboBox x:Name="vname"/>
     <TextBlock x:Name="suffix_lbl" Text="Complemento"/>
     <ComboBox x:Name="vsuffix"/>
+    <TextBlock x:Name="suffix_text_lbl"
+               Text="Complemento manual (vazio = sem complemento; entra depois de ' - ')"/>
+    <TextBox x:Name="suffix_text"/>
     <TextBlock x:Name="manual_lbl"
                Text="Nome manual (vazio = mantém o nome do Revit;  # = sequência 01, 02...)"/>
     <TextBox x:Name="manual"/>
@@ -800,6 +854,8 @@ class CropWindow(forms.WPFWindow):
         self.name_hint.Text = u"\n".join(ctx["hints"])
         self._suffix_idx = next(
             (i for i, s in enumerate(SUFFIXES) if s[0] == cfg["suffix"]), 0)
+        self._forced = False   # combo travado em "Sem complemento ou manual"
+        self._busy = False
 
         enabled = [k for k in MODES if k not in reasons]
         for key, rb in self._radios.items():
@@ -808,6 +864,7 @@ class CropWindow(forms.WPFWindow):
         self.vname.SelectionChanged += self._on_name
         self.vsuffix.SelectionChanged += self._on_name
         self.manual.TextChanged += self._on_name
+        self.suffix_text.TextChanged += self._on_name
         start = cfg["mode"] if cfg["mode"] in enabled else enabled[0]
         self._radios[start].IsChecked = True
         self._refresh()
@@ -847,7 +904,7 @@ class CropWindow(forms.WPFWindow):
                                     if self._saved["vname"] in keys else 0)
 
         # complemento traz o nome do nível da vista resultante
-        if self.vsuffix.SelectedIndex >= 0:
+        if self.vsuffix.SelectedIndex >= 0 and not self._forced:
             self._suffix_idx = self.vsuffix.SelectedIndex
         self.vsuffix.ItemsSource = suffix_labels(self.ctx["level"][mode])
         self.vsuffix.SelectedIndex = self._suffix_idx
@@ -867,16 +924,41 @@ class CropWindow(forms.WPFWindow):
         opt = self.name_opt
         manual = to_unicode(self.manual.Text)
         pt, en = compose_names(opt, self.suffix_key, self.ctx["level"][self.mode],
-                               self.ctx["room"], manual)
+                               self.ctx["room"], manual, to_unicode(self.suffix_text.Text))
         if opt["key"] == MANUAL_KEY:
             pt = sequence_name(pt) if pt else u""
         return pt, en
 
+    def _sync_suffix(self, opt):
+        """PAV./AMPLIAÇÃO só nas plantas 2..6: nas demais o combo fica em
+        'Sem complemento ou manual' e a escolha anterior volta depois."""
+        if opt["suffix"]:
+            if self._forced:
+                self.vsuffix.SelectedIndex = self._suffix_idx
+                self._forced = False
+            self._suffix_idx = self.vsuffix.SelectedIndex
+        else:
+            self._forced = True
+            self.vsuffix.SelectedIndex = 0
+
     def _update_names(self):
+        if self._busy:   # mudar o combo aqui dispara SelectionChanged de novo
+            return
+        self._busy = True
+        try:
+            self._render_names()
+        finally:
+            self._busy = False
+
+    def _render_names(self):
         opt = self.name_opt
         is_manual = opt["key"] == MANUAL_KEY
+        self._sync_suffix(opt)
+        free = self.suffix_key == FREE_SUFFIX
         self.vsuffix.IsEnabled = opt["suffix"]
-        self.suffix_lbl.Opacity = 1.0 if opt["suffix"] else 0.4
+        self.suffix_lbl.Opacity = 1.0 if not is_manual else 0.4
+        self.suffix_text.IsEnabled = free and not is_manual
+        self.suffix_text_lbl.Opacity = 1.0 if free and not is_manual else 0.4
         self.manual.IsEnabled = is_manual
         self.manual_lbl.Opacity = 1.0 if is_manual else 0.4
         pt, en = self.names()
@@ -914,7 +996,7 @@ warnings = []
 
 elements, ignored = get_target_elements()
 if ignored:
-    warnings.append(u"{} elemento(s) da seleção ignorado(s): categoria não suportada.".format(ignored))
+    warnings.append(u"{} elemento(s) da seleção ignorado(s): vistas, viewports e tipos não definem recorte.".format(ignored))
 
 geoms = []
 for el in elements:
