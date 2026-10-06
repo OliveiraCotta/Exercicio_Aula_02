@@ -1,27 +1,38 @@
 # -*- coding: utf-8 -*-
-"""Abertura de Múltiplas Vistas - extensão do 01_Abertura de Vistas para vários ambientes.
+# Abertura de Múltiplas Vistas - extensão do 01_Abertura de Vistas para vários ambientes.
+#
+# Mesma lógica do 01 (geometria, recorte orientado, nomenclatura, tipos de
+# vista, diálogo), aplicada a CADA ambiente da seleção:
+#   1. Usa a seleção atual (ou pede para selecionar) Ambientes (Rooms).
+#   2. Pergunta a margem (m) e o que fazer - UMA vista POR AMBIENTE:
+#        - criar nova vista de planta (Piso, Forro, Estrutural, Área), no
+#          nível de cada ambiente;
+#        - criar vista de chamada (Callout) na vista ativa.
+#      ("Recortar a vista ativa" do 01 não se aplica: uma vista só não pode
+#      ter o recorte de vários ambientes separados.)
+#   3. Destino no Navegador de Projeto: pasta existente ou nova, gravada no
+#      parâmetro que a organização atual do navegador usa para as pastas
+#      (BrowserOrganization). O texto antes do 1º "_" da pasta (D000_...)
+#      vira o prefixo do View Name.
+#   4. View Template opcional (só os compatíveis com o tipo de vista).
+#   5. Nomenclatura escolhida uma vez e composta para cada ambiente:
+#        Title on Sheet           = nome (Principal + Complemento)
+#        View Name                = PREFIXO_ + nome
+#        Title on Sheet - English = nome em inglês (sem prefixo)
+#   6. Recorte orientado + margem calculado por ambiente (igual ao 01).
+#   7. Ordem: nível (de baixo para cima) e número do ambiente. As vistas
+#      criadas são abertas nessa ordem; a primeira fica ativa no final.
+#   8. Ambiente sem vista (não colocado, sem geometria ou falha na criação)
+#      é ignorado; ao final, um resumo lista o que precisa ser revisado.
+#
+# A descrição fica em comentário (e não em docstring) de propósito: o
+# pyRevit 5.2 lê a docstring do módulo com .decode('utf-8'), que falha com
+# acentos no IronPython e deixa o botão sem tooltip. O tooltip é só __doc__.
 
-Mesma lógica do 01 (geometria, recorte orientado, nomenclatura, tipos de
-vista, diálogo), aplicada a CADA ambiente da seleção:
-  1. Usa a seleção atual (ou pede para selecionar) Ambientes (Rooms).
-  2. Pergunta a margem (m) e o que fazer - UMA vista POR AMBIENTE:
-       - criar nova vista de planta (Piso, Forro, Estrutural, Área), no
-         nível de cada ambiente;
-       - criar vista de chamada (Callout) na vista ativa.
-     ("Recortar a vista ativa" do 01 não se aplica: uma vista só não pode
-     ter o recorte de vários ambientes separados.)
-  3. VIEW NAME escolhido uma vez e composto para cada ambiente; as opções
-     "Nº - AMBIENTE - ..." usam o número/nome de cada um.
-  4. Recorte orientado + margem calculado por ambiente (igual ao 01).
-  5. Ordem: nível (de baixo para cima) e número do ambiente. As vistas
-     criadas são abertas nessa ordem; a primeira fica ativa no final.
-  6. Ambiente sem vista (não colocado, sem geometria ou falha na criação)
-     é ignorado; ao final, um resumo lista o que precisa ser revisado.
-"""
+__title__ = u"Abertura de\nMúltiplas Vistas"
+__doc__ = u"""Cria uma vista recortada para cada ambiente selecionado (planta ou chamada), já com nome, pasta no Navegador de Projeto e View Template.
 
-__title__ = "Abertura de\nMúltiplas Vistas"
-__doc__ = ("Cria uma planta ou chamada recortada para cada ambiente "
-           "selecionado, com margem em metros, e abre todas as vistas.")
+Selecione os ambientes e clique no botão."""
 
 import re
 import math
@@ -59,6 +70,12 @@ def eid_int(eid):
     """ElementId -> int (Revit 2024+ usa .Value, versões antigas .IntegerValue)."""
     raw = eid.Value if hasattr(eid, "Value") else eid.IntegerValue
     return int(raw)
+
+
+def natural_key(text):
+    """'2', '10', 'A1' em ordem humana (2 antes de 10)."""
+    return [(0, int(t), u"") if t.isdigit() else (1, 0, t.lower())
+            for t in re.split(u"(\\d+)", to_unicode(text)) if t]
 
 
 def m_to_ft(meters):
@@ -473,17 +490,29 @@ def _vft_name(vft):
     return to_unicode(DB.Element.Name.GetValue(vft))
 
 
+def family_view_type(fam):
+    """ViewFamily do tipo -> ViewType da vista criada (filtra os View Templates)."""
+    for f, vt in ((DB.ViewFamily.FloorPlan, VT.FloorPlan),
+                  (DB.ViewFamily.CeilingPlan, VT.CeilingPlan),
+                  (DB.ViewFamily.StructuralPlan, VT.EngineeringPlan),
+                  (DB.ViewFamily.AreaPlan, VT.AreaPlan),
+                  (DB.ViewFamily.Detail, VT.Detail)):
+        if fam == f:
+            return vt
+    return None
+
+
 def plan_type_items():
     items = []
     for fam, label in PLAN_FAMILIES:
         for vft in VIEW_FAMILY_TYPES:
             if vft.ViewFamily == fam:
                 items.append({"label": u"{}: {}".format(label, _vft_name(vft)),
-                              "kind": "plan", "id": vft.Id})
+                              "kind": "plan", "id": vft.Id, "vt": family_view_type(fam)})
     if any(v.ViewFamily == DB.ViewFamily.AreaPlan for v in VIEW_FAMILY_TYPES):
         for scheme in DB.FilteredElementCollector(doc).OfClass(DB.AreaScheme):
             items.append({"label": u"Planta de Área: {}".format(to_unicode(scheme.Name)),
-                          "kind": "area", "id": scheme.Id})
+                          "kind": "area", "id": scheme.Id, "vt": VT.AreaPlan})
     return items
 
 
@@ -501,7 +530,7 @@ def callout_type_items(parent):
             if vft.ViewFamily == fam:
                 kind = u"Detalhe" if fam == DB.ViewFamily.Detail else u"Planta"
                 items.append({"label": u"Chamada ({}): {}".format(kind, _vft_name(vft)),
-                              "kind": "callout", "id": vft.Id})
+                              "kind": "callout", "id": vft.Id, "vt": family_view_type(fam)})
     return items
 
 
@@ -513,7 +542,8 @@ def view_type_label(view):
 
 
 # ------------------------------------------------------------------
-# 6. Nomenclatura: VIEW NAME (PT) + Title on Sheet - English (automático)
+# 6. Nomenclatura: Title on Sheet (PT) + Title on Sheet - English (automático)
+#    + View Name (= PREFIXO DA PASTA + "_" + Title on Sheet)
 # ------------------------------------------------------------------
 EN_TITLE_PARAM = u"Title on Sheet - English"
 ROOM_EN_PARAM = u"Room Name English"
@@ -531,9 +561,13 @@ VERTICAL_TITLES = (
     ("corte", u"CORTE", u"SECTION", False),
     ("elevacao", u"ELEVAÇÃO", u"ELEVATION", False),
 )
-# complemento das plantas 2..6: (chave, texto PT, texto EN) + nome do nível
-SUFFIXES = (("pav", u"- PAV.", u"LEVEL"),
-            ("amp", u"- AMPLIAÇÃO", u"ENLARGED"))
+# complemento: (chave, texto PT, texto EN). FREE_SUFFIX = texto digitado
+# (ou nada) e vale para todos os títulos; PAV./AMPLIAÇÃO + nível só para
+# as plantas 2..6. O complemento sempre entra depois de " - " (como no 01).
+FREE_SUFFIX = "none"
+SUFFIXES = ((FREE_SUFFIX, u"", u""),
+            ("pav", u"PAV.", u"LEVEL"),
+            ("amp", u"AMPLIAÇÃO", u"ENLARGED"))
 MANUAL_KEY = "manual"
 
 
@@ -577,19 +611,33 @@ def level_text(level):
 def suffix_labels(level):
     """Itens do combo Complemento, já com o nome do nível."""
     lv = level_text(level)
-    return [(pt + u" " + lv).strip() for _k, pt, _en in SUFFIXES]
+    return [u"Sem nomenclatura (manual ou sequência)" if key == FREE_SUFFIX
+            else u" ".join(x for x in (u"-", pt, lv) if x)
+            for key, pt, _en in SUFFIXES]
 
 
-def compose_names(opt, suffix_key, level, room, manual):
-    """Devolve (VIEW NAME, Title on Sheet - English)."""
+def free_suffix(text):
+    """Complemento digitado, sem hífens/travessões iniciais (o ' - ' é automático)."""
+    return re.sub(u"^[\\s\\-–]+", u"", to_unicode(text)).strip()
+
+
+def compose_names(opt, suffix_key, level, room, manual, suffix_text=u""):
+    """Devolve (Title on Sheet, Title on Sheet - English) - sem prefixo de pasta."""
     if opt["key"] == MANUAL_KEY:
         return manual.strip(), u""
     pt, en = opt["pt"], opt["en"]
-    if opt["suffix"]:
+    if not opt["suffix"]:
+        suffix_key = FREE_SUFFIX   # PAV./AMPLIAÇÃO só nas plantas 2..6
+    if suffix_key == FREE_SUFFIX:
+        extra = free_suffix(suffix_text)
+        if extra:
+            pt += u" - " + extra
+            en += EN_DASH + extra
+    else:
         lv = level_text(level)
         _k, suf_pt, suf_en = next(s for s in SUFFIXES if s[0] == suffix_key)
-        pt = u" ".join(x for x in (pt, suf_pt, lv) if x)
-        en = en + EN_DASH + u" ".join(x for x in (suf_en, lv) if x)
+        pt += u" - " + u" ".join(x for x in (suf_pt, lv) if x)
+        en += EN_DASH + u" ".join(x for x in (suf_en, lv) if x)
     if opt["room"] and room is not None:
         number, name, name_en = room_info(room)
         pt = u"{} - {} - {}".format(number, name, pt)
@@ -606,15 +654,22 @@ def clean_name(name):
     return _BAD_NAME_CHARS.sub(u"-", name).strip()
 
 
-def sequence_name(pattern):
-    """'AMPLIAÇÃO #' -> 'AMPLIAÇÃO 01', 02... (primeiro livre)."""
-    pattern = clean_name(pattern)
-    if u"#" not in pattern:
-        return pattern
+def with_prefix(prefix, title):
+    """View Name = PREFIXO + '_' + nome (sem prefixo: só o nome)."""
+    return u"{}_{}".format(prefix, title) if prefix and title else title
+
+
+def resolve_names(prefix, title, en):
+    """(View Name, Title on Sheet, English). '#' vira 01, 02... - o primeiro
+    número com View Name livre - e o mesmo número vai para os dois títulos."""
+    if u"#" not in title:
+        return clean_name(with_prefix(prefix, title)), title, en
     n = 1
-    while pattern.replace(u"#", u"{:02d}".format(n)) in VIEW_NAMES:
+    while clean_name(with_prefix(prefix, title.replace(u"#", u"{:02d}".format(n)))) in VIEW_NAMES:
         n += 1
-    return pattern.replace(u"#", u"{:02d}".format(n))
+    num = u"{:02d}".format(n)
+    title, en = title.replace(u"#", num), en.replace(u"#", num)
+    return clean_name(with_prefix(prefix, title)), title, en
 
 
 def unique_view_name(base):
@@ -652,6 +707,191 @@ def apply_names(view, pt, en, notes):
                          .format(EN_TITLE_PARAM))
         else:
             p.Set(en)
+
+
+def apply_title_on_sheet(view, title, notes):
+    """Title on Sheet nativo (VIEW_DESCRIPTION): o nome sem o prefixo da pasta."""
+    if not title:
+        return
+    p = view.get_Parameter(BIP.VIEW_DESCRIPTION)
+    if p is None or p.IsReadOnly:
+        notes.append(u"Parâmetro 'Title on Sheet' indisponível na vista; título não gravado.")
+    else:
+        p.Set(title)
+
+
+# ------------------------------------------------------------------
+# 6b. Pasta do Navegador de Projeto (organização nativa do Revit)
+# ------------------------------------------------------------------
+# O Revit monta as pastas do navegador a partir de parâmetros das vistas
+# (BrowserOrganization). "Mandar a vista para a pasta" = gravar o valor da
+# pasta nesse parâmetro. Só níveis feitos com parâmetro de projeto ou
+# compartilhado podem ser gravados; os internos (Tipo de vista, Fase...)
+# o Revit preenche sozinho.
+BROWSER_VIEWTYPES = PLAN_VIEWTYPES + (VT.AreaPlan, VT.Section, VT.Elevation, VT.Detail,
+                                      VT.ThreeD, VT.DraftingView, VT.Legend)
+_FOLDER_PREFIX = re.compile(u"^([^_]+)_")
+EMPTY_FOLDER = (u"", u"???")
+
+
+def folder_prefix(name):
+    """'D000_IMPLANTAÇÃO' -> 'D000' (texto antes do 1º '_'); sem '_' -> ''."""
+    m = _FOLDER_PREFIX.match(to_unicode(name).strip())
+    return m.group(1).strip() if m else u""
+
+
+class BrowserFolders(object):
+    """Pastas da organização atual do Navegador de Projeto para vistas."""
+
+    def __init__(self):
+        self.org_name = u""
+        self.reason = None
+        self.levels = []    # níveis graváveis: [(param_id, Definition)], ordem do navegador
+        self.folder = None  # índice em self.levels do nível que define a pasta
+        self.entries = []   # pastas existentes: [{"label", "name", "path"}]
+        try:
+            self._load()
+        except Exception as exc:
+            self.reason = u"Não foi possível ler o Navegador de Projeto ({}).".format(to_unicode(exc))
+            self.entries = []
+
+    @property
+    def available(self):
+        return self.reason is None
+
+    @property
+    def param_name(self):
+        return to_unicode(self.levels[self.folder][1].Name) if self.available else u""
+
+    def _definition(self, pid):
+        if eid_int(pid) <= 0:
+            return None   # parâmetro interno
+        pe = doc.GetElement(pid)
+        return pe.GetDefinition() if isinstance(pe, DB.ParameterElement) else None
+
+    def _load(self):
+        org = DB.BrowserOrganization.GetCurrentBrowserOrganizationForViews(doc)
+        if org is None:
+            self.reason = u"Nenhuma organização de navegador ativa para vistas."
+            return
+        self.org_name = to_unicode(org.Name)
+        level_defs = {}   # posição no navegador -> (param_id, Definition) ou None
+        rows = []         # por vista: {posição: nome da pasta}
+        for v in DB.FilteredElementCollector(doc).OfClass(DB.View):
+            if v.IsTemplate or v.ViewType not in BROWSER_VIEWTYPES:
+                continue
+            try:
+                items = list(org.GetFolderItems(v.Id))
+            except Exception:
+                continue
+            row = {}
+            for i, item in enumerate(items):
+                if i not in level_defs:
+                    defn = self._definition(item.ElementId)
+                    level_defs[i] = (item.ElementId, defn) if defn is not None else None
+                if level_defs[i] is not None:
+                    row[i] = to_unicode(item.Name).strip()
+            rows.append(row)
+
+        positions = sorted(i for i, d in level_defs.items() if d is not None)
+        if not positions:
+            self.reason = (u"A organização '{}' do navegador não agrupa as vistas por "
+                           u"parâmetro de projeto; não há pasta para gravar.".format(self.org_name))
+            return
+        self.levels = [level_defs[i] for i in positions]
+
+        # nível da pasta: o que mais tem nomes "PREFIXO_..." (empate: o mais interno)
+        def score(k):
+            pos = positions[k]
+            return (sum(1 for r in rows if folder_prefix(r.get(pos, u""))), k)
+        self.folder = max(range(len(positions)), key=score)
+
+        seen = set()
+        for r in rows:
+            values = [r.get(pos, u"") for pos in positions[:self.folder + 1]]
+            name = values[-1]
+            if name in EMPTY_FOLDER or tuple(values) in seen:
+                continue
+            seen.add(tuple(values))
+            ancestors = [x for x in values[:-1] if x not in EMPTY_FOLDER]
+            self.entries.append({
+                "label": u" › ".join(ancestors + [name]),
+                "name": name,
+                "path": [(self.levels[k][0], self.levels[k][1], values[k])
+                         for k in range(self.folder + 1) if values[k] not in EMPTY_FOLDER]})
+        self.entries.sort(key=lambda e: natural_key(e["label"]))
+
+    def new_path(self, base, name):
+        """Nova pasta: mesmo grupo (níveis acima) da pasta existente 'base'."""
+        if not self.available:
+            return []
+        fid = eid_int(self.levels[self.folder][0])
+        path = [p for p in (base["path"] if base else []) if eid_int(p[0]) != fid]
+        return path + [(self.levels[self.folder][0], self.levels[self.folder][1], name)]
+
+    @staticmethod
+    def apply(view, path, notes):
+        for _pid, defn, value in path:
+            p = view.get_Parameter(defn)
+            if p is None:
+                notes.append(u"Parâmetro de pasta '{}' não existe na vista; pasta não definida."
+                             .format(to_unicode(defn.Name)))
+            elif p.IsReadOnly or p.StorageType != DB.StorageType.String:
+                notes.append(u"Parâmetro de pasta '{}' não aceita texto; pasta não definida."
+                             .format(to_unicode(defn.Name)))
+            else:
+                p.Set(value)
+
+    @staticmethod
+    def check(view, path, notes):
+        """Depois do View Template: avisa se ele trocou a pasta."""
+        for _pid, defn, value in path:
+            p = view.get_Parameter(defn)
+            if p is not None and to_unicode(p.AsString()) != value:
+                notes.append(u"Pasta: '{}' ficou '{}' (controlado pelo View Template)."
+                             .format(to_unicode(defn.Name), to_unicode(p.AsString())))
+
+
+# ------------------------------------------------------------------
+# 6c. View Template
+# ------------------------------------------------------------------
+NO_TEMPLATE = u"Sem View Template"
+VIEW_TEMPLATES = sorted((v for v in DB.FilteredElementCollector(doc).OfClass(DB.View)
+                         if v.IsTemplate),
+                        key=lambda v: natural_key(v.Name))
+
+
+def template_items(vt):
+    """Templates do mesmo tipo da vista criada (detalhe aceita corte/elevação)."""
+    if vt is None:
+        return []
+    allowed = (vt, VT.Section, VT.Elevation) if vt == VT.Detail else (vt,)
+    return [{"label": to_unicode(t.Name), "id": t.Id}
+            for t in VIEW_TEMPLATES if t.ViewType in allowed]
+
+
+def template_folder_conflicts(template_id, path):
+    """Parâmetros de pasta controlados pelo template: [(parâmetro, valor do template)]."""
+    tpl = doc.GetElement(template_id)
+    out = []
+    try:
+        controlled = (set(eid_int(i) for i in tpl.GetTemplateParameterIds())
+                      - set(eid_int(i) for i in tpl.GetNonControlledTemplateParameterIds()))
+    except Exception:
+        return out
+    for pid, defn, _value in path:
+        if eid_int(pid) in controlled:
+            p = tpl.get_Parameter(defn)
+            out.append((to_unicode(defn.Name), to_unicode(p.AsString()) if p is not None else u""))
+    return out
+
+
+def apply_template(view, template, notes):
+    if not view.IsValidViewTemplate(template["id"]):
+        notes.append(u"View Template '{}' não é compatível com esta vista; criada sem template."
+                     .format(template["label"]))
+        return
+    view.ViewTemplateId = template["id"]
 
 
 # ------------------------------------------------------------------
@@ -694,12 +934,6 @@ def parse_margin(text):
     return val
 
 
-def natural_key(text):
-    """'2', '10', 'A1' em ordem humana (2 antes de 10)."""
-    return [(0, int(t), u"") if t.isdigit() else (1, 0, t.lower())
-            for t in re.split(u"(\\d+)", to_unicode(text)) if t]
-
-
 def room_sort_key(g):
     """Ordem de criação/abertura: nível (de baixo para cima), número, nome."""
     lid = element_level_id(g.el)
@@ -710,12 +944,12 @@ def room_sort_key(g):
 
 
 # ------------------------------------------------------------------
-# 8. Diálogo (mesmo tema dos outros botões)
+# 8. Diálogo (mesmo tema dos outros botões; duas colunas para caber na tela)
 # ------------------------------------------------------------------
 CROP_XAML = u"""
 <Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="Crop View Offset" Height="Auto" Width="480"
+        Title="Crop View Offset" Height="Auto" Width="940"
         SizeToContent="Height" WindowStartupLocation="CenterScreen"
         ResizeMode="NoResize" Background="#0E1526">
   <Window.Resources>
@@ -742,49 +976,124 @@ CROP_XAML = u"""
       <Setter Property="FontFamily" Value="Segoe UI"/>
       <Setter Property="Margin" Value="0,10,0,0"/>
     </Style>
+    <Style TargetType="Border">
+      <Setter Property="Background" Value="#131D33"/>
+      <Setter Property="BorderBrush" Value="#26405F"/>
+      <Setter Property="BorderThickness" Value="1"/>
+      <Setter Property="Padding" Value="12,4,12,10"/>
+      <Setter Property="Margin" Value="0,12,0,0"/>
+    </Style>
   </Window.Resources>
   <StackPanel Margin="18">
     <TextBlock Text="RECORTE POR AMBIENTE  ·  MÚLTIPLAS VISTAS" FontSize="15" FontWeight="SemiBold"
                Foreground="#65E3FF" Margin="0,0,0,4"/>
     <TextBlock x:Name="info" TextWrapping="Wrap" FontSize="11"
-               Foreground="#7A8FA9" Margin="0,0,0,6"/>
+               Foreground="#7A8FA9" Margin="0,0,0,2"/>
 
-    <TextBlock Text="Margem ao redor de cada ambiente (m)"/>
-    <TextBox x:Name="margin"/>
+    <Grid>
+      <Grid.ColumnDefinitions>
+        <ColumnDefinition Width="*"/>
+        <ColumnDefinition Width="18"/>
+        <ColumnDefinition Width="*"/>
+      </Grid.ColumnDefinitions>
 
-    <TextBlock Text="O que fazer (uma vista por ambiente)" Margin="0,14,0,0"/>
-    <RadioButton x:Name="rb_plans" GroupName="mode"
-                 Content="Criar nova vista de planta (Piso, Forro, Estrutural, Área)"/>
-    <RadioButton x:Name="rb_callout" GroupName="mode"
-                 Content="Criar vista de chamada (Callout) na vista ativa"/>
-    <TextBlock x:Name="reasons" TextWrapping="Wrap" FontSize="11"
-               Foreground="#FFB454" Margin="0,8,0,0"/>
+      <!-- coluna esquerda: o que criar e onde -->
+      <StackPanel Grid.Column="0">
+        <Border>
+          <StackPanel>
+            <TextBlock Text="Margem ao redor de cada ambiente (m)"/>
+            <TextBox x:Name="margin"/>
 
-    <TextBlock x:Name="vtype_lbl" Text="Tipo de vista"/>
-    <ComboBox x:Name="vtype"/>
+            <TextBlock Text="O que fazer (uma vista por ambiente)" Margin="0,14,0,0"/>
+            <RadioButton x:Name="rb_plans" GroupName="mode"
+                         Content="Criar nova vista de planta (Piso, Forro, Estrutural, Área)"/>
+            <RadioButton x:Name="rb_callout" GroupName="mode"
+                         Content="Criar vista de chamada de detalhe (Callout) na vista ativa"/>
+            <TextBlock x:Name="reasons" TextWrapping="Wrap" FontSize="11"
+                       Foreground="#FFB454" Margin="0,8,0,0"/>
 
-    <TextBlock Text="VIEW NAME" FontSize="12" FontWeight="SemiBold"
-               Foreground="#65E3FF" Margin="0,18,0,3"/>
-    <ComboBox x:Name="vname"/>
-    <TextBlock x:Name="suffix_lbl" Text="Complemento"/>
-    <ComboBox x:Name="vsuffix"/>
-    <TextBlock x:Name="manual_lbl"
-               Text="Nome manual (vazio = mantém o nome do Revit;  # = sequência 01, 02...)"/>
-    <TextBox x:Name="manual"/>
+            <TextBlock x:Name="vtype_lbl" Text="Tipo de vista"/>
+            <ComboBox x:Name="vtype"/>
+          </StackPanel>
+        </Border>
 
-    <Border Background="#131D33" BorderBrush="#26405F" BorderThickness="1"
-            Padding="10,6,10,8" Margin="0,12,0,0">
-      <StackPanel>
-        <TextBlock x:Name="pv_lbl" Text="VIEW NAME" FontSize="10" Foreground="#7A8FA9"
-                   TextWrapping="Wrap" Margin="0"/>
-        <TextBlock x:Name="pv_pt" FontWeight="SemiBold" TextWrapping="Wrap" Margin="0,2,0,8"/>
-        <TextBlock Text="TITLE ON SHEET - ENGLISH  (automático)" FontSize="10"
-                   Foreground="#7A8FA9" Margin="0"/>
-        <TextBlock x:Name="pv_en" FontWeight="SemiBold" TextWrapping="Wrap" Margin="0,2,0,0"/>
+        <Border>
+          <StackPanel>
+            <TextBlock Text="DESTINO DAS VISTAS  ·  NAVEGADOR DE PROJETO" FontSize="12"
+                       FontWeight="SemiBold" Foreground="#65E3FF"/>
+            <TextBlock x:Name="folder_src" TextWrapping="Wrap" FontSize="11"
+                       Foreground="#7A8FA9" Margin="0,0,0,2"/>
+            <RadioButton x:Name="rb_f_exist" GroupName="folder" Content="Pasta existente"/>
+            <ComboBox x:Name="folder_list" Margin="20,4,0,0"/>
+            <RadioButton x:Name="rb_f_new" GroupName="folder" Content="Nova pasta"
+                         Margin="0,10,0,0"/>
+            <TextBox x:Name="folder_new" Margin="20,4,0,0"
+                     ToolTip="Ex.: D003_DETALHAMENTO - o texto antes do 1º '_' vira o prefixo do View Name"/>
+            <TextBlock x:Name="folder_new_hint" TextWrapping="Wrap" FontSize="11"
+                       Foreground="#7A8FA9" Margin="20,3,0,0"/>
+            <RadioButton x:Name="rb_f_none" GroupName="folder"
+                         Content="Não definir pasta (View Name sem prefixo)" Margin="0,10,0,0"/>
+            <TextBlock x:Name="folder_prefix_txt" FontWeight="SemiBold" Margin="0,10,0,0"/>
+            <TextBlock x:Name="folder_reason" TextWrapping="Wrap" FontSize="11"
+                       Foreground="#FFB454" Margin="0,4,0,0"/>
+          </StackPanel>
+        </Border>
+
+        <Border>
+          <StackPanel>
+            <TextBlock Text="MODELO DE VISTA (VIEW TEMPLATE)" FontSize="12"
+                       FontWeight="SemiBold" Foreground="#65E3FF"/>
+            <ComboBox x:Name="template"/>
+            <TextBlock Text="Só aparecem os templates compatíveis com o tipo de vista."
+                       TextWrapping="Wrap" FontSize="11" Foreground="#7A8FA9" Margin="0,4,0,0"/>
+          </StackPanel>
+        </Border>
       </StackPanel>
-    </Border>
-    <TextBlock x:Name="name_hint" TextWrapping="Wrap" FontSize="11"
-               Foreground="#FFB454" Margin="0,6,0,0"/>
+
+      <!-- coluna direita: nomenclatura + pré-visualização -->
+      <StackPanel Grid.Column="2">
+        <Border>
+          <StackPanel>
+            <TextBlock Text="NOMENCLATURA" FontSize="12" FontWeight="SemiBold" Foreground="#65E3FF"/>
+            <TextBlock Text="Vale para View Name, Title on Sheet e Title on Sheet - English."
+                       TextWrapping="Wrap" FontSize="11" Foreground="#7A8FA9" Margin="0,0,0,2"/>
+            <TextBlock Text="A - Principal"/>
+            <ComboBox x:Name="vname"/>
+            <TextBlock x:Name="manual_lbl"
+                       Text="Nome manual (vazio = mantém o nome do Revit;  # = sequência 01, 02...)"/>
+            <TextBox x:Name="manual"/>
+            <TextBlock x:Name="suffix_lbl" Text="B - Complemento"/>
+            <ComboBox x:Name="vsuffix"/>
+            <TextBlock x:Name="suffix_text_lbl"
+                       Text="Complemento manual (vazio = sem complemento;  # = sequência 01, 02...)"/>
+            <TextBox x:Name="suffix_text"/>
+          </StackPanel>
+        </Border>
+
+        <Border>
+          <StackPanel>
+            <TextBlock x:Name="pv_lbl" Text="PRÉ-VISUALIZAÇÃO" FontSize="10" Foreground="#7A8FA9"
+                       TextWrapping="Wrap" Margin="0,6,0,6"/>
+            <TextBlock Text="VIEW NAME  (prefixo da pasta + _ + nome)" FontSize="10"
+                       Foreground="#7A8FA9" Margin="0"/>
+            <TextBlock x:Name="pv_name" FontWeight="SemiBold" TextWrapping="Wrap" Margin="0,2,0,8"/>
+            <TextBlock Text="TITLE ON SHEET" FontSize="10" Foreground="#7A8FA9" Margin="0"/>
+            <TextBlock x:Name="pv_title" FontWeight="SemiBold" TextWrapping="Wrap" Margin="0,2,0,8"/>
+            <TextBlock Text="TITLE ON SHEET - ENGLISH  (automático)" FontSize="10"
+                       Foreground="#7A8FA9" Margin="0"/>
+            <TextBlock x:Name="pv_en" FontWeight="SemiBold" TextWrapping="Wrap" Margin="0,2,0,8"/>
+            <TextBlock Text="PASTA DE DESTINO" FontSize="10" Foreground="#7A8FA9" Margin="0"/>
+            <TextBlock x:Name="pv_folder" FontWeight="SemiBold" TextWrapping="Wrap" Margin="0,2,0,8"/>
+            <TextBlock Text="VIEW TEMPLATE" FontSize="10" Foreground="#7A8FA9" Margin="0"/>
+            <TextBlock x:Name="pv_template" FontWeight="SemiBold" TextWrapping="Wrap" Margin="0,2,0,0"/>
+          </StackPanel>
+        </Border>
+        <TextBlock x:Name="live_hint" TextWrapping="Wrap" FontSize="11"
+                   Foreground="#FFB454" Margin="0,6,0,0"/>
+        <TextBlock x:Name="name_hint" TextWrapping="Wrap" FontSize="11"
+                   Foreground="#FFB454" Margin="0,4,0,0"/>
+      </StackPanel>
+    </Grid>
 
     <CheckBox x:Name="open_views" Content="Abrir as vistas criadas ao final"/>
 
@@ -798,6 +1107,8 @@ CROP_XAML = u"""
 </Window>
 """
 
+FOLDER_MODES = ("existing", "new", "none")
+
 
 class CropWindow(forms.WPFWindow):
     def __init__(self, xaml, info, ctx, reasons, cfg):
@@ -805,14 +1116,21 @@ class CropWindow(forms.WPFWindow):
         self.confirmed = False
         self.ctx = ctx
         self._saved = cfg
+        self._ready = False    # eventos disparados durante a montagem são ignorados
+        self._busy = False
+        self._forced = False
+        self._names = []
+        self._templates = []
         self._radios = {"plans": self.rb_plans, "callout": self.rb_callout}
+        self._fradios = {"existing": self.rb_f_exist, "new": self.rb_f_new,
+                         "none": self.rb_f_none}
 
         self.info.Text = info
         self.margin.Text = u"{:.2f}".format(cfg["margin"])
         self.reasons.Text = u"\n".join(
             u"• {}: {}".format(MODE_LABELS[k], reasons[k]) for k in MODES if k in reasons)
         self.name_hint.Text = u"\n".join(ctx["hints"])
-        self.pv_lbl.Text = u"VIEW NAME  ·  exemplo (1º ambiente): {}".format(ctx["example"])
+        self.pv_lbl.Text = u"PRÉ-VISUALIZAÇÃO  ·  exemplo (1º ambiente): {}".format(ctx["example"])
         self.open_views.IsChecked = bool(cfg["open"])
         self._suffix_idx = next(
             (i for i, s in enumerate(SUFFIXES) if s[0] == cfg["suffix"]), 0)
@@ -821,9 +1139,16 @@ class CropWindow(forms.WPFWindow):
         for key, rb in self._radios.items():
             rb.IsEnabled = key in enabled
             rb.Checked += self._on_mode
+        self._init_folders()
+
+        self.vtype.SelectionChanged += self._on_vtype
+        self.template.SelectionChanged += self._on_name
         self.vname.SelectionChanged += self._on_name
         self.vsuffix.SelectionChanged += self._on_name
         self.manual.TextChanged += self._on_name
+        self.suffix_text.TextChanged += self._on_name
+
+        self._ready = True
         start = cfg["mode"] if cfg["mode"] in enabled else enabled[0]
         self._radios[start].IsChecked = True
         self._refresh()
@@ -831,6 +1156,61 @@ class CropWindow(forms.WPFWindow):
         self.ok.Click += self._ok
         self.cancel.Click += self._cancel
 
+    # --- pasta do navegador ------------------------------------------
+    def _init_folders(self):
+        f = self.ctx["folders"]
+        labels = [e["label"] for e in f.entries]
+        if f.available:
+            self.folder_src.Text = u"Organização: {}  ·  parâmetro da pasta: {}".format(
+                f.org_name, f.param_name)
+        else:
+            self.folder_src.Text = u""
+            self.folder_reason.Text = f.reason
+        self.folder_list.ItemsSource = labels
+        if labels:
+            self.folder_list.SelectedIndex = (labels.index(self._saved["folder"])
+                                              if self._saved["folder"] in labels else 0)
+        self.folder_new.Text = self._saved["folder_new"]
+
+        allowed = {"existing": f.available and bool(labels), "new": f.available, "none": True}
+        for key, rb in self._fradios.items():
+            rb.IsEnabled = allowed[key]
+            rb.Checked += self._on_folder
+        self.folder_list.SelectionChanged += self._on_folder
+        self.folder_new.TextChanged += self._on_folder
+        start = self._saved["folder_mode"]
+        if not allowed.get(start):
+            start = next(k for k in FOLDER_MODES if allowed[k])
+        self._fradios[start].IsChecked = True
+
+    @property
+    def folder_mode(self):
+        for key in FOLDER_MODES:
+            if self._fradios[key].IsChecked:
+                return key
+        return "none"
+
+    def folder_choice(self):
+        """{"mode", "name", "label", "path"} - path = [(param_id, Definition, valor)]."""
+        f = self.ctx["folders"]
+        idx = self.folder_list.SelectedIndex
+        base = f.entries[idx] if 0 <= idx < len(f.entries) else None
+        mode = self.folder_mode
+        if mode == "existing" and base is not None:
+            return {"mode": mode, "name": base["name"], "label": base["label"],
+                    "path": base["path"]}
+        if mode == "new":
+            name = to_unicode(self.folder_new.Text).strip()
+            path = f.new_path(base, name) if name else []
+            label = u" › ".join(v for _p, _d, v in path) if path else name
+            return {"mode": mode, "name": name, "label": label, "path": path}
+        return {"mode": "none", "name": u"", "label": u"", "path": []}
+
+    def _on_folder(self, sender, args):
+        if self._ready:
+            self._update_names()
+
+    # --- tipo de vista + template -------------------------------------
     @property
     def mode(self):
         for key in MODES:
@@ -838,16 +1218,44 @@ class CropWindow(forms.WPFWindow):
                 return key
         return None
 
+    @property
+    def vtype_item(self):
+        types = self.ctx["types"].get(self.mode, [])
+        sel = self.vtype.SelectedItem
+        return next((i for i in types if i["label"] == sel), None)
+
+    def _refresh_templates(self):
+        current = self.template.SelectedItem
+        wanted = to_unicode(current) if current is not None else self._saved["template"]
+        item = self.vtype_item
+        self._templates = template_items(item["vt"] if item else None)
+        labels = [NO_TEMPLATE] + [t["label"] for t in self._templates]
+        self.template.ItemsSource = labels
+        self.template.SelectedIndex = labels.index(wanted) if wanted in labels else 0
+
+    @property
+    def template_choice(self):
+        idx = self.template.SelectedIndex
+        return self._templates[idx - 1] if 1 <= idx <= len(self._templates) else None
+
+    def _on_vtype(self, sender, args):
+        if self._ready and self._names:
+            self._refresh_templates()
+            self._update_names()
+
     def _on_mode(self, sender, args):
-        self._refresh()
+        if self._ready:
+            self._refresh()
 
     def _on_name(self, sender, args):
-        self._update_names()
+        if self._ready:
+            self._update_names()
 
     def _refresh(self):
         mode = self.mode
         types = self.ctx["types"].get(mode, [])
         labels = [i["label"] for i in types]
+        self._names = []   # evita _on_vtype com os nomes do modo anterior
         self.vtype.ItemsSource = labels
         if labels:
             self.vtype.SelectedItem = (self._saved["vtype"] if self._saved["vtype"] in labels
@@ -866,12 +1274,14 @@ class CropWindow(forms.WPFWindow):
                 (i for i, o in enumerate(self._names) if o["room"]), 0)
 
         # complemento traz o nome do nível da vista resultante
-        if self.vsuffix.SelectedIndex >= 0:
+        if self.vsuffix.SelectedIndex >= 0 and not self._forced:
             self._suffix_idx = self.vsuffix.SelectedIndex
         self.vsuffix.ItemsSource = suffix_labels(self.ctx["level"][mode])
         self.vsuffix.SelectedIndex = self._suffix_idx
+        self._refresh_templates()
         self._update_names()
 
+    # --- nomenclatura --------------------------------------------------
     @property
     def name_opt(self):
         idx = self.vname.SelectedIndex
@@ -882,32 +1292,94 @@ class CropWindow(forms.WPFWindow):
         idx = self.vsuffix.SelectedIndex
         return SUFFIXES[idx if idx >= 0 else 0][0]
 
-    def names(self):
-        """Prévia com o 1º ambiente; na execução o nome é composto por ambiente."""
-        opt = self.name_opt
-        manual = to_unicode(self.manual.Text)
-        pt, en = compose_names(opt, self.suffix_key, self.ctx["level"][self.mode],
-                               self.ctx["room"], manual)
-        if opt["key"] == MANUAL_KEY:
-            pt = sequence_name(pt) if pt else u""
-        return pt, en
+    def names(self, folder):
+        """Prévia com o 1º ambiente: (View Name, Title on Sheet, English)."""
+        title, en = compose_names(self.name_opt, self.suffix_key, self.ctx["level"][self.mode],
+                                  self.ctx["room"], to_unicode(self.manual.Text),
+                                  to_unicode(self.suffix_text.Text))
+        return resolve_names(folder_prefix(folder["name"]), title, en)
+
+    def _sync_suffix(self, opt):
+        """PAV./AMPLIAÇÃO só nas plantas 2..6: nas demais o combo fica em
+        'Sem nomenclatura' e a escolha anterior volta depois (igual ao 01)."""
+        if opt["suffix"]:
+            if self._forced:
+                self.vsuffix.SelectedIndex = self._suffix_idx
+                self._forced = False
+            self._suffix_idx = self.vsuffix.SelectedIndex
+        else:
+            self._forced = True
+            self.vsuffix.SelectedIndex = 0
 
     def _update_names(self):
+        if self._busy or not self._names:   # mudar o combo aqui dispara SelectionChanged
+            return
+        self._busy = True
+        try:
+            self._render()
+        finally:
+            self._busy = False
+
+    def _render(self):
         opt = self.name_opt
         is_manual = opt["key"] == MANUAL_KEY
+        self._sync_suffix(opt)
+        free = self.suffix_key == FREE_SUFFIX
         self.vsuffix.IsEnabled = opt["suffix"]
-        self.suffix_lbl.Opacity = 1.0 if opt["suffix"] else 0.4
+        self.suffix_lbl.Opacity = 1.0 if not is_manual else 0.4
+        self.suffix_text.IsEnabled = free and not is_manual
+        self.suffix_text_lbl.Opacity = 1.0 if free and not is_manual else 0.4
         self.manual.IsEnabled = is_manual
         self.manual_lbl.Opacity = 1.0 if is_manual else 0.4
-        pt, en = self.names()
-        self.pv_pt.Text = clean_name(pt) if pt else u"(nome padrão do Revit)"
+
+        folder = self.folder_choice()
+        fmode = folder["mode"]
+        f = self.ctx["folders"]
+        nested = f.available and f.folder > 0   # há grupos acima da pasta
+        self.folder_list.IsEnabled = fmode == "existing" or (fmode == "new" and nested)
+        self.folder_new.IsEnabled = fmode == "new"
+        parent = u" › ".join(v for _p, _d, v in folder["path"][:-1]) if fmode == "new" else u""
+        self.folder_new_hint.Text = (u"Criada dentro de: {}  (grupo da pasta selecionada acima)"
+                                     .format(parent) if parent else u"")
+        prefix = folder_prefix(folder["name"])
+        self.folder_prefix_txt.Text = (u"Prefixo do View Name:  {}".format(prefix) if prefix
+                                       else u"Prefixo do View Name:  (nenhum)")
+
+        vname, title, en = self.names(folder)
+        template = self.template_choice
+        self.pv_name.Text = vname or u"(nome padrão do Revit)"
+        self.pv_title.Text = title or u"—"
         self.pv_en.Text = en or u"—"
+        self.pv_folder.Text = folder["label"] or u"(pasta definida pela organização do navegador)"
+        self.pv_template.Text = template["label"] if template else NO_TEMPLATE
+        self.live_hint.Text = u"\n".join(self._live_hints(folder, template))
+
+    def _live_hints(self, folder, template):
+        hints = []
+        if folder["mode"] != "none" and folder["name"] and not folder_prefix(folder["name"]):
+            hints.append(u"A pasta '{}' não tem '_': o View Name fica sem prefixo."
+                         .format(folder["name"]))
+        if folder["mode"] == "new" and folder["name"] in [e["name"] for e in
+                                                          self.ctx["folders"].entries]:
+            hints.append(u"A pasta '{}' já existe: as vistas vão para ela.".format(folder["name"]))
+        if template is not None:
+            for pname, value in template_folder_conflicts(template["id"], folder["path"]):
+                hints.append(u"O View Template '{}' controla '{}' (= '{}'): as vistas ficarão "
+                             u"nessa pasta, não na escolhida.".format(template["label"], pname, value))
+        return hints
 
     def _ok(self, sender, args):
         try:
             self.margin_m = parse_margin(self.margin.Text)
         except Exception:
             self.error.Text = u"Margem inválida: informe um número em metros entre 0 e 100 (ex.: 0,50)."
+            return
+        folder = self.folder_choice()
+        if folder["mode"] == "new" and not folder["name"]:
+            self.error.Text = u"Informe o nome da nova pasta (ex.: D003_DETALHAMENTO)."
+            return
+        if folder["mode"] == "existing" and not folder["path"]:
+            self.error.Text = u"Selecione a pasta de destino."
             return
         self.confirmed = True
         self.Close()
@@ -917,13 +1389,17 @@ class CropWindow(forms.WPFWindow):
 
     @property
     def result(self):
-        types = self.ctx["types"].get(self.mode, [])
-        sel = self.vtype.SelectedItem
+        sel_folder = self.folder_list.SelectedItem
         return {"mode": self.mode, "margin": self.margin_m,
-                "type": next((i for i in types if i["label"] == sel), None),
+                "type": self.vtype_item,
                 "vname": self.name_opt["key"], "suffix": self.suffix_key,
                 "name_opt": self.name_opt, "manual": to_unicode(self.manual.Text),
-                "open": bool(self.open_views.IsChecked)}
+                "suffix_text": to_unicode(self.suffix_text.Text),
+                "open": bool(self.open_views.IsChecked),
+                "folder": self.folder_choice(),
+                "folder_list": to_unicode(sel_folder) if sel_folder is not None else u"",
+                "folder_new": to_unicode(self.folder_new.Text).strip(),
+                "template": self.template_choice}
 
 
 # ------------------------------------------------------------------
@@ -966,6 +1442,8 @@ reasons = check_modes(plan_items, callout_items, plan_level)
 if len(reasons) == len(MODES):
     forms.alert(u"Nenhuma ação disponível:\n\n" + u"\n".join(reasons.values()), exitscript=True)
 
+folders = BrowserFolders()
+
 name_hints = []
 level_ids = set(eid_int(l.Id) for l in room_levels if l is not None)
 if len(level_ids) > 1:
@@ -981,6 +1459,9 @@ if len(geoms) > 1:
 if not en_param_bound():
     name_hints.append(u"'{}' não está vinculado à categoria Vistas: o título em inglês "
                       u"não será gravado.".format(EN_TITLE_PARAM))
+if folders.available and not folders.entries:
+    name_hints.append(u"Nenhuma vista está em pasta por '{}' ainda: use 'Nova pasta'."
+                      .format(folders.param_name))
 
 active_level = getattr(active_view, "GenLevel", None)
 dialog_ctx = {
@@ -990,6 +1471,7 @@ dialog_ctx = {
     "room": geoms[0].el,
     "example": geoms[0].label,
     "hints": name_hints,
+    "folders": folders,
 }
 
 config = script.get_config()
@@ -998,7 +1480,11 @@ cfg = {"margin": config.get_option("margin_m", 0.5),
        "vtype": config.get_option("vtype", u""),
        "vname": config.get_option("vname", "room_civil"),
        "suffix": config.get_option("vsuffix", "amp"),
-       "open": config.get_option("open_views", True)}
+       "open": config.get_option("open_views", True),
+       "folder_mode": config.get_option("folder_mode", "existing"),
+       "folder": config.get_option("folder", u""),
+       "folder_new": config.get_option("folder_new", u""),
+       "template": config.get_option("template", NO_TEMPLATE)}
 
 info = u"{} ambiente(s) → 1 vista por ambiente · vista ativa: {} ({})".format(
     len(geoms), to_unicode(active_view.Name), view_type_label(active_view))
@@ -1014,6 +1500,10 @@ config.vtype = opts["type"]["label"] if opts["type"] else cfg["vtype"]
 config.vname = opts["vname"]
 config.vsuffix = opts["suffix"]
 config.open_views = opts["open"]
+config.folder_mode = opts["folder"]["mode"]
+config.folder = opts["folder_list"]
+config.folder_new = opts["folder_new"]
+config.template = opts["template"]["label"] if opts["template"] else NO_TEMPLATE
 script.save_config()
 
 mode = opts["mode"]
@@ -1031,13 +1521,16 @@ if mode == "callout":
 
 vtype = opts["type"]
 name_opt = opts["name_opt"]
+folder = opts["folder"]
+prefix = folder_prefix(folder["name"])
+template = opts["template"]
 notes = []
 created = []   # (ElemGeom, ElementId da vista), na ordem dos ambientes
 failed = []    # (rótulo, motivo)
 
 
 def create_room_view(g, level):
-    """Mesma sequência do 01 para UM ambiente. Devolve (vista, avisos)."""
+    """Mesma sequência do 01 para UM ambiente + pasta e template. Devolve (vista, avisos)."""
     room_notes = []
     if mode == "callout":
         parent_calc = CropCalc([g], Frame(active_view), margin_ft)
@@ -1056,12 +1549,15 @@ def create_room_view(g, level):
         name_level = level
 
     # o tipo de vista pode ter template padrão para vistas novas: remover
+    # (o template escolhido no diálogo entra no fim, depois do recorte)
     view.ViewTemplateId = INVALID_ID
 
-    pt, en = compose_names(name_opt, opts["suffix"], name_level, g.el, opts["manual"])
-    if name_opt["key"] == MANUAL_KEY:
-        pt = sequence_name(pt) if pt else u""
-    apply_names(view, pt, en, room_notes)
+    title, en = compose_names(name_opt, opts["suffix"], name_level, g.el,
+                              opts["manual"], opts["suffix_text"])
+    vname, title, en = resolve_names(prefix, title, en)
+    apply_names(view, vname, en, room_notes)      # View Name (com prefixo) + English
+    apply_title_on_sheet(view, title, room_notes)  # Title on Sheet (sem prefixo)
+    BrowserFolders.apply(view, folder["path"], room_notes)
     doc.Regenerate()
 
     # recalcula no sistema da vista-alvo (igual ao 01)
@@ -1069,6 +1565,11 @@ def create_room_view(g, level):
     _method, warn = apply_crop(view, calc)
     if warn:
         room_notes.append(warn)
+
+    if template is not None:
+        apply_template(view, template, room_notes)
+        doc.Regenerate()
+        BrowserFolders.check(view, folder["path"], room_notes)
     return view, room_notes
 
 
