@@ -32,9 +32,9 @@
 # acentos no IronPython e deixa o botão sem tooltip. O tooltip é só __doc__.
 
 __title__ = u"Abertura\nde Vistas"
-__doc__ = u"""Cria uma vista recortada a partir dos elementos selecionados (planta ou chamada) ou recorta a vista ativa, já com nome, pasta no Navegador de Projeto e View Template.
+__doc__ = u"""Cria UMA vista recortada a partir dos elementos selecionados: nova planta, chamada (callout) ou recorte da vista ativa. Já sai com nome, pasta no Navegador de Projeto e View Template.
 
-Selecione os elementos e clique no botão."""
+Selecione um ou mais elementos e clique no botão."""
 
 import re
 import math
