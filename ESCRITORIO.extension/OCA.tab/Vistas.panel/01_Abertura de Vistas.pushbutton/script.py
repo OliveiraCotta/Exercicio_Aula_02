@@ -8,8 +8,10 @@
 #      legível entram pela caixa envolvente (bounding box).
 #   2. Pergunta a margem (m) e o que fazer:
 #        - criar nova vista de planta (Piso, Forro, Estrutural, Área);
-#        - criar vista de chamada de detalhe (Callout) na vista ativa;
-#        - recortar a vista ativa.
+#        - criar vista de chamada de detalhe (Callout) na vista ativa - numa
+#          elevação ou corte, do mesmo tipo (outra elevação/corte, para
+#          ampliações) ou Detalhe;
+#        - recortar a vista ativa (planta, corte ou elevação).
 #      Antes de abrir o diálogo, cada modo é validado contra a vista ativa e o
 #      modelo; modos inválidos ficam desabilitados com o motivo exibido.
 #   3. Mesma interface e regras do 02_Abertura de Múltiplas Vistas:
@@ -516,6 +518,8 @@ def family_view_type(fam):
                   (DB.ViewFamily.CeilingPlan, VT.CeilingPlan),
                   (DB.ViewFamily.StructuralPlan, VT.EngineeringPlan),
                   (DB.ViewFamily.AreaPlan, VT.AreaPlan),
+                  (DB.ViewFamily.Section, VT.Section),
+                  (DB.ViewFamily.Elevation, VT.Elevation),
                   (DB.ViewFamily.Detail, VT.Detail)):
         if fam == f:
             return vt
@@ -536,19 +540,28 @@ def plan_type_items():
     return items
 
 
+CALLOUT_KIND = ((DB.ViewFamily.FloorPlan, u"Planta"),
+                (DB.ViewFamily.CeilingPlan, u"Forro"),
+                (DB.ViewFamily.StructuralPlan, u"Estrutural"),
+                (DB.ViewFamily.Section, u"Corte"),
+                (DB.ViewFamily.Elevation, u"Elevação"),
+                (DB.ViewFamily.Detail, u"Detalhe"))
+
+
 def callout_type_items(parent):
+    """Tipos aceitos numa chamada: o mesmo tipo da vista-mãe (planta -> planta,
+    corte -> corte, elevação -> elevação, para ampliações) e Detalhe."""
     if parent.IsTemplate or parent.ViewType not in CALLOUT_PARENTS:
         return []
     fams = [DB.ViewFamily.Detail]
-    if parent.ViewType in PLAN_VIEWTYPES:
-        parent_type = doc.GetElement(parent.GetTypeId())
-        if parent_type is not None:
-            fams.insert(0, parent_type.ViewFamily)
+    parent_type = doc.GetElement(parent.GetTypeId())
+    if parent_type is not None and parent_type.ViewFamily != DB.ViewFamily.Detail:
+        fams.insert(0, parent_type.ViewFamily)
     items = []
     for fam in fams:
+        kind = next((k for f, k in CALLOUT_KIND if f == fam), u"Vista")
         for vft in VIEW_FAMILY_TYPES:
             if vft.ViewFamily == fam:
-                kind = u"Detalhe" if fam == DB.ViewFamily.Detail else u"Planta"
                 items.append({"label": u"Chamada ({}): {}".format(kind, _vft_name(vft)),
                               "kind": "callout", "id": vft.Id, "vt": family_view_type(fam)})
     return items
@@ -853,8 +866,8 @@ class ProjectFolders(object):
 
 
 # ------------------------------------------------------------------
-# 6c. View Template (igual ao 02; em "Recortar a vista ativa" a 1ª opção
-#     mantém o template que a vista já tem)
+# 6c. View Template (igual ao 02: validado pelo próprio Revit; em "Recortar a
+#     vista ativa" a 1ª opção mantém o template que a vista já tem)
 # ------------------------------------------------------------------
 NO_TEMPLATE = u"Sem View Template"
 KEEP_TEMPLATE = u"Manter o View Template atual"
@@ -862,14 +875,54 @@ VIEW_TEMPLATES = sorted((v for v in DB.FilteredElementCollector(doc).OfClass(DB.
                          if v.IsTemplate),
                         key=lambda v: natural_key(v.Name))
 
+# O ViewType de um template é o da vista que o originou: um template de
+# elevação criado a partir de um corte tem ViewType = Section, e o Revit
+# aceita aplicá-lo a elevações. Filtrar por ViewType exato escondia esses
+# templates. Plano B (modelo sem nenhuma vista do tipo para consultar):
+TEMPLATE_GROUPS = ((VT.FloorPlan, VT.EngineeringPlan, VT.AreaPlan),
+                   (VT.CeilingPlan,),
+                   (VT.Elevation, VT.Section, VT.Detail))
+_PROBES = {}
 
-def template_items(vt):
-    """Templates do mesmo tipo da vista (detalhe aceita corte/elevação)."""
+
+def _probe_view(vt):
+    """Uma vista existente (não-template) do tipo, para perguntar ao Revit
+    quais templates ela aceita (View.IsValidViewTemplate)."""
+    key = int(vt)
+    if key not in _PROBES:
+        _PROBES[key] = next((v for v in DB.FilteredElementCollector(doc).OfClass(DB.View)
+                             if not v.IsTemplate and v.ViewType == vt), None)
+    return _PROBES[key]
+
+
+def template_items(vt, probe=None):
+    """Templates que o Revit aceita para o tipo de vista: a mesma verificação
+    nativa usada ao aplicar (IsValidViewTemplate), feita numa vista existente
+    desse tipo (na vista ativa, ela mesma); sem vista para consultar, o grupo."""
     if vt is None:
         return []
-    allowed = (vt, VT.Section, VT.Elevation) if vt == VT.Detail else (vt,)
-    return [{"label": to_unicode(t.Name), "id": t.Id}
-            for t in VIEW_TEMPLATES if t.ViewType in allowed]
+    probe = probe or _probe_view(vt)
+    if probe is not None:
+        def ok(t):
+            try:
+                return probe.IsValidViewTemplate(t.Id)
+            except Exception:
+                return False
+    else:
+        group = next((grp for grp in TEMPLATE_GROUPS if vt in grp), (vt,))
+
+        def ok(t):
+            return t.ViewType in group
+    return [{"label": to_unicode(t.Name), "id": t.Id} for t in VIEW_TEMPLATES if ok(t)]
+
+
+def current_template(view):
+    """Template que a vista já usa, no mesmo formato dos itens; None se não tem."""
+    tid = view.ViewTemplateId
+    if tid is None or tid == INVALID_ID:
+        return None
+    tpl = doc.GetElement(tid)
+    return {"label": to_unicode(tpl.Name), "id": tid} if tpl is not None else None
 
 
 def apply_template(view, template, notes):
@@ -886,7 +939,8 @@ def apply_template(view, template, notes):
 MODES = ("plans", "callout", "current")
 MODE_LABELS = {"plans": u"Nova vista de planta",
                "callout": u"Nova vista de chamada (Callout)",
-               "current": u"Recortar a vista atual"}
+               "current": u"Recortar a vista ativa"}
+VERTICAL_VIEWTYPES = (VT.Section, VT.Elevation, VT.Detail)
 
 
 def target_kind(mode):
@@ -913,6 +967,9 @@ def check_modes(plan_items, callout_items, plan_level):
     return reasons
 
 
+INITIAL_MARGIN_M = 0.50   # valor inicial da margem ao abrir (igual ao 02)
+
+
 def parse_margin(text):
     t = to_unicode(text).strip().lower().replace(u",", u".")
     if t.endswith(u"m"):
@@ -923,13 +980,43 @@ def parse_margin(text):
     return val
 
 
+def active_view_text(callout_items):
+    """O que cada modo faz a partir da vista ativa (planta, corte ou elevação)."""
+    kinds = []
+    for it in callout_items:
+        k = it["label"].split(u")")[0].replace(u"Chamada (", u"")
+        if k not in kinds:
+            kinds.append(k)
+    lines = [u"Vista ativa: {} ({})".format(to_unicode(active_view.Name),
+                                            view_type_label(active_view))]
+    if kinds:
+        lines.append(u"Chamada gera: {}".format(u" ou ".join(kinds)))
+    return u"\n".join(lines)
+
+
 # ------------------------------------------------------------------
-# 8. Diálogo (mesma interface do 02: duas colunas)
+# 8. Diálogo (mesma interface do 02: três colunas)
 # ------------------------------------------------------------------
+FOLDER_BLOCK = u"""
+            <StackPanel x:Name="p_box">
+              <RadioButton x:Name="p_f_exist" GroupName="p_folder" Content="Pasta existente"/>
+              <ComboBox x:Name="p_list" Margin="20,4,0,0"/>
+              <RadioButton x:Name="p_f_new" GroupName="p_folder" Content="Nova pasta"
+                           Margin="0,8,0,0"/>
+              <TextBox x:Name="p_new" Margin="20,4,0,0"
+                       ToolTip="Ex.: D003_DETALHAMENTO - o texto antes do 1º '_' vira o prefixo do View Name"/>
+              <RadioButton x:Name="p_f_none" GroupName="p_folder"
+                           Content="Não definir pasta (View Name sem prefixo)" Margin="0,8,0,0"/>
+            </StackPanel>
+            <TextBlock x:Name="p_lock" TextWrapping="Wrap" FontSize="11"
+                       Foreground="#FFB454" Margin="0,6,0,0"/>
+            <TextBlock x:Name="p_prefix" FontSize="11" Margin="0,6,0,0"/>
+"""
+
 CROP_XAML = u"""
 <Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="Abertura de Vistas" Height="Auto" Width="940"
+        Title="Abertura de Vistas" Height="Auto" Width="1240"
         SizeToContent="Height" WindowStartupLocation="CenterScreen"
         ResizeMode="NoResize" Background="#0E1526">
   <Window.Resources>
@@ -954,7 +1041,7 @@ CROP_XAML = u"""
     <Style TargetType="CheckBox">
       <Setter Property="Foreground" Value="#CFE3FF"/>
       <Setter Property="FontFamily" Value="Segoe UI"/>
-      <Setter Property="Margin" Value="0,10,0,0"/>
+      <Setter Property="Margin" Value="0,6,0,0"/>
     </Style>
     <Style TargetType="Border">
       <Setter Property="Background" Value="#131D33"/>
@@ -964,8 +1051,9 @@ CROP_XAML = u"""
       <Setter Property="Margin" Value="0,12,0,0"/>
     </Style>
   </Window.Resources>
+  <ScrollViewer VerticalScrollBarVisibility="Auto">
   <StackPanel Margin="18">
-    <TextBlock Text="RECORTE POR ELEMENTO" FontSize="15" FontWeight="SemiBold"
+    <TextBlock Text="ABERTURA/RECORTE DE VISTA" FontSize="15" FontWeight="SemiBold"
                Foreground="#65E3FF" Margin="0,0,0,4"/>
     <TextBlock x:Name="info" TextWrapping="Wrap" FontSize="11"
                Foreground="#7A8FA9" Margin="0,0,0,2"/>
@@ -973,29 +1061,55 @@ CROP_XAML = u"""
     <Grid>
       <Grid.ColumnDefinitions>
         <ColumnDefinition Width="*"/>
-        <ColumnDefinition Width="18"/>
+        <ColumnDefinition Width="16"/>
+        <ColumnDefinition Width="*"/>
+        <ColumnDefinition Width="16"/>
         <ColumnDefinition Width="*"/>
       </Grid.ColumnDefinitions>
 
-      <!-- coluna esquerda: o que criar e onde -->
+      <!-- coluna 1: premissas + o que fazer -->
       <StackPanel Grid.Column="0">
         <Border>
           <StackPanel>
+            <TextBlock Text="PREMISSAS" FontSize="12" FontWeight="SemiBold" Foreground="#65E3FF"/>
+            <TextBlock x:Name="sel_txt" TextWrapping="Wrap" FontSize="11"
+                       Foreground="#7A8FA9" Margin="0,0,0,2"/>
+            <TextBlock x:Name="view_txt" TextWrapping="Wrap" FontSize="11"
+                       Foreground="#7A8FA9" Margin="0,4,0,2"/>
             <TextBlock Text="Margem ao redor do elemento (m)"/>
             <TextBox x:Name="margin"/>
+          </StackPanel>
+        </Border>
 
-            <TextBlock Text="O que fazer (uma vista para toda a seleção)" Margin="0,14,0,0"/>
+        <Border>
+          <StackPanel>
+            <TextBlock Text="O QUE FAZER  ·  UMA VISTA PARA TODA A SELEÇÃO" FontSize="12"
+                       FontWeight="SemiBold" Foreground="#65E3FF"/>
             <RadioButton x:Name="rb_plans" GroupName="mode"
                          Content="Criar nova vista de planta (Piso, Forro, Estrutural, Área)"/>
             <RadioButton x:Name="rb_callout" GroupName="mode"
                          Content="Criar vista de chamada de detalhe (Callout) na vista ativa"/>
             <RadioButton x:Name="rb_current" GroupName="mode"
-                         Content="Recortar a vista ativa"/>
+                         Content="Recortar a vista ativa (planta, corte ou elevação)"/>
+            <TextBlock x:Name="mode_hint" TextWrapping="Wrap" FontSize="11"
+                       Foreground="#7A8FA9" Margin="20,4,0,0"/>
             <TextBlock x:Name="reasons" TextWrapping="Wrap" FontSize="11"
                        Foreground="#FFB454" Margin="0,8,0,0"/>
-
             <TextBlock x:Name="vtype_lbl" Text="Tipo de vista"/>
             <ComboBox x:Name="vtype"/>
+          </StackPanel>
+        </Border>
+      </StackPanel>
+
+      <!-- coluna 2: view template + destino -->
+      <StackPanel Grid.Column="2">
+        <Border>
+          <StackPanel>
+            <TextBlock Text="MODELO DE VISTA (VIEW TEMPLATE)" FontSize="12" FontWeight="SemiBold"
+                       Foreground="#65E3FF"/>
+            <ComboBox x:Name="template" Margin="0,8,0,0"/>
+            <TextBlock Text="Só aparecem os templates que o Revit aceita para o tipo de vista."
+                       TextWrapping="Wrap" FontSize="11" Foreground="#7A8FA9" Margin="0,6,0,0"/>
           </StackPanel>
         </Border>
 
@@ -1005,38 +1119,18 @@ CROP_XAML = u"""
                        FontWeight="SemiBold" Foreground="#65E3FF"/>
             <TextBlock x:Name="folder_src" TextWrapping="Wrap" FontSize="11"
                        Foreground="#7A8FA9" Margin="0,0,0,2"/>
-            <RadioButton x:Name="rb_f_exist" GroupName="folder" Content="Pasta existente"/>
-            <ComboBox x:Name="folder_list" Margin="20,4,0,0"/>
-            <RadioButton x:Name="rb_f_new" GroupName="folder" Content="Nova pasta"
-                         Margin="0,10,0,0"/>
-            <TextBox x:Name="folder_new" Margin="20,4,0,0"
-                     ToolTip="Ex.: D003_DETALHAMENTO - o texto antes do 1º '_' vira o prefixo do View Name"/>
-            <TextBlock x:Name="folder_new_hint" TextWrapping="Wrap" FontSize="11"
-                       Foreground="#7A8FA9" Margin="20,3,0,0"/>
-            <RadioButton x:Name="rb_f_none" GroupName="folder"
-                         Content="Não definir pasta (View Name sem prefixo)" Margin="0,10,0,0"/>
-            <TextBlock x:Name="folder_prefix_txt" FontWeight="SemiBold" Margin="0,10,0,0"/>
             <TextBlock x:Name="folder_reason" TextWrapping="Wrap" FontSize="11"
-                       Foreground="#FFB454" Margin="0,4,0,0"/>
-          </StackPanel>
-        </Border>
-
-        <Border>
-          <StackPanel>
-            <TextBlock Text="MODELO DE VISTA (VIEW TEMPLATE)" FontSize="12"
-                       FontWeight="SemiBold" Foreground="#65E3FF"/>
-            <ComboBox x:Name="template"/>
-            <TextBlock Text="Só aparecem os templates compatíveis com o tipo de vista."
-                       TextWrapping="Wrap" FontSize="11" Foreground="#7A8FA9" Margin="0,4,0,0"/>
+                       Foreground="#FFB454" Margin="0,0,0,2"/>""" + FOLDER_BLOCK + u"""
           </StackPanel>
         </Border>
       </StackPanel>
 
-      <!-- coluna direita: nomenclatura + pré-visualização -->
-      <StackPanel Grid.Column="2">
+      <!-- coluna 3: nomenclatura + pré-visualização -->
+      <StackPanel Grid.Column="4">
         <Border>
           <StackPanel>
-            <TextBlock Text="NOMENCLATURA" FontSize="12" FontWeight="SemiBold" Foreground="#65E3FF"/>
+            <TextBlock Text="NOMENCLATURA" FontSize="12" FontWeight="SemiBold"
+                       Foreground="#65E3FF"/>
             <TextBlock Text="Vale para View Name, Title on Sheet e Title on Sheet - English."
                        TextWrapping="Wrap" FontSize="11" Foreground="#7A8FA9" Margin="0,0,0,2"/>
             <TextBlock Text="A - Principal"/>
@@ -1058,14 +1152,14 @@ CROP_XAML = u"""
                        Margin="0,6,0,6"/>
             <TextBlock Text="VIEW NAME  (prefixo da pasta + _ + nome)" FontSize="10"
                        Foreground="#7A8FA9" Margin="0"/>
-            <TextBlock x:Name="pv_name" FontWeight="SemiBold" TextWrapping="Wrap" Margin="0,2,0,8"/>
+            <TextBlock x:Name="pv_name" FontWeight="SemiBold" TextWrapping="Wrap" Margin="0,2,0,6"/>
             <TextBlock Text="TITLE ON SHEET" FontSize="10" Foreground="#7A8FA9" Margin="0"/>
-            <TextBlock x:Name="pv_title" FontWeight="SemiBold" TextWrapping="Wrap" Margin="0,2,0,8"/>
+            <TextBlock x:Name="pv_title" FontWeight="SemiBold" TextWrapping="Wrap" Margin="0,2,0,6"/>
             <TextBlock Text="TITLE ON SHEET - ENGLISH  (automático)" FontSize="10"
                        Foreground="#7A8FA9" Margin="0"/>
             <TextBlock x:Name="pv_en" FontWeight="SemiBold" TextWrapping="Wrap" Margin="0,2,0,8"/>
             <TextBlock Text="PASTA DE DESTINO" FontSize="10" Foreground="#7A8FA9" Margin="0"/>
-            <TextBlock x:Name="pv_folder" FontWeight="SemiBold" TextWrapping="Wrap" Margin="0,2,0,8"/>
+            <TextBlock x:Name="pv_folder" FontWeight="SemiBold" TextWrapping="Wrap" Margin="0,2,0,6"/>
             <TextBlock Text="VIEW TEMPLATE" FontSize="10" Foreground="#7A8FA9" Margin="0"/>
             <TextBlock x:Name="pv_template" FontWeight="SemiBold" TextWrapping="Wrap" Margin="0,2,0,0"/>
           </StackPanel>
@@ -1077,7 +1171,7 @@ CROP_XAML = u"""
       </StackPanel>
     </Grid>
 
-    <CheckBox x:Name="open_views" Content="Abrir a vista criada ao final"/>
+    <CheckBox x:Name="open_views" Content="Abrir a vista criada ao final" Margin="0,12,0,0"/>
 
     <TextBlock x:Name="error" TextWrapping="Wrap" FontSize="11"
                Foreground="#FF4F9A" Margin="0,10,0,0"/>
@@ -1086,15 +1180,98 @@ CROP_XAML = u"""
       <Button x:Name="ok" Content="Aplicar" Width="110" Height="28"/>
     </StackPanel>
   </StackPanel>
+  </ScrollViewer>
 </Window>
 """
 
 FOLDER_MODES = ("existing", "new", "none")
+MODE_HINTS = {
+    "plans": u"Planta nova no nível dos elementos, recortada ao redor deles.",
+    "callout": u"Chamada dentro da vista ativa. Numa elevação ou corte, escolha o mesmo "
+               u"tipo para abrir outra elevação/corte (ampliação) ou Detalhe.",
+    "current": u"Ajusta o recorte da própria vista ativa, sem criar vista nova.",
+}
+
+
+class FolderPicker(object):
+    """Bloco de destino (pasta existente / nova / nenhuma), igual ao 02. Se o
+    View Template controla o parâmetro 'Pasta', o bloco trava: a vista vai
+    para a pasta do template e o prefixo vem dela."""
+
+    def __init__(self, win, key, folders, saved, on_change):
+        def ctl(name):
+            return getattr(win, u"{}_{}".format(key, name))
+        self.folders = folders
+        self.rb = {"existing": ctl("f_exist"), "new": ctl("f_new"), "none": ctl("f_none")}
+        self.box, self.list, self.new = ctl("box"), ctl("list"), ctl("new")
+        self.lock_txt, self.prefix_txt = ctl("lock"), ctl("prefix")
+
+        labels = [e["label"] for e in folders.entries]
+        self.list.ItemsSource = labels
+        if labels:
+            self.list.SelectedIndex = (labels.index(saved["folder"])
+                                       if saved["folder"] in labels else 0)
+        self.new.Text = saved["folder_new"]
+        allowed = {"existing": folders.available and bool(labels),
+                   "new": folders.available, "none": True}
+        for k, rb in self.rb.items():
+            rb.IsEnabled = allowed[k]
+            rb.Checked += on_change
+        self.list.SelectionChanged += on_change
+        self.new.TextChanged += on_change
+        start = saved["folder_mode"]
+        if not allowed.get(start):
+            start = next(k for k in FOLDER_MODES if allowed[k])
+        self.rb[start].IsChecked = True
+
+    @property
+    def mode(self):
+        return next((k for k in FOLDER_MODES if self.rb[k].IsChecked), "none")
+
+    def choice(self, template):
+        """{"mode", "name", "locked"}: name = pasta onde a vista fica (define o prefixo)."""
+        forced = self.folders.template_value(template["id"]) if template else None
+        if forced is not None:
+            return {"mode": "template", "name": forced, "locked": True}
+        mode = self.mode
+        name = u""
+        if mode == "existing":
+            idx = self.list.SelectedIndex
+            entries = self.folders.entries
+            name = entries[idx]["name"] if 0 <= idx < len(entries) else u""
+        elif mode == "new":
+            name = to_unicode(self.new.Text).strip()
+        return {"mode": mode, "name": name, "locked": False}
+
+    def render(self, template):
+        c = self.choice(template)
+        self.box.IsEnabled = not c["locked"]
+        self.box.Opacity = 0.4 if c["locked"] else 1.0
+        if not c["locked"]:
+            self.list.IsEnabled = c["mode"] == "existing"
+            self.new.IsEnabled = c["mode"] == "new"
+        self.lock_txt.Text = (u"Travado: o View Template '{}' define a pasta ('{}' = '{}')."
+                              .format(template["label"], FOLDER_PARAM, c["name"] or u"vazio → ???")
+                              if c["locked"] else u"")
+        prefix = name_prefix(c)
+        self.prefix_txt.Text = u"Prefixo do View Name:  {}".format(prefix or u"(nenhum)")
+        return c
+
+    def saved_values(self):
+        sel = self.list.SelectedItem
+        return {"folder_mode": self.mode,
+                "folder": to_unicode(sel) if sel is not None else u"",
+                "folder_new": to_unicode(self.new.Text).strip()}
 
 
 class CropWindow(forms.WPFWindow):
-    def __init__(self, xaml, info, ctx, reasons, cfg):
+    def __init__(self, xaml, ctx, reasons, cfg):
         forms.WPFWindow.__init__(self, xaml, literal_string=True)
+        try:   # telas baixas: a janela rola em vez de passar da área útil
+            from System.Windows import SystemParameters
+            self.MaxHeight = SystemParameters.WorkArea.Height
+        except Exception:
+            pass
         self.confirmed = False
         self.ctx = ctx
         self._saved = cfg
@@ -1105,10 +1282,10 @@ class CropWindow(forms.WPFWindow):
         self._templates = []
         self._radios = {"plans": self.rb_plans, "callout": self.rb_callout,
                         "current": self.rb_current}
-        self._fradios = {"existing": self.rb_f_exist, "new": self.rb_f_new,
-                         "none": self.rb_f_none}
 
-        self.info.Text = info
+        self.info.Text = ctx["info"]
+        self.sel_txt.Text = ctx["sel_text"]
+        self.view_txt.Text = ctx["view_text"]
         self.margin.Text = u"{:.2f}".format(cfg["margin"])
         self.reasons.Text = u"\n".join(
             u"• {}: {}".format(MODE_LABELS[k], reasons[k]) for k in MODES if k in reasons)
@@ -1121,7 +1298,14 @@ class CropWindow(forms.WPFWindow):
         for key, rb in self._radios.items():
             rb.IsEnabled = key in enabled
             rb.Checked += self._on_mode
-        self._init_folders()
+
+        f = ctx["folders"]
+        if f.available:
+            self.folder_src.Text = u"Parâmetro de projeto '{}'  ·  {} pasta(s) no modelo".format(
+                f.param_name, len(f.entries))
+        else:
+            self.folder_reason.Text = f.reason
+        self.p_folder = FolderPicker(self, "p", f, cfg["p_folder"], self._on_name)
 
         self.vtype.SelectionChanged += self._on_vtype
         self.template.SelectionChanged += self._on_name
@@ -1138,61 +1322,7 @@ class CropWindow(forms.WPFWindow):
         self.ok.Click += self._ok
         self.cancel.Click += self._cancel
 
-    # --- pasta do navegador ------------------------------------------
-    def _init_folders(self):
-        f = self.ctx["folders"]
-        labels = [e["label"] for e in f.entries]
-        if f.available:
-            self.folder_src.Text = u"Parâmetro de projeto '{}'  ·  {} pasta(s) no modelo".format(
-                f.param_name, len(labels))
-        else:
-            self.folder_src.Text = u""
-            self.folder_reason.Text = f.reason
-        self.folder_list.ItemsSource = labels
-        if labels:
-            self.folder_list.SelectedIndex = (labels.index(self._saved["folder"])
-                                              if self._saved["folder"] in labels else 0)
-        self.folder_new.Text = self._saved["folder_new"]
-
-        allowed = {"existing": f.available and bool(labels), "new": f.available, "none": True}
-        for key, rb in self._fradios.items():
-            rb.IsEnabled = allowed[key]
-            rb.Checked += self._on_folder
-        self.folder_list.SelectionChanged += self._on_folder
-        self.folder_new.TextChanged += self._on_folder
-        start = self._saved["folder_mode"]
-        if not allowed.get(start):
-            start = next(k for k in FOLDER_MODES if allowed[k])
-        self._fradios[start].IsChecked = True
-
-    @property
-    def folder_mode(self):
-        for key in FOLDER_MODES:
-            if self._fradios[key].IsChecked:
-                return key
-        return "none"
-
-    def folder_choice(self):
-        """{"mode", "name", "template_folder"}: name = pasta escolhida (define o
-        prefixo); template_folder = valor de 'Pasta' imposto pelo View Template
-        (None se ele não controla a pasta) - só para avisar."""
-        f = self.ctx["folders"]
-        mode = self.folder_mode
-        chosen = u""
-        if mode == "existing":
-            idx = self.folder_list.SelectedIndex
-            chosen = f.entries[idx]["name"] if 0 <= idx < len(f.entries) else u""
-        elif mode == "new":
-            chosen = to_unicode(self.folder_new.Text).strip()
-        template = self.template_choice
-        forced = f.template_value(template["id"]) if template else None
-        return {"mode": mode, "name": chosen, "template_folder": forced}
-
-    def _on_folder(self, sender, args):
-        if self._ready:
-            self._update_names()
-
-    # --- tipo de vista + template -------------------------------------
+    # --- modo, tipo de vista e template ----------------------------------
     @property
     def mode(self):
         for key in MODES:
@@ -1206,29 +1336,34 @@ class CropWindow(forms.WPFWindow):
         sel = self.vtype.SelectedItem
         return next((i for i in types if i["label"] == sel), None)
 
-    def _target_vt(self):
-        """ViewType da vista que vai receber o template."""
-        if self.mode == "current":
-            return active_view.ViewType
-        item = self.vtype_item
-        return item["vt"] if item else None
-
     def _first_template_label(self):
         return KEEP_TEMPLATE if self.mode == "current" else NO_TEMPLATE
 
     def _refresh_templates(self):
         current = self.template.SelectedItem
         wanted = to_unicode(current) if current is not None else self._saved["template"]
-        self._templates = template_items(self._target_vt())
-        first = self._first_template_label()
-        labels = [first] + [t["label"] for t in self._templates]
+        if self.mode == "current":   # a própria vista ativa responde quais aceita
+            self._templates = template_items(active_view.ViewType, active_view)
+        else:
+            item = self.vtype_item
+            self._templates = template_items(item["vt"] if item else None)
+        labels = [self._first_template_label()] + [t["label"] for t in self._templates]
         self.template.ItemsSource = labels
         self.template.SelectedIndex = labels.index(wanted) if wanted in labels else 0
 
     @property
     def template_choice(self):
+        """Template escolhido no combo (None = 1ª opção)."""
         idx = self.template.SelectedIndex
         return self._templates[idx - 1] if 1 <= idx <= len(self._templates) else None
+
+    def effective_template(self):
+        """Template que a vista terá: o escolhido; em 'Recortar a vista ativa'
+        com 'Manter', o que ela já usa (pode travar a pasta)."""
+        tpl = self.template_choice
+        if tpl is None and self.mode == "current":
+            return current_template(active_view)
+        return tpl
 
     def _on_vtype(self, sender, args):
         if self._ready and self._names:
@@ -1243,6 +1378,14 @@ class CropWindow(forms.WPFWindow):
         if self._ready:
             self._update_names()
 
+    def _default_name_index(self):
+        keys = [o["key"] for o in self._names]
+        if self._saved["vname"] in keys:
+            return keys.index(self._saved["vname"])
+        # sem escolha salva compatível: corte/elevação pelo tipo da vista ativa
+        guess = {VT.Section: "corte", VT.Elevation: "elevacao"}.get(active_view.ViewType)
+        return keys.index(guess) if guess in keys else 0
+
     def _refresh(self):
         mode = self.mode
         types = self.ctx["types"].get(mode, [])
@@ -1254,15 +1397,15 @@ class CropWindow(forms.WPFWindow):
                                        else labels[0])
         self.vtype.IsEnabled = bool(labels)
         self.vtype_lbl.Opacity = 1.0 if labels else 0.4
+        self.mode_hint.Text = MODE_HINTS[mode]
         # recortar a vista ativa: ela já está aberta
         self.open_views.IsEnabled = mode != "current"
+        self.open_views.Opacity = 1.0 if mode != "current" else 0.4
 
         # nomes dependem do tipo da vista resultante (planta x corte/elevação)
         self._names = self.ctx["names"][mode]
-        keys = [o["key"] for o in self._names]
         self.vname.ItemsSource = [o["label"] for o in self._names]
-        self.vname.SelectedIndex = (keys.index(self._saved["vname"])
-                                    if self._saved["vname"] in keys else 0)
+        self.vname.SelectedIndex = self._default_name_index()
 
         # complemento traz o nome do nível da vista resultante; com eventos
         # travados, senão a seleção vazia (-1) da troca de itens vira a escolha
@@ -1289,7 +1432,7 @@ class CropWindow(forms.WPFWindow):
         return SUFFIXES[idx if idx >= 0 else 0][0]
 
     def names(self, folder):
-        """(View Name, Title on Sheet, English) para a pré-visualização."""
+        """(View Name, Title on Sheet, English)."""
         title, en = compose_names(self.name_opt, self.suffix_key, self.ctx["level"][self.mode],
                                   self.ctx["room"], to_unicode(self.manual.Text),
                                   to_unicode(self.suffix_text.Text))
@@ -1330,46 +1473,34 @@ class CropWindow(forms.WPFWindow):
         self.manual.IsEnabled = is_manual
         self.manual_lbl.Opacity = 1.0 if is_manual else 0.4
 
-        folder = self.folder_choice()
-        fmode = folder["mode"]
-        self.folder_list.IsEnabled = fmode == "existing"
-        self.folder_new.IsEnabled = fmode == "new"
-        self.folder_new_hint.Text = (u"Grava o novo valor no parâmetro '{}' da vista."
-                                     .format(FOLDER_PARAM) if fmode == "new" else u"")
-        prefix = name_prefix(folder)
-        self.folder_prefix_txt.Text = (u"Prefixo do View Name:  {}".format(prefix) if prefix
-                                       else u"Prefixo do View Name:  (nenhum)")
-
+        template = self.effective_template()
+        folder = self.p_folder.render(template)
         vname, title, en = self.names(folder)
-        template = self.template_choice
         keep = (u"(mantém o nome atual)" if self.mode == "current"
                 else u"(nome padrão do Revit)")
         self.pv_name.Text = vname or keep
         self.pv_title.Text = title or u"—"
         self.pv_en.Text = en or u"—"
-        self.pv_folder.Text = folder["name"] or u"(não definida pelo comando)"
-        self.pv_template.Text = template["label"] if template else self._first_template_label()
-        self.live_hint.Text = u"\n".join(self._live_hints(folder, template))
+        self.pv_folder.Text = folder["name"] or (u"??? (template)" if folder["locked"]
+                                                 else u"(não definida pelo comando)")
+        chosen = self.template_choice
+        self.pv_template.Text = (chosen["label"] if chosen else
+                                 (u"{} ({})".format(KEEP_TEMPLATE, template["label"])
+                                  if template else self._first_template_label()))
+        self.live_hint.Text = u"\n".join(self._live_hints(folder, chosen))
 
-    def _live_hints(self, folder, template):
+    def _live_hints(self, folder, chosen):
         hints = []
-        if folder["mode"] != "none" and folder["name"] and not folder_prefix(folder["name"]):
+        entries = [e["name"] for e in self.ctx["folders"].entries]
+        if folder["name"] and folder["mode"] not in ("none", "template") \
+                and not folder_prefix(folder["name"]):
             hints.append(u"A pasta '{}' não tem '_': o View Name fica sem prefixo."
                          .format(folder["name"]))
-        if folder["mode"] == "new" and folder["name"] in [e["name"] for e in
-                                                          self.ctx["folders"].entries]:
+        if folder["mode"] == "new" and folder["name"] in entries:
             hints.append(u"A pasta '{}' já existe: a vista vai para ela.".format(folder["name"]))
-        tf = folder["template_folder"]
-        if folder["name"] and tf is not None and tf != folder["name"]:
-            # o nome não muda; só a posição no navegador fica presa ao template
-            hints.append(u"Atenção: o View Template '{}' controla o parâmetro '{}' (= '{}'). "
-                         u"O nome da vista usa '{}', mas no Navegador ela ficará em '{}'. "
-                         u"Para a pasta funcionar, desmarque '{}' (Include) nesse template."
-                         .format(template["label"], FOLDER_PARAM, tf or u"vazio",
-                                 folder["name"], tf or u"???", FOLDER_PARAM))
-        if self.mode == "current" and template is not None:
+        if self.mode == "current" and chosen is not None:
             hints.append(u"O View Template '{}' substitui o template atual da vista ativa."
-                         .format(template["label"]))
+                         .format(chosen["label"]))
         return hints
 
     def _ok(self, sender, args):
@@ -1378,12 +1509,15 @@ class CropWindow(forms.WPFWindow):
         except Exception:
             self.error.Text = u"Margem inválida: informe um número em metros entre 0 e 100 (ex.: 0,50)."
             return
-        folder = self.folder_choice()
-        if folder["mode"] == "new" and not folder["name"]:
+        c = self.p_folder.choice(self.effective_template())
+        if c["mode"] == "new" and not c["name"]:
             self.error.Text = u"Informe o nome da nova pasta (ex.: D003_DETALHAMENTO)."
             return
-        if folder["mode"] == "existing" and not folder["name"]:
+        if c["mode"] == "existing" and not c["name"]:
             self.error.Text = u"Selecione a pasta de destino."
+            return
+        if self.mode != "current" and self.vtype_item is None:
+            self.error.Text = u"Escolha o tipo de vista."
             return
         self.confirmed = True
         self.Close()
@@ -1393,8 +1527,7 @@ class CropWindow(forms.WPFWindow):
 
     @property
     def result(self):
-        sel_folder = self.folder_list.SelectedItem
-        folder = self.folder_choice()
+        folder = self.p_folder.choice(self.effective_template())
         vname, title, en = self.names(folder)
         sel_tpl = self.template.SelectedItem
         return {"mode": self.mode, "margin": self.margin_m,
@@ -1403,8 +1536,7 @@ class CropWindow(forms.WPFWindow):
                 "view_name": vname, "title": title, "name_en": en,
                 "open": bool(self.open_views.IsChecked) and self.mode != "current",
                 "folder": folder,
-                "folder_list": to_unicode(sel_folder) if sel_folder is not None else u"",
-                "folder_new": to_unicode(self.folder_new.Text).strip(),
+                "p_saved": self.p_folder.saved_values(),
                 "template": self.template_choice,
                 "template_label": to_unicode(sel_tpl) if sel_tpl is not None else NO_TEMPLATE}
 
@@ -1461,6 +1593,7 @@ if folders.available and not folders.entries:
                       .format(folders.param_name))
 
 active_level = getattr(active_view, "GenLevel", None)
+sel_preview = u", ".join(g.label for g in geoms[:6]) + (u"..." if len(geoms) > 6 else u"")
 dialog_ctx = {
     "types": {"plans": plan_items, "callout": callout_items, "current": []},
     "names": dict((m, name_options(target_kind(m), the_room)) for m in MODES),
@@ -1468,38 +1601,39 @@ dialog_ctx = {
     "room": the_room,
     "hints": name_hints,
     "folders": folders,
+    "info": u"{} elemento(s) → 1 vista".format(len(geoms)),
+    "sel_text": u"{} elemento(s) selecionado(s): {}".format(len(geoms), sel_preview),
+    "view_text": active_view_text(callout_items),
 }
 
 config = script.get_config()
-cfg = {"margin": config.get_option("margin_m", 0.5),
+# margem sempre abre com o valor inicial (o usuário altera no diálogo)
+cfg = {"margin": INITIAL_MARGIN_M,
        "mode": config.get_option("mode", "current"),
        "vtype": config.get_option("vtype", u""),
        "vname": config.get_option("vname", MANUAL_KEY),
        "suffix": config.get_option("vsuffix", "amp"),
        "open": config.get_option("open_views", True),
-       "folder_mode": config.get_option("folder_mode", "none"),
-       "folder": config.get_option("folder", u""),
-       "folder_new": config.get_option("folder_new", u""),
+       "p_folder": {"folder_mode": config.get_option("folder_mode", "none"),
+                    "folder": config.get_option("folder", u""),
+                    "folder_new": config.get_option("folder_new", u"")},
        "template": config.get_option("template", NO_TEMPLATE)}
 
-info = u"{} elemento(s) → 1 vista · vista ativa: {} ({})".format(
-    len(geoms), to_unicode(active_view.Name), view_type_label(active_view))
-win = CropWindow(CROP_XAML, info, dialog_ctx, reasons, cfg)
+win = CropWindow(CROP_XAML, dialog_ctx, reasons, cfg)
 win.ShowDialog()
 if not win.confirmed:
     script.exit()
 opts = win.result
 
-config.margin_m = opts["margin"]
 config.mode = opts["mode"]
 config.vtype = opts["type"]["label"] if opts["type"] else cfg["vtype"]
 config.vname = opts["vname"]
 config.vsuffix = opts["suffix"]
 if opts["mode"] != "current":   # na vista ativa a opção fica desabilitada
     config.open_views = opts["open"]
-config.folder_mode = opts["folder"]["mode"]
-config.folder = opts["folder_list"]
-config.folder_new = opts["folder_new"]
+config.folder_mode = opts["p_saved"]["folder_mode"]
+config.folder = opts["p_saved"]["folder"]
+config.folder_new = opts["p_saved"]["folder_new"]
 config.template = opts["template_label"]
 script.save_config()
 
@@ -1534,6 +1668,8 @@ if mode == "plans" and other_levels:
 
 vtype = opts["type"]
 folder = opts["folder"]
+# pasta travada = o View Template já define; o comando não grava
+folder_write = u"" if folder["locked"] else folder["name"]
 template = opts["template"]
 notes = []
 error = None
@@ -1566,7 +1702,7 @@ try:
 
     apply_names(view, opts["view_name"], opts["name_en"], notes)  # View Name + English
     apply_title_on_sheet(view, opts["title"], notes)              # Title on Sheet (sem prefixo)
-    ProjectFolders.apply(view, folder["name"], notes)
+    ProjectFolders.apply(view, folder_write, notes)
     doc.Regenerate()
 
     # recalcula no sistema da vista-alvo: a orientação relativa pode
@@ -1579,7 +1715,7 @@ try:
     if template is not None:
         apply_template(view, template, notes)
         doc.Regenerate()
-        ProjectFolders.check(view, folder["name"], notes)
+        ProjectFolders.check(view, folder_write, notes)
 
     status = t.Commit()
     if status != DB.TransactionStatus.Committed:
