@@ -24,11 +24,11 @@
 #      criadas são abertas nessa ordem; a primeira fica ativa no final.
 #   8. Ambiente sem vista (não colocado, sem geometria ou falha na criação)
 #      é ignorado; ao final, um resumo lista o que precisa ser revisado.
-#   9. Elevações (seção 6d): UM ElevationMarker nativo por ambiente, num
-#      ponto dentro do Room, e as elevações Norte/Leste/Sul/Oeste criadas a
-#      partir dele (como Vista > Elevação). Marcador já existente no ambiente
-#      é reaproveitado (só as direções que faltam). View Name:
-#      PREFIXO_Nº - AMBIENTE - ELEVAÇÃO NORTE; títulos: ... - ELEVAÇÃO 01.
+#   9. Elevações (seção 6d): UM ElevationMarker nativo NOVO por ambiente,
+#      num ponto dentro do Room, e as elevações Norte/Leste/Sul/Oeste criadas
+#      a partir dele (como Vista > Elevação). Elevações já existentes são
+#      ignoradas. Margem, View Template e pasta próprios das elevações.
+#      View Name: PREFIXO_Nº - AMBIENTE - ELEVAÇÃO NORTE; títulos: ... 01.
 #
 # A descrição fica em comentário (e não em docstring) de propósito: o
 # pyRevit 5.2 lê a docstring do módulo com .decode('utf-8'), que falha com
@@ -910,34 +910,88 @@ def _type_name(el):
         return u""
 
 
-def elevation_mark_family(vft):
-    """Família do marcador usada pelo tipo de elevação, só para exibir no
-    diálogo: tipo de elevação -> Elevation Tag -> corpo (família Elevation Mark)."""
+ELEV_MARK_CAT = _bic_int("OST_ElevationMarks")
+
+
+def _is_elev_mark(el):
+    return isinstance(el, DB.FamilySymbol) and elem_cat_int(el) == ELEV_MARK_CAT
+
+
+def _tag_link(vft):
+    """(parâmetro do tipo de elevação que aponta para o Elevation Tag, tipo do
+    Elevation Tag, parâmetro do tag que aponta para o corpo, símbolo do corpo).
+    Achado pelos valores (ElementId -> família da categoria Elevation Marks) e
+    não pelo nome do parâmetro, que muda com o idioma do Revit; assim o
+    Callout Tag, que o tipo de elevação também tem, não é confundido."""
     try:
         for p in vft.Parameters:
             if p.StorageType != DB.StorageType.ElementId:
                 continue
             tag = doc.GetElement(p.AsElementId())
-            if not isinstance(tag, DB.ElementType) or isinstance(tag, DB.ViewFamilyType):
+            if not isinstance(tag, DB.ElementType) or isinstance(
+                    tag, (DB.ViewFamilyType, DB.FamilySymbol)):
                 continue
             for q in tag.Parameters:
-                if q.StorageType == DB.StorageType.ElementId:
-                    sym = doc.GetElement(q.AsElementId())
-                    if isinstance(sym, DB.FamilySymbol):
-                        return u"{} : {}".format(to_unicode(sym.FamilyName), _type_name(sym))
-            return _type_name(tag)
+                if q.StorageType == DB.StorageType.ElementId and \
+                        _is_elev_mark(doc.GetElement(q.AsElementId())):
+                    return p, tag, q, doc.GetElement(q.AsElementId())
     except Exception:
         pass
-    return u""
+    return None, None, None, None
+
+
+def _family_label(sym):
+    return u"{} : {}".format(to_unicode(sym.FamilyName), _type_name(sym))
 
 
 def elev_type_items():
-    items = []
+    """Combo 'Tipo de elevação': as famílias de marcador carregadas no modelo.
+    Família já usada por um tipo de elevação -> esse tipo; família carregada
+    sem tipo -> um tipo novo é criado ao aplicar (ensure_elev_type)."""
+    items, used = [], set()
     for vft in ELEV_TYPES:
-        fam = elevation_mark_family(vft)
-        items.append({"label": _vft_name(vft) + (u"  ·  marcador: " + fam if fam else u""),
-                      "id": vft.Id, "family": fam})
+        sym = _tag_link(vft)[3]
+        if sym is not None:
+            used.add(eid_int(sym.Id))
+            items.append({"label": u"{}   (tipo: {})".format(_family_label(sym), _vft_name(vft)),
+                          "id": vft.Id, "family": _family_label(sym), "symbol": None})
+        else:
+            items.append({"label": u"{}   (marcador não identificado)".format(_vft_name(vft)),
+                          "id": vft.Id, "family": u"", "symbol": None})
+    if any(_tag_link(v)[2] is not None for v in ELEV_TYPES):   # há tipo para duplicar
+        for sym in (DB.FilteredElementCollector(doc).OfClass(DB.FamilySymbol)
+                    .OfCategory(DB.BuiltInCategory.OST_ElevationMarks)):
+            if _is_elev_mark(sym) and eid_int(sym.Id) not in used:
+                items.append({"label": u"{}   (novo tipo de elevação)".format(_family_label(sym)),
+                              "id": None, "family": _family_label(sym), "symbol": sym.Id})
     return sorted(items, key=lambda i: natural_key(i["label"]))
+
+
+def _duplicate(etype, base_name):
+    for n in range(1, 30):
+        name = base_name if n == 1 else u"{} ({})".format(base_name, n)
+        try:
+            return etype.Duplicate(name)
+        except Exception:   # nome já usado: tenta o próximo
+            continue
+    raise ValueError(u"não foi possível duplicar o tipo '{}'.".format(base_name))
+
+
+def ensure_elev_type(item):
+    """Id do tipo de elevação a usar. Família sem tipo: duplica um tipo de
+    elevação existente e o seu Elevation Tag e aponta o corpo para a família
+    escolhida. Só cria tipos novos; nenhum tipo existente é alterado."""
+    if item["id"] is not None:
+        return item["id"]
+    base = next(v for v in ELEV_TYPES if _tag_link(v)[2] is not None)
+    p, tag, q, _sym = _tag_link(base)
+    sym = doc.GetElement(item["symbol"])
+    name = u"OCA - " + to_unicode(sym.FamilyName)
+    new_tag = _duplicate(tag, name)
+    new_tag.get_Parameter(q.Definition).Set(item["symbol"])
+    new_vft = _duplicate(base, name)
+    new_vft.get_Parameter(p.Definition).Set(new_tag.Id)
+    return new_vft.Id
 
 
 def elevation_names(room, key, prefix):
@@ -1035,43 +1089,6 @@ def marker_origin(g):
     return DB.XYZ(best[0], best[1], z0) if best else None
 
 
-def marker_views(marker):
-    """{direção: vista} das elevações que o marcador já tem."""
-    out = {}
-    for i in range(marker.MaximumViewCount):
-        vid = marker.GetViewId(i)
-        if vid is not None and vid != INVALID_ID:
-            view = doc.GetElement(vid)
-            if view is not None:
-                out[look_direction(view)] = view
-    return out
-
-
-def existing_marker(g, host, markers):
-    """Marcador de elevação (não-referência) já dentro do ambiente, se houver:
-    o centro do marcador (caixa no modelo ou na planta) dentro do Room e na
-    faixa de altura dele. Com mais de um, o que tem mais vistas."""
-    room = g.el
-    z0, z1 = room_z(g)
-    found = []
-    for m in markers:
-        try:
-            if m.IsReference:
-                continue
-            bb = m.get_BoundingBox(None)
-            if bb is not None and not (z0 - 1.0 <= bb.Min.Z <= z1):
-                continue   # outro pavimento
-            bb = bb or m.get_BoundingBox(host)
-            if bb is None:
-                continue
-            cx, cy = (bb.Min.X + bb.Max.X) / 2.0, (bb.Min.Y + bb.Max.Y) / 2.0
-            if room.IsPointInRoom(DB.XYZ(cx, cy, (z0 + z1) / 2.0)):
-                found.append(m)
-        except Exception:
-            continue
-    return max(found, key=lambda m: m.CurrentViewCount) if found else None
-
-
 def apply_elevation_crop(view, g, margin_ft):
     """Recorte = largura do ambiente vista nessa direção x altura do ambiente
     (piso ao limite superior do Room) + margem. Só o CropBox da vista muda;
@@ -1166,6 +1183,25 @@ def room_sort_key(g):
 # ------------------------------------------------------------------
 # 8. Diálogo (mesmo tema dos outros botões; três colunas para caber na tela)
 # ------------------------------------------------------------------
+# bloco de destino (pasta) repetido para plantas e elevações: @K@ = prefixo
+# dos nomes dos controles, @T@ = título do bloco
+FOLDER_BLOCK = u"""
+            <TextBlock Text="@T@" FontWeight="SemiBold" Margin="0,10,0,0"/>
+            <StackPanel x:Name="@K@_box">
+              <RadioButton x:Name="@K@_f_exist" GroupName="@K@_folder" Content="Pasta existente"/>
+              <ComboBox x:Name="@K@_list" Margin="20,4,0,0"/>
+              <RadioButton x:Name="@K@_f_new" GroupName="@K@_folder" Content="Nova pasta"
+                           Margin="0,8,0,0"/>
+              <TextBox x:Name="@K@_new" Margin="20,4,0,0"
+                       ToolTip="Ex.: D003_DETALHAMENTO - o texto antes do 1º '_' vira o prefixo do View Name"/>
+              <RadioButton x:Name="@K@_f_none" GroupName="@K@_folder"
+                           Content="Não definir pasta (View Name sem prefixo)" Margin="0,8,0,0"/>
+            </StackPanel>
+            <TextBlock x:Name="@K@_lock" TextWrapping="Wrap" FontSize="11"
+                       Foreground="#FFB454" Margin="0,6,0,0"/>
+            <TextBlock x:Name="@K@_prefix" FontSize="11" Margin="0,6,0,0"/>
+"""
+
 CROP_XAML = u"""
 <Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
@@ -1220,52 +1256,54 @@ CROP_XAML = u"""
         <ColumnDefinition Width="*"/>
       </Grid.ColumnDefinitions>
 
-      <!-- coluna 1: ambientes, tipo de vista, elevações -->
+      <!-- coluna 1: premissas, plantas, elevações -->
       <StackPanel Grid.Column="0">
         <Border>
           <StackPanel>
-            <TextBlock Text="AMBIENTES" FontSize="12" FontWeight="SemiBold" Foreground="#65E3FF"/>
+            <TextBlock Text="PREMISSAS" FontSize="12" FontWeight="SemiBold" Foreground="#65E3FF"/>
             <TextBlock x:Name="rooms_txt" TextWrapping="Wrap" FontSize="11"
                        Foreground="#7A8FA9" Margin="0,0,0,2"/>
-            <TextBlock Text="Margem ao redor de cada ambiente (m)"/>
+            <TextBlock x:Name="margin_lbl" Text="Plantas: margem ao redor de cada ambiente (m)"/>
             <TextBox x:Name="margin"/>
+            <TextBlock x:Name="e_margin_lbl" Text="Elevações: margem ao redor de cada ambiente (m)"/>
+            <TextBox x:Name="e_margin"/>
+            <TextBlock Text="Tipo de vista" Margin="0,14,0,0"/>
+            <RadioButton x:Name="rb_c_plans" GroupName="create" Content="Plantas"/>
+            <RadioButton x:Name="rb_c_elev" GroupName="create" Content="Elevações"/>
+            <RadioButton x:Name="rb_c_both" GroupName="create" Content="Plantas + Elevações"/>
           </StackPanel>
         </Border>
 
         <Border>
-          <StackPanel>
-            <TextBlock Text="TIPO DE VISTA" FontSize="12" FontWeight="SemiBold" Foreground="#65E3FF"/>
-            <RadioButton x:Name="rb_c_plans" GroupName="create" Content="Plantas"/>
-            <RadioButton x:Name="rb_c_elev" GroupName="create" Content="Elevações"/>
-            <RadioButton x:Name="rb_c_both" GroupName="create" Content="Plantas + Elevações"/>
-
-            <StackPanel x:Name="plan_panel" Margin="0,6,0,0">
-              <TextBlock Text="Plantas (uma vista por ambiente)" Margin="0,10,0,0"/>
-              <RadioButton x:Name="rb_plans" GroupName="mode"
-                           Content="Criar nova vista de planta (Piso, Forro, Estrutural, Área)"/>
-              <RadioButton x:Name="rb_callout" GroupName="mode"
-                           Content="Criar vista de chamada de detalhe (Callout) na vista ativa"/>
-              <TextBlock x:Name="reasons" TextWrapping="Wrap" FontSize="11"
-                         Foreground="#FFB454" Margin="0,8,0,0"/>
-              <TextBlock x:Name="vtype_lbl" Text="Tipo de vista da planta"/>
-              <ComboBox x:Name="vtype"/>
-            </StackPanel>
+          <StackPanel x:Name="plan_panel">
+            <TextBlock Text="PLANTAS" FontSize="12" FontWeight="SemiBold" Foreground="#65E3FF"/>
+            <TextBlock Text="O que fazer (uma vista por ambiente)"/>
+            <RadioButton x:Name="rb_plans" GroupName="mode"
+                         Content="Criar nova vista de planta (Piso, Forro, Estrutural, Área)"/>
+            <RadioButton x:Name="rb_callout" GroupName="mode"
+                         Content="Criar vista de chamada de detalhe (Callout) na vista ativa"/>
+            <TextBlock x:Name="reasons" TextWrapping="Wrap" FontSize="11"
+                       Foreground="#FFB454" Margin="0,8,0,0"/>
+            <TextBlock x:Name="vtype_lbl" Text="Tipo de vista da planta"/>
+            <ComboBox x:Name="vtype"/>
           </StackPanel>
         </Border>
 
-        <Border x:Name="elev_border">
+        <Border>
           <StackPanel x:Name="elev_panel">
             <TextBlock Text="ELEVAÇÕES  ·  MARCADOR NATIVO DO REVIT" FontSize="12"
                        FontWeight="SemiBold" Foreground="#65E3FF"/>
-            <TextBlock Text="Tipo de elevação (família do marcador)"/>
+            <TextBlock Text="Tipo de elevação (família do marcador carregada no modelo)"/>
             <ComboBox x:Name="etype"/>
-            <TextBlock Text="Direções (um marcador por ambiente)"/>
+            <TextBlock Text="Direções (um marcador novo por ambiente)"/>
             <CheckBox x:Name="cb_n" Content="1. Norte   →  ELEVAÇÃO 01"/>
             <CheckBox x:Name="cb_s" Content="2. Sul   →  ELEVAÇÃO 03"/>
             <CheckBox x:Name="cb_l" Content="3. Leste   →  ELEVAÇÃO 02"/>
             <CheckBox x:Name="cb_o" Content="4. Oeste   →  ELEVAÇÃO 04"/>
+            <TextBlock Text="Elevações que já existirem no ambiente são ignoradas: o marcador e as vistas são criados de novo."
+                       TextWrapping="Wrap" FontSize="11" Foreground="#7A8FA9" Margin="0,8,0,0"/>
             <TextBlock x:Name="elev_reason" TextWrapping="Wrap" FontSize="11"
-                       Foreground="#FFB454" Margin="0,8,0,0"/>
+                       Foreground="#FFB454" Margin="0,6,0,0"/>
           </StackPanel>
         </Border>
       </StackPanel>
@@ -1274,35 +1312,29 @@ CROP_XAML = u"""
       <StackPanel Grid.Column="2">
         <Border>
           <StackPanel>
-            <TextBlock Text="VIEW TEMPLATE" FontSize="12" FontWeight="SemiBold" Foreground="#65E3FF"/>
+            <TextBlock Text="MODELO DE VISTA (VIEW TEMPLATE)" FontSize="12" FontWeight="SemiBold"
+                       Foreground="#65E3FF"/>
             <TextBlock x:Name="template_lbl" Text="Plantas"/>
             <ComboBox x:Name="template"/>
             <TextBlock x:Name="etemplate_lbl" Text="Elevações"/>
             <ComboBox x:Name="etemplate"/>
-            <TextBlock Text="Só aparecem os templates compatíveis com cada tipo de vista."
+            <TextBlock Text="Só aparecem os templates que o Revit aceita para cada tipo de vista."
                        TextWrapping="Wrap" FontSize="11" Foreground="#7A8FA9" Margin="0,6,0,0"/>
           </StackPanel>
         </Border>
 
         <Border>
           <StackPanel>
-            <TextBlock Text="DESTINO  ·  NAVEGADOR DE PROJETO" FontSize="12"
+            <TextBlock Text="DESTINO DAS VISTAS  ·  NAVEGADOR DE PROJETO" FontSize="12"
                        FontWeight="SemiBold" Foreground="#65E3FF"/>
             <TextBlock x:Name="folder_src" TextWrapping="Wrap" FontSize="11"
                        Foreground="#7A8FA9" Margin="0,0,0,2"/>
-            <RadioButton x:Name="rb_f_exist" GroupName="folder" Content="Pasta existente"/>
-            <ComboBox x:Name="folder_list" Margin="20,4,0,0"/>
-            <RadioButton x:Name="rb_f_new" GroupName="folder" Content="Nova pasta"
-                         Margin="0,10,0,0"/>
-            <TextBox x:Name="folder_new" Margin="20,4,0,0"
-                     ToolTip="Ex.: D003_DETALHAMENTO - o texto antes do 1º '_' vira o prefixo do View Name"/>
-            <TextBlock x:Name="folder_new_hint" TextWrapping="Wrap" FontSize="11"
-                       Foreground="#7A8FA9" Margin="20,3,0,0"/>
-            <RadioButton x:Name="rb_f_none" GroupName="folder"
-                         Content="Não definir pasta (View Name sem prefixo)" Margin="0,10,0,0"/>
-            <TextBlock x:Name="folder_prefix_txt" FontWeight="SemiBold" Margin="0,10,0,0"/>
             <TextBlock x:Name="folder_reason" TextWrapping="Wrap" FontSize="11"
-                       Foreground="#FFB454" Margin="0,4,0,0"/>
+                       Foreground="#FFB454" Margin="0,0,0,2"/>
+            <StackPanel x:Name="p_panel">""" + FOLDER_BLOCK.replace(u"@K@", u"p").replace(u"@T@", u"Plantas") + u"""
+            </StackPanel>
+            <StackPanel x:Name="e_panel">""" + FOLDER_BLOCK.replace(u"@K@", u"e").replace(u"@T@", u"Elevações") + u"""
+            </StackPanel>
           </StackPanel>
         </Border>
       </StackPanel>
@@ -1311,9 +1343,9 @@ CROP_XAML = u"""
       <StackPanel Grid.Column="4">
         <Border>
           <StackPanel x:Name="name_panel">
-            <TextBlock Text="NOMENCLATURA DAS PLANTAS" FontSize="12" FontWeight="SemiBold"
+            <TextBlock Text="NOMENCLATURA" FontSize="12" FontWeight="SemiBold"
                        Foreground="#65E3FF"/>
-            <TextBlock Text="Vale para View Name, Title on Sheet e Title on Sheet - English."
+            <TextBlock Text="Plantas: vale para View Name, Title on Sheet e Title on Sheet - English. Elevações: Nº - AMBIENTE - ELEVAÇÃO (automático)."
                        TextWrapping="Wrap" FontSize="11" Foreground="#7A8FA9" Margin="0,0,0,2"/>
             <TextBlock Text="A - Principal"/>
             <ComboBox x:Name="vname"/>
@@ -1383,6 +1415,77 @@ CREATE_MODES = ("plans", "elev", "both")
 DIR_ORDER = ("N", "S", "L", "O")   # ordem dos checkboxes no diálogo
 
 
+class FolderPicker(object):
+    """Um bloco de destino (pasta existente / nova / nenhuma). Se o View
+    Template escolhido controla o parâmetro 'Pasta', o bloco trava: a vista
+    vai para a pasta do template e o prefixo vem dela."""
+
+    def __init__(self, win, key, folders, saved, on_change):
+        def ctl(name):
+            return getattr(win, u"{}_{}".format(key, name))
+        self.folders = folders
+        self.rb = {"existing": ctl("f_exist"), "new": ctl("f_new"), "none": ctl("f_none")}
+        self.box, self.list, self.new = ctl("box"), ctl("list"), ctl("new")
+        self.lock_txt, self.prefix_txt = ctl("lock"), ctl("prefix")
+
+        labels = [e["label"] for e in folders.entries]
+        self.list.ItemsSource = labels
+        if labels:
+            self.list.SelectedIndex = (labels.index(saved["folder"])
+                                       if saved["folder"] in labels else 0)
+        self.new.Text = saved["folder_new"]
+        allowed = {"existing": folders.available and bool(labels),
+                   "new": folders.available, "none": True}
+        for k, rb in self.rb.items():
+            rb.IsEnabled = allowed[k]
+            rb.Checked += on_change
+        self.list.SelectionChanged += on_change
+        self.new.TextChanged += on_change
+        start = saved["folder_mode"]
+        if not allowed.get(start):
+            start = next(k for k in FOLDER_MODES if allowed[k])
+        self.rb[start].IsChecked = True
+
+    @property
+    def mode(self):
+        return next((k for k in FOLDER_MODES if self.rb[k].IsChecked), "none")
+
+    def choice(self, template):
+        """{"mode", "name", "locked"}: name = pasta onde a vista fica (define o prefixo)."""
+        forced = self.folders.template_value(template["id"]) if template else None
+        if forced is not None:
+            return {"mode": "template", "name": forced, "locked": True}
+        mode = self.mode
+        name = u""
+        if mode == "existing":
+            idx = self.list.SelectedIndex
+            entries = self.folders.entries
+            name = entries[idx]["name"] if 0 <= idx < len(entries) else u""
+        elif mode == "new":
+            name = to_unicode(self.new.Text).strip()
+        return {"mode": mode, "name": name, "locked": False}
+
+    def render(self, template):
+        c = self.choice(template)
+        self.box.IsEnabled = not c["locked"]
+        self.box.Opacity = 0.4 if c["locked"] else 1.0
+        if not c["locked"]:
+            self.list.IsEnabled = c["mode"] == "existing"
+            self.new.IsEnabled = c["mode"] == "new"
+        self.lock_txt.Text = (u"Travado: o View Template '{}' define a pasta ('{}' = '{}')."
+                              .format(template["label"], FOLDER_PARAM, c["name"] or u"vazio → ???")
+                              if c["locked"] else u"")
+        prefix = name_prefix(c)
+        self.prefix_txt.Text = u"Prefixo do View Name:  {}".format(prefix or u"(nenhum)")
+        return c
+
+    def saved_values(self):
+        sel = self.list.SelectedItem
+        return {"folder_mode": self.mode,
+                "folder": to_unicode(sel) if sel is not None else u"",
+                "folder_new": to_unicode(self.new.Text).strip()}
+
+
 class CropWindow(forms.WPFWindow):
     def __init__(self, xaml, info, ctx, reasons, cfg):
         forms.WPFWindow.__init__(self, xaml, literal_string=True)
@@ -1401,13 +1504,12 @@ class CropWindow(forms.WPFWindow):
         self._templates = []
         self._radios = {"plans": self.rb_plans, "callout": self.rb_callout}
         self._cradios = {"plans": self.rb_c_plans, "elev": self.rb_c_elev, "both": self.rb_c_both}
-        self._fradios = {"existing": self.rb_f_exist, "new": self.rb_f_new,
-                         "none": self.rb_f_none}
         self._dir_boxes = {"N": self.cb_n, "S": self.cb_s, "L": self.cb_l, "O": self.cb_o}
 
         self.info.Text = info
         self.rooms_txt.Text = ctx["rooms_text"]
         self.margin.Text = u"{:.2f}".format(cfg["margin"])
+        self.e_margin.Text = u"{:.2f}".format(cfg["e_margin"])
         self.reasons.Text = u"\n".join(
             u"• {}: {}".format(MODE_LABELS[k], reasons[k]) for k in MODES if k in reasons)
         self.name_hint.Text = u"\n".join(ctx["hints"])
@@ -1422,7 +1524,15 @@ class CropWindow(forms.WPFWindow):
             rb.Checked += self._on_mode
         self._init_elevations()
         self._init_create(bool(enabled))
-        self._init_folders()
+
+        f = ctx["folders"]
+        if f.available:
+            self.folder_src.Text = u"Parâmetro de projeto '{}'  ·  {} pasta(s) no modelo".format(
+                f.param_name, len(f.entries))
+        else:
+            self.folder_reason.Text = f.reason
+        self.p_folder = FolderPicker(self, "p", f, cfg["p_folder"], self._on_name)
+        self.e_folder = FolderPicker(self, "e", f, cfg["e_folder"], self._on_name)
 
         self.vtype.SelectionChanged += self._on_vtype
         self.template.SelectionChanged += self._on_name
@@ -1446,7 +1556,7 @@ class CropWindow(forms.WPFWindow):
         allowed = {"plans": plans_ok, "elev": elev_ok, "both": plans_ok and elev_ok}
         for key, rb in self._cradios.items():
             rb.IsEnabled = allowed[key]
-            rb.Checked += self._on_create
+            rb.Checked += self._on_name
         start = self._saved["create"]
         if not allowed.get(start):
             start = next(k for k in CREATE_MODES if allowed[k])
@@ -1454,10 +1564,7 @@ class CropWindow(forms.WPFWindow):
 
     @property
     def create(self):
-        for key in CREATE_MODES:
-            if self._cradios[key].IsChecked:
-                return key
-        return "plans"
+        return next((k for k in CREATE_MODES if self._cradios[k].IsChecked), "plans")
 
     @property
     def do_plans(self):
@@ -1467,17 +1574,13 @@ class CropWindow(forms.WPFWindow):
     def do_elev(self):
         return self.create in ("elev", "both")
 
-    def _on_create(self, sender, args):
-        if self._ready:
-            self._update_names()
-
     def _init_elevations(self):
         items = self.ctx["elev_types"]
         labels = [i["label"] for i in items]
         self.etype.ItemsSource = labels
         if labels:
             saved = self._saved["elev_type"]
-            # padrão: o tipo cujo marcador é a família OCA de elevação interna
+            # padrão: a família OCA de elevação interna, se estiver carregada
             oca = next((i for i, it in enumerate(items)
                         if u"OCA_SIMB_ELEVA" in it["family"].upper()), 0)
             self.etype.SelectedIndex = labels.index(saved) if saved in labels else oca
@@ -1510,56 +1613,6 @@ class CropWindow(forms.WPFWindow):
         idx = self.etemplate.SelectedIndex
         items = self.ctx["elev_templates"]
         return items[idx - 1] if 1 <= idx <= len(items) else None
-
-    # --- pasta do navegador ------------------------------------------
-    def _init_folders(self):
-        f = self.ctx["folders"]
-        labels = [e["label"] for e in f.entries]
-        if f.available:
-            self.folder_src.Text = u"Parâmetro de projeto '{}'  ·  {} pasta(s) no modelo".format(
-                f.param_name, len(labels))
-        else:
-            self.folder_src.Text = u""
-            self.folder_reason.Text = f.reason
-        self.folder_list.ItemsSource = labels
-        if labels:
-            self.folder_list.SelectedIndex = (labels.index(self._saved["folder"])
-                                              if self._saved["folder"] in labels else 0)
-        self.folder_new.Text = self._saved["folder_new"]
-
-        allowed = {"existing": f.available and bool(labels), "new": f.available, "none": True}
-        for key, rb in self._fradios.items():
-            rb.IsEnabled = allowed[key]
-            rb.Checked += self._on_folder
-        self.folder_list.SelectionChanged += self._on_folder
-        self.folder_new.TextChanged += self._on_folder
-        start = self._saved["folder_mode"]
-        if not allowed.get(start):
-            start = next(k for k in FOLDER_MODES if allowed[k])
-        self._fradios[start].IsChecked = True
-
-    @property
-    def folder_mode(self):
-        for key in FOLDER_MODES:
-            if self._fradios[key].IsChecked:
-                return key
-        return "none"
-
-    def folder_choice(self):
-        """{"mode", "name"}: name = pasta escolhida (define o prefixo)."""
-        f = self.ctx["folders"]
-        mode = self.folder_mode
-        chosen = u""
-        if mode == "existing":
-            idx = self.folder_list.SelectedIndex
-            chosen = f.entries[idx]["name"] if 0 <= idx < len(f.entries) else u""
-        elif mode == "new":
-            chosen = to_unicode(self.folder_new.Text).strip()
-        return {"mode": mode, "name": chosen}
-
-    def _on_folder(self, sender, args):
-        if self._ready:
-            self._update_names()
 
     # --- tipo de vista da planta + template ------------------------------
     @property
@@ -1683,8 +1736,11 @@ class CropWindow(forms.WPFWindow):
         # grupos que não se aplicam ao tipo escolhido ficam apagados
         for panel, on in ((self.plan_panel, plans), (self.name_panel, plans),
                           (self.pv_plan, plans), (self.elev_panel, elev), (self.pv_elev, elev),
+                          (self.margin, plans), (self.margin_lbl, plans),
+                          (self.e_margin, elev), (self.e_margin_lbl, elev),
                           (self.template, plans), (self.template_lbl, plans),
-                          (self.etemplate, elev), (self.etemplate_lbl, elev)):
+                          (self.etemplate, elev), (self.etemplate_lbl, elev),
+                          (self.p_panel, plans), (self.e_panel, elev)):
             panel.IsEnabled = on
             panel.Opacity = 1.0 if on else 0.4
 
@@ -1699,67 +1755,50 @@ class CropWindow(forms.WPFWindow):
         self.manual.IsEnabled = is_manual
         self.manual_lbl.Opacity = 1.0 if is_manual else 0.4
 
-        folder = self.folder_choice()
-        fmode = folder["mode"]
-        self.folder_list.IsEnabled = fmode == "existing"
-        self.folder_new.IsEnabled = fmode == "new"
-        self.folder_new_hint.Text = (u"Grava o novo valor no parâmetro '{}' das vistas criadas."
-                                     .format(FOLDER_PARAM) if fmode == "new" else u"")
-        prefix = name_prefix(folder)
-        self.folder_prefix_txt.Text = (u"Prefixo do View Name:  {}".format(prefix) if prefix
-                                       else u"Prefixo do View Name:  (nenhum)")
+        p_tpl, e_tpl = self.template_choice, self.elev_template
+        p_fold = self.p_folder.render(p_tpl)
+        e_fold = self.e_folder.render(e_tpl)
 
-        vname, title, en = self.names(folder)
+        vname, title, en = self.names(p_fold)
         self.pv_name.Text = vname or u"(nome padrão do Revit)"
         self.pv_title.Text = title or u"—"
         self.pv_en.Text = en or u"—"
 
-        dirs = self.elev_dirs
+        dirs = sorted(self.elev_dirs, key=lambda k: ELEV_NUM[k])
         if dirs:
-            key = sorted(dirs, key=lambda k: ELEV_NUM[k])[0]
-            e_name, e_title, e_en = elevation_names(self.ctx["room"], key, prefix)
-            others = [u"{} ({:02d})".format(ELEV_WORD[k], ELEV_NUM[k])
-                      for k in sorted(dirs, key=lambda k: ELEV_NUM[k])[1:]]
-            self.pv_e_lbl.Text = (u"ELEVAÇÃO {}  ·  VIEW NAME".format(ELEV_WORD[key])
+            e_name, e_title, e_en = elevation_names(self.ctx["room"], dirs[0], name_prefix(e_fold))
+            others = [u"{} ({:02d})".format(ELEV_WORD[k], ELEV_NUM[k]) for k in dirs[1:]]
+            self.pv_e_lbl.Text = (u"ELEVAÇÃO {}  ·  VIEW NAME".format(ELEV_WORD[dirs[0]])
                                   + (u"   (+ {})".format(u", ".join(others)) if others else u""))
         else:
             e_name = e_title = e_en = u"—"
             self.pv_e_lbl.Text = u"ELEVAÇÃO  ·  VIEW NAME"
         self.pv_e_name.Text, self.pv_e_title.Text, self.pv_e_en.Text = e_name, e_title, e_en
 
-        self.pv_folder.Text = folder["name"] or u"(não definida pelo comando)"
-        tpls = []
-        if plans:
-            t = self.template_choice
-            tpls.append(u"Plantas: " + (t["label"] if t else NO_TEMPLATE))
-        if elev:
-            t = self.elev_template
-            tpls.append(u"Elevações: " + (t["label"] if t else NO_TEMPLATE))
+        folders, tpls = [], []
+        for on, label, fold, tpl in ((plans, u"Plantas", p_fold, p_tpl),
+                                     (elev, u"Elevações", e_fold, e_tpl)):
+            if on:
+                folders.append(u"{}: {}".format(label, fold["name"] or (
+                    u"??? (template)" if fold["locked"] else u"(não definida pelo comando)")))
+                tpls.append(u"{}: {}".format(label, tpl["label"] if tpl else NO_TEMPLATE))
+        self.pv_folder.Text = u"\n".join(folders)
         self.pv_template.Text = u"\n".join(tpls)
-        self.live_hint.Text = u"\n".join(self._live_hints(folder))
+        self.live_hint.Text = u"\n".join(self._live_hints(p_fold, e_fold))
 
-    def _live_hints(self, folder):
+    def _live_hints(self, p_fold, e_fold):
         hints = []
-        if folder["mode"] != "none" and folder["name"] and not folder_prefix(folder["name"]):
-            hints.append(u"A pasta '{}' não tem '_': o View Name fica sem prefixo."
-                         .format(folder["name"]))
-        if folder["mode"] == "new" and folder["name"] in [e["name"] for e in
-                                                          self.ctx["folders"].entries]:
-            hints.append(u"A pasta '{}' já existe: as vistas vão para ela.".format(folder["name"]))
-        active = []
-        if self.do_plans and self.template_choice:
-            active.append(self.template_choice)
-        if self.do_elev and self.elev_template:
-            active.append(self.elev_template)
-        for template in active:
-            tf = self.ctx["folders"].template_value(template["id"])
-            if folder["name"] and tf is not None and tf != folder["name"]:
-                # o nome não muda; só a posição no navegador fica presa ao template
-                hints.append(u"Atenção: o View Template '{}' controla o parâmetro '{}' (= '{}'). "
-                             u"O nome das vistas usa '{}', mas no Navegador elas ficarão em "
-                             u"'{}'. Para a pasta funcionar, desmarque '{}' (Include) nesse "
-                             u"template.".format(template["label"], FOLDER_PARAM, tf or u"vazio",
-                                                 folder["name"], tf or u"???", FOLDER_PARAM))
+        entries = [e["name"] for e in self.ctx["folders"].entries]
+        for on, label, fold in ((self.do_plans, u"Plantas", p_fold),
+                                (self.do_elev, u"Elevações", e_fold)):
+            if not on or not fold["name"]:
+                continue
+            if fold["mode"] != "none" and not folder_prefix(fold["name"]):
+                hints.append(u"{}: a pasta '{}' não tem '_' - View Name sem prefixo."
+                             .format(label, fold["name"]))
+            if fold["mode"] == "new" and fold["name"] in entries:
+                hints.append(u"{}: a pasta '{}' já existe - as vistas vão para ela."
+                             .format(label, fold["name"]))
         if self.do_plans and self.ctx["count"] > 1 and not self.name_opt["room"]:
             hints.append(u"Nomes sem <Nº> - <AMBIENTE> se repetem entre as vistas e recebem "
                          u"(2), (3)...; no nome manual, use # para numerar.")
@@ -1768,16 +1807,19 @@ class CropWindow(forms.WPFWindow):
     def _ok(self, sender, args):
         try:
             self.margin_m = parse_margin(self.margin.Text)
+            self.e_margin_m = parse_margin(self.e_margin.Text)
         except Exception:
             self.error.Text = u"Margem inválida: informe um número em metros entre 0 e 100 (ex.: 0,50)."
             return
-        folder = self.folder_choice()
-        if folder["mode"] == "new" and not folder["name"]:
-            self.error.Text = u"Informe o nome da nova pasta (ex.: D003_DETALHAMENTO)."
-            return
-        if folder["mode"] == "existing" and not folder["name"]:
-            self.error.Text = u"Selecione a pasta de destino."
-            return
+        for on, label, picker, tpl in ((self.do_plans, u"plantas", self.p_folder, self.template_choice),
+                                       (self.do_elev, u"elevações", self.e_folder, self.elev_template)):
+            c = picker.choice(tpl)
+            if on and c["mode"] == "new" and not c["name"]:
+                self.error.Text = u"Informe o nome da nova pasta das {} (ex.: D003_DETALHAMENTO).".format(label)
+                return
+            if on and c["mode"] == "existing" and not c["name"]:
+                self.error.Text = u"Selecione a pasta de destino das {}.".format(label)
+                return
         if self.do_plans and self.vtype_item is None:
             self.error.Text = u"Escolha o tipo de vista da planta."
             return
@@ -1795,17 +1837,17 @@ class CropWindow(forms.WPFWindow):
 
     @property
     def result(self):
-        sel_folder = self.folder_list.SelectedItem
-        return {"mode": self.mode, "margin": self.margin_m,
+        return {"mode": self.mode, "margin": self.margin_m, "e_margin": self.e_margin_m,
                 "create": self.create,
                 "type": self.vtype_item,
                 "vname": self.name_opt["key"], "suffix": self.suffix_key,
                 "name_opt": self.name_opt, "manual": to_unicode(self.manual.Text),
                 "suffix_text": to_unicode(self.suffix_text.Text),
                 "open": bool(self.open_views.IsChecked),
-                "folder": self.folder_choice(),
-                "folder_list": to_unicode(sel_folder) if sel_folder is not None else u"",
-                "folder_new": to_unicode(self.folder_new.Text).strip(),
+                "folder": self.p_folder.choice(self.template_choice),
+                "e_folder": self.e_folder.choice(self.elev_template),
+                "p_saved": self.p_folder.saved_values(),
+                "e_saved": self.e_folder.saved_values(),
                 "template": self.template_choice,
                 "elev_type": self.elev_type,
                 "elev_dirs": self.elev_dirs,
@@ -1890,15 +1932,19 @@ dialog_ctx = {
 
 config = script.get_config()
 cfg = {"margin": config.get_option("margin_m", 0.5),
+       "e_margin": config.get_option("e_margin_m", 0.3),
        "mode": config.get_option("mode", "plans"),
        "create": config.get_option("create", "plans"),
        "vtype": config.get_option("vtype", u""),
        "vname": config.get_option("vname", "room_civil"),
        "suffix": config.get_option("vsuffix", "amp"),
        "open": config.get_option("open_views", True),
-       "folder_mode": config.get_option("folder_mode", "existing"),
-       "folder": config.get_option("folder", u""),
-       "folder_new": config.get_option("folder_new", u""),
+       "p_folder": {"folder_mode": config.get_option("folder_mode", "existing"),
+                    "folder": config.get_option("folder", u""),
+                    "folder_new": config.get_option("folder_new", u"")},
+       "e_folder": {"folder_mode": config.get_option("e_folder_mode", "existing"),
+                    "folder": config.get_option("e_folder", u""),
+                    "folder_new": config.get_option("e_folder_new", u"")},
        "template": config.get_option("template", NO_TEMPLATE),
        "elev_type": config.get_option("elev_type", u""),
        "elev_dirs": config.get_option("elev_dirs", u"NLSO"),
@@ -1912,15 +1958,19 @@ if not win.confirmed:
 opts = win.result
 
 config.margin_m = opts["margin"]
+config.e_margin_m = opts["e_margin"]
 config.mode = opts["mode"]
 config.create = opts["create"]
 config.vtype = opts["type"]["label"] if opts["type"] else cfg["vtype"]
 config.vname = opts["vname"]
 config.vsuffix = opts["suffix"]
 config.open_views = opts["open"]
-config.folder_mode = opts["folder"]["mode"]
-config.folder = opts["folder_list"]
-config.folder_new = opts["folder_new"]
+config.folder_mode = opts["p_saved"]["folder_mode"]
+config.folder = opts["p_saved"]["folder"]
+config.folder_new = opts["p_saved"]["folder_new"]
+config.e_folder_mode = opts["e_saved"]["folder_mode"]
+config.e_folder = opts["e_saved"]["folder"]
+config.e_folder_new = opts["e_saved"]["folder_new"]
 config.template = opts["template"]["label"] if opts["template"] else NO_TEMPLATE
 config.elev_type = opts["elev_type"]["label"] if opts["elev_type"] else cfg["elev_type"]
 config.elev_dirs = u"".join(opts["elev_dirs"])
@@ -1930,7 +1980,8 @@ script.save_config()
 mode = opts["mode"]
 do_plans = opts["create"] in ("plans", "both")
 do_elev = opts["create"] in ("elev", "both")
-margin_ft = m_to_ft(opts["margin"])
+margin_ft = m_to_ft(opts["margin"])        # plantas
+e_margin_ft = m_to_ft(opts["e_margin"])    # elevações
 
 # --- verificações específicas do modo, antes de qualquer alteração ---------
 if do_plans and mode == "callout":
@@ -1944,8 +1995,15 @@ if do_plans and mode == "callout":
 
 vtype = opts["type"]
 name_opt = opts["name_opt"]
-folder = opts["folder"]
+folder = opts["folder"]          # plantas
 prefix = name_prefix(folder)
+e_folder = opts["e_folder"]      # elevações
+e_prefix = name_prefix(e_folder)
+
+
+def folder_to_write(fold):
+    """Pasta gravada pelo comando; travada = o View Template já define."""
+    return u"" if fold["locked"] else fold["name"]
 template = opts["template"]
 elev_type = opts["elev_type"]
 elev_dirs = opts["elev_dirs"]
@@ -1983,7 +2041,7 @@ def create_room_view(g, level):
     vname, title, en = resolve_names(prefix, title, en)
     apply_names(view, vname, en, room_notes)      # View Name (com prefixo) + English
     apply_title_on_sheet(view, title, room_notes)  # Title on Sheet (sem prefixo)
-    ProjectFolders.apply(view, folder["name"], room_notes)
+    ProjectFolders.apply(view, folder_to_write(folder), room_notes)
     doc.Regenerate()
 
     # recalcula no sistema da vista-alvo (igual ao 01)
@@ -2002,45 +2060,32 @@ def create_room_view(g, level):
 def setup_elevation(view, g, key, notes_out):
     """Nome, pasta, recorte e template de UMA elevação (mesmas regras das plantas)."""
     view.ViewTemplateId = INVALID_ID   # tipo de elevação pode trazer template padrão
-    vname, title, en = elevation_names(g.el, key, prefix)
+    vname, title, en = elevation_names(g.el, key, e_prefix)
     apply_names(view, vname, en, notes_out)
     apply_title_on_sheet(view, title, notes_out)
-    ProjectFolders.apply(view, folder["name"], notes_out)
+    ProjectFolders.apply(view, folder_to_write(e_folder), notes_out)
     doc.Regenerate()
-    apply_elevation_crop(view, g, margin_ft)
+    apply_elevation_crop(view, g, e_margin_ft)
     if elev_template is not None:
         apply_template(view, elev_template, notes_out)
         doc.Regenerate()
-        ProjectFolders.check(view, folder["name"], notes_out)
+        ProjectFolders.check(view, e_folder["name"], notes_out)
 
 
-def create_room_elevations(g, host, markers):
-    """UM marcador por ambiente: reaproveita o que já estiver dentro do Room
-    (só completa as direções que faltam) ou cria um novo no ponto seguro.
-    Cada direção em uma SubTransaction: uma falha não desfaz as outras.
+def create_room_elevations(g, host, etype_id):
+    """UM marcador NOVO por ambiente, no ponto seguro dentro do Room. Elevações
+    que já existirem no ambiente são ignoradas (não é erro): tudo é criado de
+    novo. Cada direção em uma SubTransaction: uma falha não desfaz as outras.
     Devolve ([(direção, vista)], [(direção, motivo)], avisos)."""
     made, room_notes, errors_by_key = [], [], {}
-    marker = existing_marker(g, host, markers)
-    new_marker = marker is None
-    have = {}
-    if new_marker:
-        origin = marker_origin(g)
-        if origin is None:
-            raise ValueError(u"nenhum ponto dentro do ambiente para colocar o marcador.")
-        marker = DB.ElevationMarker.CreateElevationMarker(doc, elev_type["id"], origin, host.Scale)
-    else:
-        have = marker_views(marker)
-        for k in elev_dirs:
-            if k in have:
-                room_notes.append(u"ELEVAÇÃO {} já existia no marcador do ambiente ('{}'); "
-                                  u"não recriada.".format(ELEV_WORD[k], to_unicode(have[k].Name)))
-        if eid_int(marker.GetTypeId()) != eid_int(elev_type["id"]):
-            room_notes.append(u"marcador existente reaproveitado: as novas elevações usam o tipo "
-                              u"de elevação dele, não o escolhido no diálogo.")
+    origin = marker_origin(g)
+    if origin is None:
+        raise ValueError(u"nenhum ponto dentro do ambiente para colocar o marcador.")
+    marker = DB.ElevationMarker.CreateElevationMarker(doc, etype_id, origin, host.Scale)
 
     last_error = u"o marcador não tem posição livre para essa direção."
     for i in range(marker.MaximumViewCount):
-        if all(k in have or k in dict(made) for k in elev_dirs):
+        if all(k in dict(made) for k in elev_dirs):
             break
         if not marker.IsAvailableIndex(i):
             continue
@@ -2052,8 +2097,8 @@ def create_room_elevations(g, host, markers):
             view = marker.CreateElevation(doc, host.Id, i)
             doc.Regenerate()
             key = look_direction(view)
-            if key not in elev_dirs or key in have or key in dict(made):
-                st.RollBack()   # direção não pedida ou já existente: desfaz
+            if key not in elev_dirs or key in dict(made):
+                st.RollBack()   # direção não marcada no diálogo: desfaz
                 continue
             view_notes = []
             setup_elevation(view, g, key, view_notes)
@@ -2070,9 +2115,9 @@ def create_room_elevations(g, host, markers):
             else:
                 last_error = to_unicode(exc)
 
-    done = set(have) | set(k for k, _v in made)
+    done = set(k for k, _v in made)
     errors = [(k, errors_by_key.get(k, last_error)) for k in elev_dirs if k not in done]
-    if new_marker and not made:
+    if not made:
         doc.Delete(marker.Id)   # não deixa marcador vazio no modelo
     made.sort(key=lambda kv: ELEV_NUM[kv[0]])
     return made, errors, room_notes
@@ -2082,13 +2127,28 @@ def elev_label(g, key):
     return u"{} · ELEVAÇÃO {}".format(g.label, ELEV_WORD[key])
 
 
-markers = list(DB.FilteredElementCollector(doc).OfClass(DB.ElevationMarker)) if do_elev else []
-
 # um grupo = um único Desfazer; uma transação por ambiente (planta e
 # elevações separadas) = falha isolada
 tgroup = DB.TransactionGroup(doc, u"OCA - Abertura de Múltiplas Vistas")
 tgroup.Start()
 try:
+    # família do marcador sem tipo de elevação: cria o tipo uma vez, antes
+    etype_id, etype_error = None, None
+    if do_elev:
+        t = DB.Transaction(doc, u"OCA - Tipo de elevação")
+        t.Start()
+        try:
+            etype_id = ensure_elev_type(elev_type)
+            if t.Commit() != DB.TransactionStatus.Committed:
+                raise Exception(u"o Revit desfez a criação do tipo de elevação.")
+            if elev_type["id"] is None:
+                notes.append(u"Criado o tipo de elevação '{}' para a família {}.".format(
+                    _type_name(doc.GetElement(etype_id)), elev_type["family"]))
+        except Exception as exc:
+            if t.GetStatus() == DB.TransactionStatus.Started:
+                t.RollBack()
+            etype_id, etype_error = None, u"tipo de elevação: {}".format(to_unicode(exc))
+
     for g, level in zip(geoms, room_levels):
         plan_view = None
         if do_plans:
@@ -2110,7 +2170,9 @@ try:
                 VIEW_NAMES.update(names_before)
                 failed.append((g.label, to_unicode(exc)))
 
-        if do_elev:
+        if do_elev and etype_error:
+            failed.extend((elev_label(g, k), etype_error) for k in elev_dirs)
+        elif do_elev:
             host = host_plan(level, plan_view)
             if host is None:
                 why = (u"nenhuma planta do nível '{}' para colocar o marcador (abra uma planta "
@@ -2122,7 +2184,7 @@ try:
             t = DB.Transaction(doc, u"OCA - Elevações {}".format(g.label))
             t.Start()
             try:
-                made, errors, room_notes = create_room_elevations(g, host, markers)
+                made, errors, room_notes = create_room_elevations(g, host, etype_id)
                 status = t.Commit()
                 if status != DB.TransactionStatus.Committed:
                     raise Exception(u"o Revit desfez a criação das elevações ({}).".format(status))
