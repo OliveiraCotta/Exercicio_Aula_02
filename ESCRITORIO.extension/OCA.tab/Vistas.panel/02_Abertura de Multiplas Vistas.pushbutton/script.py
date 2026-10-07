@@ -1161,6 +1161,9 @@ def check_modes(plan_items, callout_items, plan_level):
     return reasons
 
 
+INITIAL_MARGIN_M = 0.50   # valor inicial das margens (plantas e elevações) ao abrir
+
+
 def parse_margin(text):
     t = to_unicode(text).strip().lower().replace(u",", u".")
     if t.endswith(u"m"):
@@ -1931,8 +1934,9 @@ dialog_ctx = {
 }
 
 config = script.get_config()
-cfg = {"margin": config.get_option("margin_m", 0.5),
-       "e_margin": config.get_option("e_margin_m", 0.3),
+# margens sempre abrem com o valor inicial (o usuário altera no diálogo)
+cfg = {"margin": INITIAL_MARGIN_M,
+       "e_margin": INITIAL_MARGIN_M,
        "mode": config.get_option("mode", "plans"),
        "create": config.get_option("create", "plans"),
        "vtype": config.get_option("vtype", u""),
@@ -1957,8 +1961,6 @@ if not win.confirmed:
     script.exit()
 opts = win.result
 
-config.margin_m = opts["margin"]
-config.e_margin_m = opts["e_margin"]
 config.mode = opts["mode"]
 config.create = opts["create"]
 config.vtype = opts["type"]["label"] if opts["type"] else cfg["vtype"]
