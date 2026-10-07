@@ -1,0 +1,3 @@
+# Cor do rodape (barra de titulo) do painel no ribbon do Revit
+background:
+  title: "#dfd6f4"
