@@ -837,13 +837,45 @@ VIEW_TEMPLATES = sorted((v for v in DB.FilteredElementCollector(doc).OfClass(DB.
                         key=lambda v: natural_key(v.Name))
 
 
+# O ViewType de um template é o da vista que o originou: um template de
+# elevação criado a partir de um corte tem ViewType = Section, e o Revit
+# aceita aplicá-lo a elevações. Filtrar por ViewType exato escondia esses
+# templates. Plano B (modelo sem nenhuma vista do tipo para consultar):
+TEMPLATE_GROUPS = ((VT.FloorPlan, VT.EngineeringPlan, VT.AreaPlan),
+                   (VT.CeilingPlan,),
+                   (VT.Elevation, VT.Section, VT.Detail))
+_PROBES = {}
+
+
+def _probe_view(vt):
+    """Uma vista existente (não-template) do tipo, para perguntar ao Revit
+    quais templates ela aceita (View.IsValidViewTemplate)."""
+    key = int(vt)
+    if key not in _PROBES:
+        _PROBES[key] = next((v for v in DB.FilteredElementCollector(doc).OfClass(DB.View)
+                             if not v.IsTemplate and v.ViewType == vt), None)
+    return _PROBES[key]
+
+
 def template_items(vt):
-    """Templates do mesmo tipo da vista criada (detalhe aceita corte/elevação)."""
+    """Templates que o Revit aceita para o tipo de vista criado: a mesma
+    verificação nativa usada ao aplicar (IsValidViewTemplate), feita numa
+    vista existente desse tipo; sem vista para consultar, o grupo do tipo."""
     if vt is None:
         return []
-    allowed = (vt, VT.Section, VT.Elevation) if vt == VT.Detail else (vt,)
-    return [{"label": to_unicode(t.Name), "id": t.Id}
-            for t in VIEW_TEMPLATES if t.ViewType in allowed]
+    probe = _probe_view(vt)
+    if probe is not None:
+        def ok(t):
+            try:
+                return probe.IsValidViewTemplate(t.Id)
+            except Exception:
+                return False
+    else:
+        group = next((grp for grp in TEMPLATE_GROUPS if vt in grp), (vt,))
+
+        def ok(t):
+            return t.ViewType in group
+    return [{"label": to_unicode(t.Name), "id": t.Id} for t in VIEW_TEMPLATES if ok(t)]
 
 
 def apply_template(view, template, notes):
@@ -1456,6 +1488,8 @@ class CropWindow(forms.WPFWindow):
             box.IsChecked = key in self._saved["elev_dirs"]
             box.Checked += self._on_name
             box.Unchecked += self._on_name
+        if not self.ctx["elev_templates"]:
+            self.etemplate_lbl.Text = u"Elevações  (nenhum template de elevação/corte no modelo)"
         etpl = [NO_TEMPLATE] + [t["label"] for t in self.ctx["elev_templates"]]
         self.etemplate.ItemsSource = etpl
         saved_t = self._saved["etemplate"]
