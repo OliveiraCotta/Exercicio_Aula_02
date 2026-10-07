@@ -19,6 +19,10 @@
 #        View Name                = PREFIXO_ + nome (prefixo = texto antes do
 #                                   1º "_" da pasta de destino)
 #        Title on Sheet - English = nome em inglês (sem prefixo)
+#      Complemento manual: um campo para View Name/Title on Sheet e outro para
+#      o Title on Sheet - English (cada um pode ficar vazio). Em elevação e
+#      corte o nome é só ELEVAÇÃO/CORTE (ou a versão por ambiente) e o
+#      complemento entra apenas com "Adicionar complemento" marcado.
 #      Destino no Navegador de Projeto = parâmetro de projeto "Pasta" (pasta
 #      existente, nova ou nenhuma). View Template opcional, só os compatíveis;
 #      na vista ativa a 1ª opção mantém o template que ela já tem.
@@ -33,7 +37,7 @@
 # pyRevit 5.2 lê a docstring do módulo com .decode('utf-8'), que falha com
 # acentos no IronPython e deixa o botão sem tooltip. O tooltip é só __doc__.
 
-__title__ = u"Abertura\nde Vistas"
+__title__ = u"Abertura\nde Vista"
 __doc__ = u"""Cria UMA vista recortada a partir dos elementos selecionados: nova planta, chamada (callout) ou recorte da vista ativa. Já sai com nome, pasta no Navegador de Projeto e View Template.
 
 Selecione um ou mais elementos e clique no botão."""
@@ -625,9 +629,22 @@ def room_prefix(room):
     return u"{} - {} - ".format(number, name)
 
 
+# elevação / corte: só o próprio título (+ versão por ambiente), sem nome manual
+SIMPLE_KINDS = {"elevation": "elevacao", "section": "corte"}
+
+
 def name_options(target, room):
     """Nome principal na ordem do padrão do escritório para o tipo de vista.
     As versões 'Nº - AMBIENTE - ...' só aparecem com 1 ambiente na seleção."""
+    if target in SIMPLE_KINDS:
+        only = [t for t in VERTICAL_TITLES if t[0] == SIMPLE_KINDS[target]]
+        opts = [{"key": key, "label": pt, "pt": pt, "en": en, "suffix": suf, "room": False}
+                for key, pt, en, suf in only]
+        if room is not None:
+            prefix = room_prefix(room)
+            opts.extend({"key": "room_" + key, "label": prefix + pt, "pt": pt, "en": en,
+                         "suffix": suf, "room": True} for key, pt, en, suf in only)
+        return opts
     if target == "plan":
         # cobertura e os títulos extras não têm versão por ambiente
         base, room_base = PLAN_TITLES + EXTRA_PLAN_TITLES, PLAN_TITLES[1:]
@@ -664,8 +681,10 @@ def free_suffix(text):
     return re.sub(u"^[\\s\\-–]+", u"", to_unicode(text)).strip()
 
 
-def compose_names(opt, suffix_key, level, room, manual, suffix_text=u""):
-    """Devolve (Title on Sheet, Title on Sheet - English) - sem prefixo de pasta."""
+def compose_names(opt, suffix_key, level, room, manual, suffix_text=u"", suffix_text_en=u""):
+    """Devolve (Title on Sheet, Title on Sheet - English) - sem prefixo de pasta.
+    Complemento manual: suffix_text vai para View Name/Title on Sheet e
+    suffix_text_en para o Title on Sheet - English (cada um pode ficar vazio)."""
     if opt["key"] == MANUAL_KEY:
         return manual.strip(), u""
     pt, en = opt["pt"], opt["en"]
@@ -675,7 +694,9 @@ def compose_names(opt, suffix_key, level, room, manual, suffix_text=u""):
         extra = free_suffix(suffix_text)
         if extra:
             pt += u" - " + extra
-            en += EN_SEP + extra
+        extra_en = free_suffix(suffix_text_en)
+        if extra_en:
+            en += EN_SEP + extra_en
     else:
         lv = level_text(level)
         _k, suf_pt, suf_en = next(s for s in SUFFIXES if s[0] == suffix_key)
@@ -705,10 +726,11 @@ def with_prefix(prefix, title):
 def resolve_names(prefix, title, en):
     """(View Name, Title on Sheet, English). '#' vira 01, 02... - o primeiro
     número com View Name livre - e o mesmo número vai para os dois títulos."""
-    if u"#" not in title:
+    if u"#" not in title and u"#" not in en:
         return clean_name(with_prefix(prefix, title)), title, en
     n = 1
-    while clean_name(with_prefix(prefix, title.replace(u"#", u"{:02d}".format(n)))) in VIEW_NAMES:
+    while u"#" in title and clean_name(with_prefix(
+            prefix, title.replace(u"#", u"{:02d}".format(n)))) in VIEW_NAMES:
         n += 1
     num = u"{:02d}".format(n)
     title, en = title.replace(u"#", num), en.replace(u"#", num)
@@ -947,7 +969,11 @@ def target_kind(mode):
     """Tipo da vista resultante: define quais nomes fazem sentido."""
     if mode == "plans":
         return "plan"
-    return "plan" if active_view.ViewType in PLAN_VIEWTYPES + (VT.AreaPlan,) else "vertical"
+    if active_view.ViewType in PLAN_VIEWTYPES + (VT.AreaPlan,):
+        return "plan"
+    # chamada numa elevação/corte gera elevação/corte (ou detalhe dele)
+    return {VT.Elevation: "elevation", VT.Section: "section"}.get(
+        active_view.ViewType, "vertical")
 
 
 def check_modes(plan_items, callout_items, plan_level):
@@ -1140,9 +1166,13 @@ CROP_XAML = u"""
             <TextBox x:Name="manual"/>
             <TextBlock x:Name="suffix_lbl" Text="B - Complemento"/>
             <ComboBox x:Name="vsuffix"/>
-            <TextBlock x:Name="suffix_text_lbl"
-                       Text="Complemento manual (vazio = sem complemento;  # = sequência 01, 02...)"/>
+            <CheckBox x:Name="add_suffix" Content="Adicionar complemento" Margin="0,8,0,0"/>
+            <TextBlock x:Name="suffix_text_lbl" TextWrapping="Wrap"
+                       Text="Complemento manual - View Name e Title on Sheet (vazio = sem complemento;  # = sequência 01, 02...)"/>
             <TextBox x:Name="suffix_text"/>
+            <TextBlock x:Name="suffix_text_en_lbl" TextWrapping="Wrap"
+                       Text="Complemento manual - Title on Sheet - English (vazio = sem complemento)"/>
+            <TextBox x:Name="suffix_text_en"/>
           </StackPanel>
         </Border>
 
@@ -1219,9 +1249,9 @@ class FolderPicker(object):
             rb.Checked += on_change
         self.list.SelectionChanged += on_change
         self.new.TextChanged += on_change
-        start = saved["folder_mode"]
-        if not allowed.get(start):
-            start = next(k for k in FOLDER_MODES if allowed[k])
+        # sempre abre em "Pasta existente" (a pasta escolhida da última vez
+        # continua selecionada na lista); sem pastas, a próxima opção possível
+        start = next(k for k in FOLDER_MODES if allowed[k])
         self.rb[start].IsChecked = True
 
     @property
@@ -1313,6 +1343,9 @@ class CropWindow(forms.WPFWindow):
         self.vsuffix.SelectionChanged += self._on_name
         self.manual.TextChanged += self._on_name
         self.suffix_text.TextChanged += self._on_name
+        self.suffix_text_en.TextChanged += self._on_name
+        self.add_suffix.Checked += self._on_name
+        self.add_suffix.Unchecked += self._on_name
 
         self._ready = True
         start = cfg["mode"] if cfg["mode"] in enabled else enabled[0]
@@ -1378,7 +1411,14 @@ class CropWindow(forms.WPFWindow):
         if self._ready:
             self._update_names()
 
+    @property
+    def simple_kind(self):
+        """Elevação ou corte: nome simples e complemento só se marcado."""
+        return self.ctx["kinds"][self.mode] in SIMPLE_KINDS
+
     def _default_name_index(self):
+        if self.simple_kind:   # padrão exclusivo: ELEVAÇÃO / CORTE
+            return 0
         keys = [o["key"] for o in self._names]
         if self._saved["vname"] in keys:
             return keys.index(self._saved["vname"])
@@ -1401,6 +1441,12 @@ class CropWindow(forms.WPFWindow):
         # recortar a vista ativa: ela já está aberta
         self.open_views.IsEnabled = mode != "current"
         self.open_views.Opacity = 1.0 if mode != "current" else 0.4
+
+        # "Adicionar complemento" só existe em elevação/corte e abre desmarcado
+        from System.Windows import Visibility
+        self.add_suffix.Visibility = (Visibility.Visible if self.simple_kind
+                                      else Visibility.Collapsed)
+        self.add_suffix.IsChecked = False
 
         # nomes dependem do tipo da vista resultante (planta x corte/elevação)
         self._names = self.ctx["names"][mode]
@@ -1431,11 +1477,20 @@ class CropWindow(forms.WPFWindow):
         idx = self.vsuffix.SelectedIndex
         return SUFFIXES[idx if idx >= 0 else 0][0]
 
+    def manual_suffix_on(self):
+        """Os campos de complemento manual valem? (combo em 'Sem nomenclatura';
+        em elevação/corte, só com 'Adicionar complemento' marcado)."""
+        if self.name_opt["key"] == MANUAL_KEY or self.suffix_key != FREE_SUFFIX:
+            return False
+        return bool(self.add_suffix.IsChecked) if self.simple_kind else True
+
     def names(self, folder):
         """(View Name, Title on Sheet, English)."""
+        on = self.manual_suffix_on()
         title, en = compose_names(self.name_opt, self.suffix_key, self.ctx["level"][self.mode],
                                   self.ctx["room"], to_unicode(self.manual.Text),
-                                  to_unicode(self.suffix_text.Text))
+                                  to_unicode(self.suffix_text.Text) if on else u"",
+                                  to_unicode(self.suffix_text_en.Text) if on else u"")
         return resolve_names(name_prefix(folder), title, en)
 
     def _sync_suffix(self, opt):
@@ -1468,8 +1523,12 @@ class CropWindow(forms.WPFWindow):
         free = self.suffix_key == FREE_SUFFIX
         self.vsuffix.IsEnabled = opt["suffix"]
         self.suffix_lbl.Opacity = 1.0 if not is_manual else 0.4
-        self.suffix_text.IsEnabled = free and not is_manual
-        self.suffix_text_lbl.Opacity = 1.0 if free and not is_manual else 0.4
+        self.add_suffix.IsEnabled = free and not is_manual
+        on = self.manual_suffix_on()
+        for ctl in (self.suffix_text, self.suffix_text_en):
+            ctl.IsEnabled = on
+        for lbl in (self.suffix_text_lbl, self.suffix_text_en_lbl):
+            lbl.Opacity = 1.0 if on else 0.4
         self.manual.IsEnabled = is_manual
         self.manual_lbl.Opacity = 1.0 if is_manual else 0.4
 
@@ -1597,6 +1656,7 @@ sel_preview = u", ".join(g.label for g in geoms[:6]) + (u"..." if len(geoms) > 6
 dialog_ctx = {
     "types": {"plans": plan_items, "callout": callout_items, "current": []},
     "names": dict((m, name_options(target_kind(m), the_room)) for m in MODES),
+    "kinds": dict((m, target_kind(m)) for m in MODES),
     "level": {"plans": plan_level, "callout": active_level, "current": active_level},
     "room": the_room,
     "hints": name_hints,
