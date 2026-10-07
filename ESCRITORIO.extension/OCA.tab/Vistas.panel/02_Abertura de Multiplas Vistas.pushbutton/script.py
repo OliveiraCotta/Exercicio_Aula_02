@@ -4,16 +4,16 @@
 # Mesma lógica do 01 (geometria, recorte orientado, nomenclatura, tipos de
 # vista, diálogo), aplicada a CADA ambiente da seleção:
 #   1. Usa a seleção atual (ou pede para selecionar) Ambientes (Rooms).
-#   2. Pergunta a margem (m) e o que fazer - UMA vista POR AMBIENTE:
+#   2. Tipo de vista: Plantas, Elevações ou Plantas + Elevações.
+#      Plantas - margem (m) e o que fazer, UMA vista POR AMBIENTE:
 #        - criar nova vista de planta (Piso, Forro, Estrutural, Área), no
 #          nível de cada ambiente;
 #        - criar vista de chamada (Callout) na vista ativa.
 #      ("Recortar a vista ativa" do 01 não se aplica: uma vista só não pode
 #      ter o recorte de vários ambientes separados.)
 #   3. Destino no Navegador de Projeto: pasta existente ou nova, gravada no
-#      parâmetro que a organização atual do navegador usa para as pastas
-#      (BrowserOrganization). O texto antes do 1º "_" da pasta (D000_...)
-#      vira o prefixo do View Name.
+#      parâmetro de projeto "Pasta" (pelo qual o navegador agrupa as vistas).
+#      O texto antes do 1º "_" da pasta (D000_...) vira o prefixo do View Name.
 #   4. View Template opcional (só os compatíveis com o tipo de vista).
 #   5. Nomenclatura escolhida uma vez e composta para cada ambiente:
 #        Title on Sheet           = nome (Principal + Complemento)
@@ -24,13 +24,18 @@
 #      criadas são abertas nessa ordem; a primeira fica ativa no final.
 #   8. Ambiente sem vista (não colocado, sem geometria ou falha na criação)
 #      é ignorado; ao final, um resumo lista o que precisa ser revisado.
+#   9. Elevações (seção 6d): UM ElevationMarker nativo por ambiente, num
+#      ponto dentro do Room, e as elevações Norte/Leste/Sul/Oeste criadas a
+#      partir dele (como Vista > Elevação). Marcador já existente no ambiente
+#      é reaproveitado (só as direções que faltam). View Name:
+#      PREFIXO_Nº - AMBIENTE - ELEVAÇÃO NORTE; títulos: ... - ELEVAÇÃO 01.
 #
 # A descrição fica em comentário (e não em docstring) de propósito: o
 # pyRevit 5.2 lê a docstring do módulo com .decode('utf-8'), que falha com
 # acentos no IronPython e deixa o botão sem tooltip. O tooltip é só __doc__.
 
 __title__ = u"Abertura de\nMúltiplas Vistas"
-__doc__ = u"""Cria uma vista recortada para cada ambiente selecionado (planta ou chamada), já com nome, pasta no Navegador de Projeto e View Template.
+__doc__ = u"""Cria plantas e/ou elevações (marcador nativo do Revit) recortadas para cada ambiente selecionado, já com nome, pasta no Navegador de Projeto e View Template.
 
 Selecione os ambientes e clique no botão."""
 
@@ -850,6 +855,234 @@ def apply_template(view, template, notes):
 
 
 # ------------------------------------------------------------------
+# 6d. Elevações por ambiente (ElevationMarker nativo do Revit)
+# ------------------------------------------------------------------
+# Igual a Vista > Elevação: UM ElevationMarker por ambiente
+# (ElevationMarker.CreateElevationMarker) e as vistas criadas a partir dele
+# (marker.CreateElevation, índices 0..MaximumViewCount-1). A API diz que a
+# direção vem do índice mas não fixa qual; por isso a direção de cada vista
+# é lida da própria vista (View.ViewDirection, como recomenda a API), em
+# relação ao Norte do Projeto (+Y interno = "para cima" nas plantas).
+# (chave, palavra no View Name, nº nos títulos): 01 N, 02 L, 03 S, 04 O
+ELEV_DIRS = (("N", u"NORTE", 1), ("L", u"LESTE", 2), ("S", u"SUL", 3), ("O", u"OESTE", 4))
+ELEV_WORD = dict((k, w) for k, w, _n in ELEV_DIRS)
+ELEV_NUM = dict((k, n) for k, _w, n in ELEV_DIRS)
+ELEV_TYPES = [v for v in VIEW_FAMILY_TYPES if v.ViewFamily == DB.ViewFamily.Elevation]
+GRID = 16   # malha de busca de ponto livre dentro do ambiente
+
+
+def _type_name(el):
+    try:
+        return to_unicode(DB.Element.Name.GetValue(el))
+    except Exception:
+        return u""
+
+
+def elevation_mark_family(vft):
+    """Família do marcador usada pelo tipo de elevação, só para exibir no
+    diálogo: tipo de elevação -> Elevation Tag -> corpo (família Elevation Mark)."""
+    try:
+        for p in vft.Parameters:
+            if p.StorageType != DB.StorageType.ElementId:
+                continue
+            tag = doc.GetElement(p.AsElementId())
+            if not isinstance(tag, DB.ElementType) or isinstance(tag, DB.ViewFamilyType):
+                continue
+            for q in tag.Parameters:
+                if q.StorageType == DB.StorageType.ElementId:
+                    sym = doc.GetElement(q.AsElementId())
+                    if isinstance(sym, DB.FamilySymbol):
+                        return u"{} : {}".format(to_unicode(sym.FamilyName), _type_name(sym))
+            return _type_name(tag)
+    except Exception:
+        pass
+    return u""
+
+
+def elev_type_items():
+    items = []
+    for vft in ELEV_TYPES:
+        fam = elevation_mark_family(vft)
+        items.append({"label": _vft_name(vft) + (u"  ·  marcador: " + fam if fam else u""),
+                      "id": vft.Id, "family": fam})
+    return sorted(items, key=lambda i: natural_key(i["label"]))
+
+
+def elevation_names(room, key, prefix):
+    """(View Name, Title on Sheet, English) de uma elevação do ambiente.
+    View Name leva a direção (NORTE...); os títulos, o número (01..04).
+    Inglês: mesma regra das plantas (Room Name English, senão o nome PT)."""
+    number, name, name_en = room_info(room)
+    num = u"{:02d}".format(ELEV_NUM[key])
+    vname = with_prefix(prefix, u"{} - {} - ELEVAÇÃO {}".format(number, name, ELEV_WORD[key]))
+    title = u"{} - {} - ELEVAÇÃO {}".format(number, name, num)
+    en = u"{} - {} - ELEVATION {}".format(number, name_en or name, num)
+    return clean_name(vname), title, en
+
+
+def look_direction(view):
+    """N/L/S/O para onde a elevação olha (ViewDirection aponta para o observador)."""
+    d = view.ViewDirection
+    x, y = -d.X, -d.Y
+    if abs(x) >= abs(y):
+        return "L" if x > 0 else "O"
+    return "N" if y > 0 else "S"
+
+
+def _area(pts):
+    return 0.5 * sum(a[0] * b[1] - b[0] * a[1] for a, b in zip(pts, pts[1:] + pts[:1]))
+
+
+def _centroid(pts):
+    a = _area(pts)
+    if abs(a) < 1e-9:
+        return None
+    pairs = list(zip(pts, pts[1:] + pts[:1]))
+    cx = sum((p[0] + q[0]) * (p[0] * q[1] - q[0] * p[1]) for p, q in pairs) / (6.0 * a)
+    cy = sum((p[1] + q[1]) * (p[0] * q[1] - q[0] * p[1]) for p, q in pairs) / (6.0 * a)
+    return cx, cy
+
+
+def _seg_dist(p, a, b):
+    dx, dy = b[0] - a[0], b[1] - a[1]
+    ll = dx * dx + dy * dy
+    t = 0.0 if ll < 1e-12 else max(0.0, min(1.0, ((p[0] - a[0]) * dx + (p[1] - a[1]) * dy) / ll))
+    return math.hypot(p[0] - a[0] - t * dx, p[1] - a[1] - t * dy)
+
+
+def room_z(g):
+    zs = [p.Z for p in g.points]
+    return min(zs), max(zs)
+
+
+def marker_origin(g):
+    """Ponto DENTRO do ambiente para o marcador (Room.IsPointInRoom):
+    1. centroide do contorno externo; 2. ponto de localização do ambiente;
+    3. ponto de uma malha sobre o ambiente mais afastado das paredes
+    (ambientes em L, U...). None se nenhum ponto estiver dentro."""
+    room = g.el
+    z0, z1 = room_z(g)
+    zt = (z0 + z1) / 2.0
+
+    def inside(x, y):
+        return room.IsPointInRoom(DB.XYZ(x, y, zt))
+
+    polys = []
+    for loop in room.GetBoundarySegments(DB.SpatialElementBoundaryOptions()) or []:
+        pts = []
+        for seg in loop:
+            pts.extend((p.X, p.Y) for p in seg.GetCurve().Tessellate())
+        if len(pts) >= 3:
+            polys.append(pts)
+    candidates = []
+    if polys:
+        c = _centroid(max(polys, key=lambda pts: abs(_area(pts))))
+        if c:
+            candidates.append(c)
+    loc = getattr(room, "Location", None)
+    if isinstance(loc, DB.LocationPoint):
+        candidates.append((loc.Point.X, loc.Point.Y))
+    for x, y in candidates:
+        if inside(x, y):
+            return DB.XYZ(x, y, z0)
+
+    segs = [(a, b) for pts in polys for a, b in zip(pts, pts[1:] + pts[:1])]
+    if not segs:
+        return None
+    xs = [a[0] for a, _b in segs]
+    ys = [a[1] for a, _b in segs]
+    best, best_d = None, -1.0
+    for i in range(1, GRID):
+        for j in range(1, GRID):
+            x = min(xs) + (max(xs) - min(xs)) * i / float(GRID)
+            y = min(ys) + (max(ys) - min(ys)) * j / float(GRID)
+            if inside(x, y):
+                d = min(_seg_dist((x, y), a, b) for a, b in segs)
+                if d > best_d:
+                    best, best_d = (x, y), d
+    return DB.XYZ(best[0], best[1], z0) if best else None
+
+
+def marker_views(marker):
+    """{direção: vista} das elevações que o marcador já tem."""
+    out = {}
+    for i in range(marker.MaximumViewCount):
+        vid = marker.GetViewId(i)
+        if vid is not None and vid != INVALID_ID:
+            view = doc.GetElement(vid)
+            if view is not None:
+                out[look_direction(view)] = view
+    return out
+
+
+def existing_marker(g, host, markers):
+    """Marcador de elevação (não-referência) já dentro do ambiente, se houver:
+    o centro do marcador (caixa no modelo ou na planta) dentro do Room e na
+    faixa de altura dele. Com mais de um, o que tem mais vistas."""
+    room = g.el
+    z0, z1 = room_z(g)
+    found = []
+    for m in markers:
+        try:
+            if m.IsReference:
+                continue
+            bb = m.get_BoundingBox(None)
+            if bb is not None and not (z0 - 1.0 <= bb.Min.Z <= z1):
+                continue   # outro pavimento
+            bb = bb or m.get_BoundingBox(host)
+            if bb is None:
+                continue
+            cx, cy = (bb.Min.X + bb.Max.X) / 2.0, (bb.Min.Y + bb.Max.Y) / 2.0
+            if room.IsPointInRoom(DB.XYZ(cx, cy, (z0 + z1) / 2.0)):
+                found.append(m)
+        except Exception:
+            continue
+    return max(found, key=lambda m: m.CurrentViewCount) if found else None
+
+
+def apply_elevation_crop(view, g, margin_ft):
+    """Recorte = largura do ambiente vista nessa direção x altura do ambiente
+    (piso ao limite superior do Room) + margem. Só o CropBox da vista muda;
+    nenhuma geometria do modelo é tocada e a profundidade fica como o Revit criou."""
+    frame = Frame(view)
+    uv = [frame.to2d(p) for p in g.points]
+    us = [p[0] for p in uv]
+    vs = [p[1] for p in uv]
+    u0, u1, v0, v1 = min(us), max(us), min(vs), max(vs)
+    if v1 - v0 < MIN_CROP:   # ambiente sem volume: usa a altura do Room
+        v1 = v0 + max(g.el.UnboundedHeight, m_to_ft(2.5))
+    m = margin_ft
+    view.CropBoxActive = True
+    view.CropBoxVisible = True
+    _clear_shape(view.GetCropRegionShapeManager())
+    _set_box(view, u0 - m, v0 - m, u1 + m, v1 + m)
+
+
+def host_plan(level, extra=None):
+    """ViewPlan onde o marcador é visível (pedido por CreateElevation): a vista
+    ativa, se for planta desse nível; senão a planta criada agora para o
+    ambiente; senão a primeira planta de piso desse nível."""
+    if level is None:
+        return None
+    lid = eid_int(level.Id)
+
+    def ok(v):
+        gl = getattr(v, "GenLevel", None)
+        return (isinstance(v, DB.ViewPlan) and not v.IsTemplate
+                and v.ViewType in PLAN_VIEWTYPES and gl is not None and eid_int(gl.Id) == lid)
+
+    for v in [active_view, extra] + HOST_PLANS:
+        if v is not None and ok(v):
+            return v
+    return None
+
+
+HOST_PLANS = sorted((v for v in DB.FilteredElementCollector(doc).OfClass(DB.ViewPlan)
+                     if not v.IsTemplate and v.ViewType in PLAN_VIEWTYPES),
+                    key=lambda v: (v.ViewType != VT.FloorPlan, natural_key(v.Name)))
+
+
+# ------------------------------------------------------------------
 # 7. Validação prévia dos modos (antes de abrir o diálogo)
 # ------------------------------------------------------------------
 MODES = ("plans", "callout")   # "current" do 01 não se aplica a vários ambientes
@@ -899,12 +1132,12 @@ def room_sort_key(g):
 
 
 # ------------------------------------------------------------------
-# 8. Diálogo (mesmo tema dos outros botões; duas colunas para caber na tela)
+# 8. Diálogo (mesmo tema dos outros botões; três colunas para caber na tela)
 # ------------------------------------------------------------------
 CROP_XAML = u"""
 <Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="Crop View Offset" Height="Auto" Width="940"
+        Title="Abertura de Múltiplas Vistas" Height="Auto" Width="1240"
         SizeToContent="Height" WindowStartupLocation="CenterScreen"
         ResizeMode="NoResize" Background="#0E1526">
   <Window.Resources>
@@ -929,7 +1162,7 @@ CROP_XAML = u"""
     <Style TargetType="CheckBox">
       <Setter Property="Foreground" Value="#CFE3FF"/>
       <Setter Property="FontFamily" Value="Segoe UI"/>
-      <Setter Property="Margin" Value="0,10,0,0"/>
+      <Setter Property="Margin" Value="0,6,0,0"/>
     </Style>
     <Style TargetType="Border">
       <Setter Property="Background" Value="#131D33"/>
@@ -939,8 +1172,9 @@ CROP_XAML = u"""
       <Setter Property="Margin" Value="0,12,0,0"/>
     </Style>
   </Window.Resources>
+  <ScrollViewer VerticalScrollBarVisibility="Auto">
   <StackPanel Margin="18">
-    <TextBlock Text="RECORTE POR AMBIENTE  ·  MÚLTIPLAS VISTAS" FontSize="15" FontWeight="SemiBold"
+    <TextBlock Text="ABERTURA DE MÚLTIPLAS VISTAS" FontSize="15" FontWeight="SemiBold"
                Foreground="#65E3FF" Margin="0,0,0,4"/>
     <TextBlock x:Name="info" TextWrapping="Wrap" FontSize="11"
                Foreground="#7A8FA9" Margin="0,0,0,2"/>
@@ -948,33 +1182,79 @@ CROP_XAML = u"""
     <Grid>
       <Grid.ColumnDefinitions>
         <ColumnDefinition Width="*"/>
-        <ColumnDefinition Width="18"/>
+        <ColumnDefinition Width="16"/>
+        <ColumnDefinition Width="*"/>
+        <ColumnDefinition Width="16"/>
         <ColumnDefinition Width="*"/>
       </Grid.ColumnDefinitions>
 
-      <!-- coluna esquerda: o que criar e onde -->
+      <!-- coluna 1: ambientes, tipo de vista, elevações -->
       <StackPanel Grid.Column="0">
         <Border>
           <StackPanel>
+            <TextBlock Text="AMBIENTES" FontSize="12" FontWeight="SemiBold" Foreground="#65E3FF"/>
+            <TextBlock x:Name="rooms_txt" TextWrapping="Wrap" FontSize="11"
+                       Foreground="#7A8FA9" Margin="0,0,0,2"/>
             <TextBlock Text="Margem ao redor de cada ambiente (m)"/>
             <TextBox x:Name="margin"/>
-
-            <TextBlock Text="O que fazer (uma vista por ambiente)" Margin="0,14,0,0"/>
-            <RadioButton x:Name="rb_plans" GroupName="mode"
-                         Content="Criar nova vista de planta (Piso, Forro, Estrutural, Área)"/>
-            <RadioButton x:Name="rb_callout" GroupName="mode"
-                         Content="Criar vista de chamada de detalhe (Callout) na vista ativa"/>
-            <TextBlock x:Name="reasons" TextWrapping="Wrap" FontSize="11"
-                       Foreground="#FFB454" Margin="0,8,0,0"/>
-
-            <TextBlock x:Name="vtype_lbl" Text="Tipo de vista"/>
-            <ComboBox x:Name="vtype"/>
           </StackPanel>
         </Border>
 
         <Border>
           <StackPanel>
-            <TextBlock Text="DESTINO DAS VISTAS  ·  NAVEGADOR DE PROJETO" FontSize="12"
+            <TextBlock Text="TIPO DE VISTA" FontSize="12" FontWeight="SemiBold" Foreground="#65E3FF"/>
+            <RadioButton x:Name="rb_c_plans" GroupName="create" Content="Plantas"/>
+            <RadioButton x:Name="rb_c_elev" GroupName="create" Content="Elevações"/>
+            <RadioButton x:Name="rb_c_both" GroupName="create" Content="Plantas + Elevações"/>
+
+            <StackPanel x:Name="plan_panel" Margin="0,6,0,0">
+              <TextBlock Text="Plantas (uma vista por ambiente)" Margin="0,10,0,0"/>
+              <RadioButton x:Name="rb_plans" GroupName="mode"
+                           Content="Criar nova vista de planta (Piso, Forro, Estrutural, Área)"/>
+              <RadioButton x:Name="rb_callout" GroupName="mode"
+                           Content="Criar vista de chamada de detalhe (Callout) na vista ativa"/>
+              <TextBlock x:Name="reasons" TextWrapping="Wrap" FontSize="11"
+                         Foreground="#FFB454" Margin="0,8,0,0"/>
+              <TextBlock x:Name="vtype_lbl" Text="Tipo de vista da planta"/>
+              <ComboBox x:Name="vtype"/>
+            </StackPanel>
+          </StackPanel>
+        </Border>
+
+        <Border x:Name="elev_border">
+          <StackPanel x:Name="elev_panel">
+            <TextBlock Text="ELEVAÇÕES  ·  MARCADOR NATIVO DO REVIT" FontSize="12"
+                       FontWeight="SemiBold" Foreground="#65E3FF"/>
+            <TextBlock Text="Tipo de elevação (família do marcador)"/>
+            <ComboBox x:Name="etype"/>
+            <TextBlock Text="Direções (um marcador por ambiente)"/>
+            <CheckBox x:Name="cb_n" Content="1. Norte   →  ELEVAÇÃO 01"/>
+            <CheckBox x:Name="cb_s" Content="2. Sul   →  ELEVAÇÃO 03"/>
+            <CheckBox x:Name="cb_l" Content="3. Leste   →  ELEVAÇÃO 02"/>
+            <CheckBox x:Name="cb_o" Content="4. Oeste   →  ELEVAÇÃO 04"/>
+            <TextBlock x:Name="elev_reason" TextWrapping="Wrap" FontSize="11"
+                       Foreground="#FFB454" Margin="0,8,0,0"/>
+          </StackPanel>
+        </Border>
+      </StackPanel>
+
+      <!-- coluna 2: view template + destino -->
+      <StackPanel Grid.Column="2">
+        <Border>
+          <StackPanel>
+            <TextBlock Text="VIEW TEMPLATE" FontSize="12" FontWeight="SemiBold" Foreground="#65E3FF"/>
+            <TextBlock x:Name="template_lbl" Text="Plantas"/>
+            <ComboBox x:Name="template"/>
+            <TextBlock x:Name="etemplate_lbl" Text="Elevações"/>
+            <ComboBox x:Name="etemplate"/>
+            <TextBlock Text="Só aparecem os templates compatíveis com cada tipo de vista."
+                       TextWrapping="Wrap" FontSize="11" Foreground="#7A8FA9" Margin="0,6,0,0"/>
+          </StackPanel>
+        </Border>
+
+        <Border>
+          <StackPanel>
+            <TextBlock Text="DESTINO  ·  NAVEGADOR DE PROJETO" FontSize="12"
                        FontWeight="SemiBold" Foreground="#65E3FF"/>
             <TextBlock x:Name="folder_src" TextWrapping="Wrap" FontSize="11"
                        Foreground="#7A8FA9" Margin="0,0,0,2"/>
@@ -993,23 +1273,14 @@ CROP_XAML = u"""
                        Foreground="#FFB454" Margin="0,4,0,0"/>
           </StackPanel>
         </Border>
-
-        <Border>
-          <StackPanel>
-            <TextBlock Text="MODELO DE VISTA (VIEW TEMPLATE)" FontSize="12"
-                       FontWeight="SemiBold" Foreground="#65E3FF"/>
-            <ComboBox x:Name="template"/>
-            <TextBlock Text="Só aparecem os templates compatíveis com o tipo de vista."
-                       TextWrapping="Wrap" FontSize="11" Foreground="#7A8FA9" Margin="0,4,0,0"/>
-          </StackPanel>
-        </Border>
       </StackPanel>
 
-      <!-- coluna direita: nomenclatura + pré-visualização -->
-      <StackPanel Grid.Column="2">
+      <!-- coluna 3: nomenclatura + pré-visualização -->
+      <StackPanel Grid.Column="4">
         <Border>
-          <StackPanel>
-            <TextBlock Text="NOMENCLATURA" FontSize="12" FontWeight="SemiBold" Foreground="#65E3FF"/>
+          <StackPanel x:Name="name_panel">
+            <TextBlock Text="NOMENCLATURA DAS PLANTAS" FontSize="12" FontWeight="SemiBold"
+                       Foreground="#65E3FF"/>
             <TextBlock Text="Vale para View Name, Title on Sheet e Title on Sheet - English."
                        TextWrapping="Wrap" FontSize="11" Foreground="#7A8FA9" Margin="0,0,0,2"/>
             <TextBlock Text="A - Principal"/>
@@ -1029,16 +1300,28 @@ CROP_XAML = u"""
           <StackPanel>
             <TextBlock x:Name="pv_lbl" Text="PRÉ-VISUALIZAÇÃO" FontSize="10" Foreground="#7A8FA9"
                        TextWrapping="Wrap" Margin="0,6,0,6"/>
-            <TextBlock Text="VIEW NAME  (prefixo da pasta + _ + nome)" FontSize="10"
-                       Foreground="#7A8FA9" Margin="0"/>
-            <TextBlock x:Name="pv_name" FontWeight="SemiBold" TextWrapping="Wrap" Margin="0,2,0,8"/>
-            <TextBlock Text="TITLE ON SHEET" FontSize="10" Foreground="#7A8FA9" Margin="0"/>
-            <TextBlock x:Name="pv_title" FontWeight="SemiBold" TextWrapping="Wrap" Margin="0,2,0,8"/>
-            <TextBlock Text="TITLE ON SHEET - ENGLISH  (automático)" FontSize="10"
-                       Foreground="#7A8FA9" Margin="0"/>
-            <TextBlock x:Name="pv_en" FontWeight="SemiBold" TextWrapping="Wrap" Margin="0,2,0,8"/>
+            <StackPanel x:Name="pv_plan">
+              <TextBlock Text="PLANTA  ·  VIEW NAME  (prefixo da pasta + _ + nome)" FontSize="10"
+                         Foreground="#7A8FA9" Margin="0"/>
+              <TextBlock x:Name="pv_name" FontWeight="SemiBold" TextWrapping="Wrap" Margin="0,2,0,6"/>
+              <TextBlock Text="TITLE ON SHEET" FontSize="10" Foreground="#7A8FA9" Margin="0"/>
+              <TextBlock x:Name="pv_title" FontWeight="SemiBold" TextWrapping="Wrap" Margin="0,2,0,6"/>
+              <TextBlock Text="TITLE ON SHEET - ENGLISH  (automático)" FontSize="10"
+                         Foreground="#7A8FA9" Margin="0"/>
+              <TextBlock x:Name="pv_en" FontWeight="SemiBold" TextWrapping="Wrap" Margin="0,2,0,8"/>
+            </StackPanel>
+            <StackPanel x:Name="pv_elev">
+              <TextBlock x:Name="pv_e_lbl" Text="ELEVAÇÃO  ·  VIEW NAME" FontSize="10"
+                         Foreground="#7A8FA9" Margin="0"/>
+              <TextBlock x:Name="pv_e_name" FontWeight="SemiBold" TextWrapping="Wrap" Margin="0,2,0,6"/>
+              <TextBlock Text="TITLE ON SHEET" FontSize="10" Foreground="#7A8FA9" Margin="0"/>
+              <TextBlock x:Name="pv_e_title" FontWeight="SemiBold" TextWrapping="Wrap" Margin="0,2,0,6"/>
+              <TextBlock Text="TITLE ON SHEET - ENGLISH  (automático)" FontSize="10"
+                         Foreground="#7A8FA9" Margin="0"/>
+              <TextBlock x:Name="pv_e_en" FontWeight="SemiBold" TextWrapping="Wrap" Margin="0,2,0,8"/>
+            </StackPanel>
             <TextBlock Text="PASTA DE DESTINO" FontSize="10" Foreground="#7A8FA9" Margin="0"/>
-            <TextBlock x:Name="pv_folder" FontWeight="SemiBold" TextWrapping="Wrap" Margin="0,2,0,8"/>
+            <TextBlock x:Name="pv_folder" FontWeight="SemiBold" TextWrapping="Wrap" Margin="0,2,0,6"/>
             <TextBlock Text="VIEW TEMPLATE" FontSize="10" Foreground="#7A8FA9" Margin="0"/>
             <TextBlock x:Name="pv_template" FontWeight="SemiBold" TextWrapping="Wrap" Margin="0,2,0,0"/>
           </StackPanel>
@@ -1050,7 +1333,7 @@ CROP_XAML = u"""
       </StackPanel>
     </Grid>
 
-    <CheckBox x:Name="open_views" Content="Abrir as vistas criadas ao final"/>
+    <CheckBox x:Name="open_views" Content="Abrir as vistas criadas ao final" Margin="0,12,0,0"/>
 
     <TextBlock x:Name="error" TextWrapping="Wrap" FontSize="11"
                Foreground="#FF4F9A" Margin="0,10,0,0"/>
@@ -1059,15 +1342,23 @@ CROP_XAML = u"""
       <Button x:Name="ok" Content="Aplicar" Width="110" Height="28"/>
     </StackPanel>
   </StackPanel>
+  </ScrollViewer>
 </Window>
 """
 
 FOLDER_MODES = ("existing", "new", "none")
+CREATE_MODES = ("plans", "elev", "both")
+DIR_ORDER = ("N", "S", "L", "O")   # ordem dos checkboxes no diálogo
 
 
 class CropWindow(forms.WPFWindow):
     def __init__(self, xaml, info, ctx, reasons, cfg):
         forms.WPFWindow.__init__(self, xaml, literal_string=True)
+        try:   # telas baixas: a janela rola em vez de passar da área útil
+            from System.Windows import SystemParameters
+            self.MaxHeight = SystemParameters.WorkArea.Height
+        except Exception:
+            pass
         self.confirmed = False
         self.ctx = ctx
         self._saved = cfg
@@ -1077,10 +1368,13 @@ class CropWindow(forms.WPFWindow):
         self._names = []
         self._templates = []
         self._radios = {"plans": self.rb_plans, "callout": self.rb_callout}
+        self._cradios = {"plans": self.rb_c_plans, "elev": self.rb_c_elev, "both": self.rb_c_both}
         self._fradios = {"existing": self.rb_f_exist, "new": self.rb_f_new,
                          "none": self.rb_f_none}
+        self._dir_boxes = {"N": self.cb_n, "S": self.cb_s, "L": self.cb_l, "O": self.cb_o}
 
         self.info.Text = info
+        self.rooms_txt.Text = ctx["rooms_text"]
         self.margin.Text = u"{:.2f}".format(cfg["margin"])
         self.reasons.Text = u"\n".join(
             u"• {}: {}".format(MODE_LABELS[k], reasons[k]) for k in MODES if k in reasons)
@@ -1094,22 +1388,94 @@ class CropWindow(forms.WPFWindow):
         for key, rb in self._radios.items():
             rb.IsEnabled = key in enabled
             rb.Checked += self._on_mode
+        self._init_elevations()
+        self._init_create(bool(enabled))
         self._init_folders()
 
         self.vtype.SelectionChanged += self._on_vtype
         self.template.SelectionChanged += self._on_name
+        self.etemplate.SelectionChanged += self._on_name
         self.vname.SelectionChanged += self._on_name
         self.vsuffix.SelectionChanged += self._on_name
         self.manual.TextChanged += self._on_name
         self.suffix_text.TextChanged += self._on_name
 
         self._ready = True
-        start = cfg["mode"] if cfg["mode"] in enabled else enabled[0]
+        start = cfg["mode"] if cfg["mode"] in enabled else (enabled[0] if enabled else "plans")
         self._radios[start].IsChecked = True
         self._refresh()
 
         self.ok.Click += self._ok
         self.cancel.Click += self._cancel
+
+    # --- plantas / elevações / ambas ------------------------------------
+    def _init_create(self, plans_ok):
+        elev_ok = bool(self.ctx["elev_types"])
+        allowed = {"plans": plans_ok, "elev": elev_ok, "both": plans_ok and elev_ok}
+        for key, rb in self._cradios.items():
+            rb.IsEnabled = allowed[key]
+            rb.Checked += self._on_create
+        start = self._saved["create"]
+        if not allowed.get(start):
+            start = next(k for k in CREATE_MODES if allowed[k])
+        self._cradios[start].IsChecked = True
+
+    @property
+    def create(self):
+        for key in CREATE_MODES:
+            if self._cradios[key].IsChecked:
+                return key
+        return "plans"
+
+    @property
+    def do_plans(self):
+        return self.create in ("plans", "both")
+
+    @property
+    def do_elev(self):
+        return self.create in ("elev", "both")
+
+    def _on_create(self, sender, args):
+        if self._ready:
+            self._update_names()
+
+    def _init_elevations(self):
+        items = self.ctx["elev_types"]
+        labels = [i["label"] for i in items]
+        self.etype.ItemsSource = labels
+        if labels:
+            saved = self._saved["elev_type"]
+            # padrão: o tipo cujo marcador é a família OCA de elevação interna
+            oca = next((i for i, it in enumerate(items)
+                        if u"OCA_SIMB_ELEVA" in it["family"].upper()), 0)
+            self.etype.SelectedIndex = labels.index(saved) if saved in labels else oca
+        else:
+            self.elev_reason.Text = (u"Nenhum tipo de vista de Elevação no modelo: crie um em "
+                                     u"Vista > Elevação > Editar tipo.")
+        for key, box in self._dir_boxes.items():
+            box.IsChecked = key in self._saved["elev_dirs"]
+            box.Checked += self._on_name
+            box.Unchecked += self._on_name
+        etpl = [NO_TEMPLATE] + [t["label"] for t in self.ctx["elev_templates"]]
+        self.etemplate.ItemsSource = etpl
+        saved_t = self._saved["etemplate"]
+        self.etemplate.SelectedIndex = etpl.index(saved_t) if saved_t in etpl else 0
+
+    @property
+    def elev_type(self):
+        idx = self.etype.SelectedIndex
+        items = self.ctx["elev_types"]
+        return items[idx] if 0 <= idx < len(items) else None
+
+    @property
+    def elev_dirs(self):
+        return [k for k in DIR_ORDER if self._dir_boxes[k].IsChecked]
+
+    @property
+    def elev_template(self):
+        idx = self.etemplate.SelectedIndex
+        items = self.ctx["elev_templates"]
+        return items[idx - 1] if 1 <= idx <= len(items) else None
 
     # --- pasta do navegador ------------------------------------------
     def _init_folders(self):
@@ -1146,9 +1512,7 @@ class CropWindow(forms.WPFWindow):
         return "none"
 
     def folder_choice(self):
-        """{"mode", "name", "template_folder"}: name = pasta escolhida (define o
-        prefixo); template_folder = valor de 'Pasta' imposto pelo View Template
-        (None se ele não controla a pasta) - só para avisar."""
+        """{"mode", "name"}: name = pasta escolhida (define o prefixo)."""
         f = self.ctx["folders"]
         mode = self.folder_mode
         chosen = u""
@@ -1157,15 +1521,13 @@ class CropWindow(forms.WPFWindow):
             chosen = f.entries[idx]["name"] if 0 <= idx < len(f.entries) else u""
         elif mode == "new":
             chosen = to_unicode(self.folder_new.Text).strip()
-        template = self.template_choice
-        forced = f.template_value(template["id"]) if template else None
-        return {"mode": mode, "name": chosen, "template_folder": forced}
+        return {"mode": mode, "name": chosen}
 
     def _on_folder(self, sender, args):
         if self._ready:
             self._update_names()
 
-    # --- tipo de vista + template -------------------------------------
+    # --- tipo de vista da planta + template ------------------------------
     @property
     def mode(self):
         for key in MODES:
@@ -1283,6 +1645,15 @@ class CropWindow(forms.WPFWindow):
             self._busy = False
 
     def _render(self):
+        plans, elev = self.do_plans, self.do_elev
+        # grupos que não se aplicam ao tipo escolhido ficam apagados
+        for panel, on in ((self.plan_panel, plans), (self.name_panel, plans),
+                          (self.pv_plan, plans), (self.elev_panel, elev), (self.pv_elev, elev),
+                          (self.template, plans), (self.template_lbl, plans),
+                          (self.etemplate, elev), (self.etemplate_lbl, elev)):
+            panel.IsEnabled = on
+            panel.Opacity = 1.0 if on else 0.4
+
         opt = self.name_opt
         is_manual = opt["key"] == MANUAL_KEY
         self._sync_suffix(opt)
@@ -1305,15 +1676,35 @@ class CropWindow(forms.WPFWindow):
                                        else u"Prefixo do View Name:  (nenhum)")
 
         vname, title, en = self.names(folder)
-        template = self.template_choice
         self.pv_name.Text = vname or u"(nome padrão do Revit)"
         self.pv_title.Text = title or u"—"
         self.pv_en.Text = en or u"—"
-        self.pv_folder.Text = folder["name"] or u"(não definida pelo comando)"
-        self.pv_template.Text = template["label"] if template else NO_TEMPLATE
-        self.live_hint.Text = u"\n".join(self._live_hints(folder, template))
 
-    def _live_hints(self, folder, template):
+        dirs = self.elev_dirs
+        if dirs:
+            key = sorted(dirs, key=lambda k: ELEV_NUM[k])[0]
+            e_name, e_title, e_en = elevation_names(self.ctx["room"], key, prefix)
+            others = [u"{} ({:02d})".format(ELEV_WORD[k], ELEV_NUM[k])
+                      for k in sorted(dirs, key=lambda k: ELEV_NUM[k])[1:]]
+            self.pv_e_lbl.Text = (u"ELEVAÇÃO {}  ·  VIEW NAME".format(ELEV_WORD[key])
+                                  + (u"   (+ {})".format(u", ".join(others)) if others else u""))
+        else:
+            e_name = e_title = e_en = u"—"
+            self.pv_e_lbl.Text = u"ELEVAÇÃO  ·  VIEW NAME"
+        self.pv_e_name.Text, self.pv_e_title.Text, self.pv_e_en.Text = e_name, e_title, e_en
+
+        self.pv_folder.Text = folder["name"] or u"(não definida pelo comando)"
+        tpls = []
+        if plans:
+            t = self.template_choice
+            tpls.append(u"Plantas: " + (t["label"] if t else NO_TEMPLATE))
+        if elev:
+            t = self.elev_template
+            tpls.append(u"Elevações: " + (t["label"] if t else NO_TEMPLATE))
+        self.pv_template.Text = u"\n".join(tpls)
+        self.live_hint.Text = u"\n".join(self._live_hints(folder))
+
+    def _live_hints(self, folder):
         hints = []
         if folder["mode"] != "none" and folder["name"] and not folder_prefix(folder["name"]):
             hints.append(u"A pasta '{}' não tem '_': o View Name fica sem prefixo."
@@ -1321,15 +1712,21 @@ class CropWindow(forms.WPFWindow):
         if folder["mode"] == "new" and folder["name"] in [e["name"] for e in
                                                           self.ctx["folders"].entries]:
             hints.append(u"A pasta '{}' já existe: as vistas vão para ela.".format(folder["name"]))
-        tf = folder["template_folder"]
-        if folder["name"] and tf is not None and tf != folder["name"]:
-            # o nome não muda; só a posição no navegador fica presa ao template
-            hints.append(u"Atenção: o View Template '{}' controla o parâmetro '{}' (= '{}'). "
-                         u"O nome das vistas usa '{}', mas no Navegador elas ficarão em '{}'. "
-                         u"Para a pasta funcionar, desmarque '{}' (Include) nesse template."
-                         .format(template["label"], FOLDER_PARAM, tf or u"vazio",
-                                 folder["name"], tf or u"???", FOLDER_PARAM))
-        if self.ctx["count"] > 1 and not self.name_opt["room"]:
+        active = []
+        if self.do_plans and self.template_choice:
+            active.append(self.template_choice)
+        if self.do_elev and self.elev_template:
+            active.append(self.elev_template)
+        for template in active:
+            tf = self.ctx["folders"].template_value(template["id"])
+            if folder["name"] and tf is not None and tf != folder["name"]:
+                # o nome não muda; só a posição no navegador fica presa ao template
+                hints.append(u"Atenção: o View Template '{}' controla o parâmetro '{}' (= '{}'). "
+                             u"O nome das vistas usa '{}', mas no Navegador elas ficarão em "
+                             u"'{}'. Para a pasta funcionar, desmarque '{}' (Include) nesse "
+                             u"template.".format(template["label"], FOLDER_PARAM, tf or u"vazio",
+                                                 folder["name"], tf or u"???", FOLDER_PARAM))
+        if self.do_plans and self.ctx["count"] > 1 and not self.name_opt["room"]:
             hints.append(u"Nomes sem <Nº> - <AMBIENTE> se repetem entre as vistas e recebem "
                          u"(2), (3)...; no nome manual, use # para numerar.")
         return hints
@@ -1347,6 +1744,15 @@ class CropWindow(forms.WPFWindow):
         if folder["mode"] == "existing" and not folder["name"]:
             self.error.Text = u"Selecione a pasta de destino."
             return
+        if self.do_plans and self.vtype_item is None:
+            self.error.Text = u"Escolha o tipo de vista da planta."
+            return
+        if self.do_elev and self.elev_type is None:
+            self.error.Text = u"Escolha o tipo de elevação (família do marcador)."
+            return
+        if self.do_elev and not self.elev_dirs:
+            self.error.Text = u"Marque pelo menos uma direção de elevação."
+            return
         self.confirmed = True
         self.Close()
 
@@ -1357,6 +1763,7 @@ class CropWindow(forms.WPFWindow):
     def result(self):
         sel_folder = self.folder_list.SelectedItem
         return {"mode": self.mode, "margin": self.margin_m,
+                "create": self.create,
                 "type": self.vtype_item,
                 "vname": self.name_opt["key"], "suffix": self.suffix_key,
                 "name_opt": self.name_opt, "manual": to_unicode(self.manual.Text),
@@ -1365,7 +1772,10 @@ class CropWindow(forms.WPFWindow):
                 "folder": self.folder_choice(),
                 "folder_list": to_unicode(sel_folder) if sel_folder is not None else u"",
                 "folder_new": to_unicode(self.folder_new.Text).strip(),
-                "template": self.template_choice}
+                "template": self.template_choice,
+                "elev_type": self.elev_type,
+                "elev_dirs": self.elev_dirs,
+                "elev_template": self.elev_template}
 
 
 # ------------------------------------------------------------------
@@ -1405,8 +1815,10 @@ plan_level = next((l for l in room_levels if l is not None), None)
 plan_items = plan_type_items()
 callout_items = callout_type_items(active_view)
 reasons = check_modes(plan_items, callout_items, plan_level)
-if len(reasons) == len(MODES):
-    forms.alert(u"Nenhuma ação disponível:\n\n" + u"\n".join(reasons.values()), exitscript=True)
+elev_items = elev_type_items()
+if len(reasons) == len(MODES) and not elev_items:
+    forms.alert(u"Nenhuma ação disponível:\n\n" + u"\n".join(reasons.values())
+                + u"\nNenhum tipo de vista de Elevação no modelo.", exitscript=True)
 
 folders = ProjectFolders()
 
@@ -1427,6 +1839,7 @@ if folders.available and not folders.entries:
                       .format(folders.param_name))
 
 active_level = getattr(active_view, "GenLevel", None)
+rooms_preview = u", ".join(g.label for g in geoms[:6]) + (u"..." if len(geoms) > 6 else u"")
 dialog_ctx = {
     "types": {"plans": plan_items, "callout": callout_items},
     "names": dict((m, name_options(target_kind(m))) for m in MODES),
@@ -1434,13 +1847,17 @@ dialog_ctx = {
     "room": geoms[0].el,
     "example": geoms[0].label,
     "count": len(geoms),
+    "rooms_text": u"{} ambiente(s) selecionado(s): {}".format(len(geoms), rooms_preview),
     "hints": name_hints,
     "folders": folders,
+    "elev_types": elev_items,
+    "elev_templates": template_items(VT.Elevation),
 }
 
 config = script.get_config()
 cfg = {"margin": config.get_option("margin_m", 0.5),
        "mode": config.get_option("mode", "plans"),
+       "create": config.get_option("create", "plans"),
        "vtype": config.get_option("vtype", u""),
        "vname": config.get_option("vname", "room_civil"),
        "suffix": config.get_option("vsuffix", "amp"),
@@ -1448,10 +1865,12 @@ cfg = {"margin": config.get_option("margin_m", 0.5),
        "folder_mode": config.get_option("folder_mode", "existing"),
        "folder": config.get_option("folder", u""),
        "folder_new": config.get_option("folder_new", u""),
-       "template": config.get_option("template", NO_TEMPLATE)}
+       "template": config.get_option("template", NO_TEMPLATE),
+       "elev_type": config.get_option("elev_type", u""),
+       "elev_dirs": config.get_option("elev_dirs", u"NLSO"),
+       "etemplate": config.get_option("etemplate", NO_TEMPLATE)}
 
-info = u"{} ambiente(s) → 1 vista por ambiente · vista ativa: {} ({})".format(
-    len(geoms), to_unicode(active_view.Name), view_type_label(active_view))
+info = u"vista ativa: {} ({})".format(to_unicode(active_view.Name), view_type_label(active_view))
 win = CropWindow(CROP_XAML, info, dialog_ctx, reasons, cfg)
 win.ShowDialog()
 if not win.confirmed:
@@ -1460,6 +1879,7 @@ opts = win.result
 
 config.margin_m = opts["margin"]
 config.mode = opts["mode"]
+config.create = opts["create"]
 config.vtype = opts["type"]["label"] if opts["type"] else cfg["vtype"]
 config.vname = opts["vname"]
 config.vsuffix = opts["suffix"]
@@ -1468,13 +1888,18 @@ config.folder_mode = opts["folder"]["mode"]
 config.folder = opts["folder_list"]
 config.folder_new = opts["folder_new"]
 config.template = opts["template"]["label"] if opts["template"] else NO_TEMPLATE
+config.elev_type = opts["elev_type"]["label"] if opts["elev_type"] else cfg["elev_type"]
+config.elev_dirs = u"".join(opts["elev_dirs"])
+config.etemplate = opts["elev_template"]["label"] if opts["elev_template"] else NO_TEMPLATE
 script.save_config()
 
 mode = opts["mode"]
+do_plans = opts["create"] in ("plans", "both")
+do_elev = opts["create"] in ("elev", "both")
 margin_ft = m_to_ft(opts["margin"])
 
 # --- verificações específicas do modo, antes de qualquer alteração ---------
-if mode == "callout":
+if do_plans and mode == "callout":
     visible = set(eid_int(i) for i in
                   DB.FilteredElementCollector(doc, active_view.Id)
                   .WhereElementIsNotElementType().ToElementIds())
@@ -1488,6 +1913,9 @@ name_opt = opts["name_opt"]
 folder = opts["folder"]
 prefix = name_prefix(folder)
 template = opts["template"]
+elev_type = opts["elev_type"]
+elev_dirs = opts["elev_dirs"]
+elev_template = opts["elev_template"]
 notes = []
 created = []   # (ElemGeom, ElementId da vista), na ordem dos ambientes
 failed = []    # (rótulo, motivo)
@@ -1537,27 +1965,142 @@ def create_room_view(g, level):
     return view, room_notes
 
 
-# um grupo = um único Desfazer; uma transação por ambiente = falha isolada
+def setup_elevation(view, g, key, notes_out):
+    """Nome, pasta, recorte e template de UMA elevação (mesmas regras das plantas)."""
+    view.ViewTemplateId = INVALID_ID   # tipo de elevação pode trazer template padrão
+    vname, title, en = elevation_names(g.el, key, prefix)
+    apply_names(view, vname, en, notes_out)
+    apply_title_on_sheet(view, title, notes_out)
+    ProjectFolders.apply(view, folder["name"], notes_out)
+    doc.Regenerate()
+    apply_elevation_crop(view, g, margin_ft)
+    if elev_template is not None:
+        apply_template(view, elev_template, notes_out)
+        doc.Regenerate()
+        ProjectFolders.check(view, folder["name"], notes_out)
+
+
+def create_room_elevations(g, host, markers):
+    """UM marcador por ambiente: reaproveita o que já estiver dentro do Room
+    (só completa as direções que faltam) ou cria um novo no ponto seguro.
+    Cada direção em uma SubTransaction: uma falha não desfaz as outras.
+    Devolve ([(direção, vista)], [(direção, motivo)], avisos)."""
+    made, room_notes, errors_by_key = [], [], {}
+    marker = existing_marker(g, host, markers)
+    new_marker = marker is None
+    have = {}
+    if new_marker:
+        origin = marker_origin(g)
+        if origin is None:
+            raise ValueError(u"nenhum ponto dentro do ambiente para colocar o marcador.")
+        marker = DB.ElevationMarker.CreateElevationMarker(doc, elev_type["id"], origin, host.Scale)
+    else:
+        have = marker_views(marker)
+        for k in elev_dirs:
+            if k in have:
+                room_notes.append(u"ELEVAÇÃO {} já existia no marcador do ambiente ('{}'); "
+                                  u"não recriada.".format(ELEV_WORD[k], to_unicode(have[k].Name)))
+        if eid_int(marker.GetTypeId()) != eid_int(elev_type["id"]):
+            room_notes.append(u"marcador existente reaproveitado: as novas elevações usam o tipo "
+                              u"de elevação dele, não o escolhido no diálogo.")
+
+    last_error = u"o marcador não tem posição livre para essa direção."
+    for i in range(marker.MaximumViewCount):
+        if all(k in have or k in dict(made) for k in elev_dirs):
+            break
+        if not marker.IsAvailableIndex(i):
+            continue
+        names_before = set(VIEW_NAMES)
+        key = None
+        st = DB.SubTransaction(doc)
+        st.Start()
+        try:
+            view = marker.CreateElevation(doc, host.Id, i)
+            doc.Regenerate()
+            key = look_direction(view)
+            if key not in elev_dirs or key in have or key in dict(made):
+                st.RollBack()   # direção não pedida ou já existente: desfaz
+                continue
+            view_notes = []
+            setup_elevation(view, g, key, view_notes)
+            st.Commit()
+            made.append((key, view))
+            room_notes.extend(u"ELEVAÇÃO {}: {}".format(ELEV_WORD[key], n) for n in view_notes)
+        except Exception as exc:
+            if st.GetStatus() == DB.TransactionStatus.Started:
+                st.RollBack()
+            VIEW_NAMES.clear()
+            VIEW_NAMES.update(names_before)
+            if key:
+                errors_by_key[key] = to_unicode(exc)
+            else:
+                last_error = to_unicode(exc)
+
+    done = set(have) | set(k for k, _v in made)
+    errors = [(k, errors_by_key.get(k, last_error)) for k in elev_dirs if k not in done]
+    if new_marker and not made:
+        doc.Delete(marker.Id)   # não deixa marcador vazio no modelo
+    made.sort(key=lambda kv: ELEV_NUM[kv[0]])
+    return made, errors, room_notes
+
+
+def elev_label(g, key):
+    return u"{} · ELEVAÇÃO {}".format(g.label, ELEV_WORD[key])
+
+
+markers = list(DB.FilteredElementCollector(doc).OfClass(DB.ElevationMarker)) if do_elev else []
+
+# um grupo = um único Desfazer; uma transação por ambiente (planta e
+# elevações separadas) = falha isolada
 tgroup = DB.TransactionGroup(doc, u"OCA - Abertura de Múltiplas Vistas")
 tgroup.Start()
 try:
     for g, level in zip(geoms, room_levels):
-        names_before = set(VIEW_NAMES)
-        t = DB.Transaction(doc, u"OCA - Vista {}".format(g.label))
-        t.Start()
-        try:
-            view, room_notes = create_room_view(g, level)
-            status = t.Commit()
-            if status != DB.TransactionStatus.Committed:
-                raise Exception(u"o Revit desfez a criação da vista ({}).".format(status))
-            created.append((g, view.Id))
-            notes.extend(u"{}: {}".format(g.label, n) for n in room_notes)
-        except Exception as exc:
-            if t.GetStatus() == DB.TransactionStatus.Started:
-                t.RollBack()
-            VIEW_NAMES.clear()   # libera nomes reservados pela vista desfeita
-            VIEW_NAMES.update(names_before)
-            failed.append((g.label, to_unicode(exc)))
+        plan_view = None
+        if do_plans:
+            names_before = set(VIEW_NAMES)
+            t = DB.Transaction(doc, u"OCA - Vista {}".format(g.label))
+            t.Start()
+            try:
+                view, room_notes = create_room_view(g, level)
+                status = t.Commit()
+                if status != DB.TransactionStatus.Committed:
+                    raise Exception(u"o Revit desfez a criação da vista ({}).".format(status))
+                plan_view = view
+                created.append((g, view.Id))
+                notes.extend(u"{}: {}".format(g.label, n) for n in room_notes)
+            except Exception as exc:
+                if t.GetStatus() == DB.TransactionStatus.Started:
+                    t.RollBack()
+                VIEW_NAMES.clear()   # libera nomes reservados pela vista desfeita
+                VIEW_NAMES.update(names_before)
+                failed.append((g.label, to_unicode(exc)))
+
+        if do_elev:
+            host = host_plan(level, plan_view)
+            if host is None:
+                why = (u"nenhuma planta do nível '{}' para colocar o marcador (abra uma planta "
+                       u"desse nível).".format(to_unicode(level.Name)) if level is not None
+                       else u"nível do ambiente não identificado.")
+                failed.extend((elev_label(g, k), why) for k in elev_dirs)
+                continue
+            names_before = set(VIEW_NAMES)
+            t = DB.Transaction(doc, u"OCA - Elevações {}".format(g.label))
+            t.Start()
+            try:
+                made, errors, room_notes = create_room_elevations(g, host, markers)
+                status = t.Commit()
+                if status != DB.TransactionStatus.Committed:
+                    raise Exception(u"o Revit desfez a criação das elevações ({}).".format(status))
+                created.extend((g, v.Id) for _k, v in made)
+                failed.extend((elev_label(g, k), why) for k, why in errors)
+                notes.extend(u"{}: {}".format(g.label, n) for n in room_notes)
+            except Exception as exc:
+                if t.GetStatus() == DB.TransactionStatus.Started:
+                    t.RollBack()
+                VIEW_NAMES.clear()
+                VIEW_NAMES.update(names_before)
+                failed.extend((elev_label(g, k), to_unicode(exc)) for k in elev_dirs)
 finally:
     if tgroup.GetStatus() == DB.TransactionStatus.Started:
         tgroup.Assimilate()
@@ -1580,7 +2123,7 @@ if skipped:
     report.append(u"Ambientes ignorados (nenhuma vista criada):")
     report.extend(skipped_lines(skipped))
 if failed:
-    report.append(u"Não foi possível criar a vista:")
+    report.append(u"Não foi possível criar (ambiente · vista: motivo):")
     report.extend(skipped_lines(failed))
 if warnings or notes:
     report.append(u"Avisos:")
@@ -1589,6 +2132,6 @@ if warnings or notes:
 if not created:
     forms.alert(u"Nenhuma vista criada.", sub_msg=u"\n".join(report) or None)
 elif report:
-    forms.alert(u"{} de {} ambiente(s) com vista criada, com avisos:".format(
-                    len(created), len(elements)),
+    forms.alert(u"{} vista(s) criada(s) para {} ambiente(s), com avisos:".format(
+                    len(created), len(geoms)),
                 sub_msg=u"\n".join(report))
