@@ -1346,7 +1346,34 @@ _GRID_STYLE = u"""
               BorderThickness="1" FontFamily="Segoe UI" FontSize="12"
               VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Auto"
               EnableRowVirtualization="True" FrozenColumnCount="1"
+              VirtualizingPanel.IsVirtualizingWhenGrouping="True"
               ColumnHeaderStyle="{StaticResource head}" RowStyle="{StaticResource row}" """
+
+# cabeçalho de grupo em linha única, na largura toda da tabela
+_GROUP_STYLE = u"""
+      <DataGrid.GroupStyle>
+        <GroupStyle>
+          <GroupStyle.HeaderTemplate>
+            <DataTemplate>
+              <Border Background="#1B2A47" BorderBrush="#2A4A66" BorderThickness="0,1,0,1"
+                      Padding="8,4,8,4">
+                <DockPanel LastChildFill="True">
+                  <Button DockPanel.Dock="Right" Content="Desmarcar grupo" Tag="{Binding Name}"
+                          Height="22" Padding="8,0,8,0" Margin="6,0,0,0" FontSize="11"/>
+                  <Button DockPanel.Dock="Right" Content="Marcar grupo" Tag="{Binding Name}"
+                          Height="22" Padding="8,0,8,0" Margin="6,0,0,0" FontSize="11"/>
+                  <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                    <TextBlock Text="{Binding Name}" Foreground="#65E3FF" FontWeight="Bold"
+                               FontFamily="Segoe UI" TextTrimming="CharacterEllipsis"/>
+                    <TextBlock Text="{Binding ItemCount, StringFormat='   ·   {0} linha(s)'}"
+                               Foreground="#7A8FA9" FontFamily="Segoe UI"/>
+                  </StackPanel>
+                </DockPanel>
+              </Border>
+            </DataTemplate>
+          </GroupStyle.HeaderTemplate>
+        </GroupStyle>
+      </DataGrid.GroupStyle>"""
 
 _CHECK_COL = u"""
         <DataGridTemplateColumn Header="✓" Width="36">
@@ -1408,11 +1435,6 @@ VERIFY_XAML = u"""
     </Style>
     <Style x:Key="row" TargetType="DataGridRow">
       <Style.Triggers>
-        <DataTrigger Binding="{Binding Kind}" Value="group">
-          <Setter Property="Background" Value="#1B2A47"/>
-          <Setter Property="Foreground" Value="#65E3FF"/>
-          <Setter Property="FontWeight" Value="Bold"/>
-        </DataTrigger>
         <DataTrigger Binding="{Binding Kind}" Value="fill">
           <Setter Property="Foreground" Value="#7BE3A0"/>
         </DataTrigger>
@@ -1477,7 +1499,7 @@ VERIFY_XAML = u"""
         """ + _col(u"Descrição em IN atual", u"EnAtual", 160) + u"""
         """ + _col(u"Descrição em IN nova", u"EnNova", 160) + u"""
         """ + _col(u"Destino", u"Destino", 150) + u"""
-      </DataGrid.Columns>
+      </DataGrid.Columns>""" + _GROUP_STYLE + u"""
     </DataGrid>
     <GridSplitter Grid.Row="4" Height="6" HorizontalAlignment="Stretch" Background="#1C2B44"/>
     <DockPanel Grid.Row="5" Margin="0,8,0,6" LastChildFill="False">
@@ -1497,7 +1519,7 @@ VERIFY_XAML = u"""
         """ + _col(u"Descrição ✎", u"Descricao", 230, u"edit", False) + u"""
         """ + _col(u"Descrição em IN ✎", u"DescricaoIN", 210, u"edit", False) + u"""
         """ + _col(u"Verificação", u"Verificacao", 300) + u"""
-      </DataGrid.Columns>
+      </DataGrid.Columns>""" + _GROUP_STYLE + u"""
     </DataGrid>
     <DockPanel Grid.Row="7" Margin="0,12,0,0" LastChildFill="False">
       <TextBlock x:Name="counter" DockPanel.Dock="Left" VerticalAlignment="Center"
@@ -1550,6 +1572,14 @@ class VerifyWindow(forms.WPFWindow):
         self.d1, self.d2 = {}, {}
         self.grid.ItemsSource = self.t1.DefaultView
         self.grid2.ItemsSource = self.t2.DefaultView
+        from System.Windows.Data import PropertyGroupDescription
+        from System.Windows import RoutedEventHandler
+        from System.Windows.Controls.Primitives import ButtonBase
+        for g in (self.grid, self.grid2):
+            g.Items.GroupDescriptions.Add(PropertyGroupDescription("Grp"))
+        # botões "Marcar grupo / Desmarcar grupo" dos cabeçalhos de grupo
+        self.grid.AddHandler(ButtonBase.ClickEvent, RoutedEventHandler(self._grp_click1))
+        self.grid2.AddHandler(ButtonBase.ClickEvent, RoutedEventHandler(self._grp_click2))
 
         self.f_mode.ItemsSource = GROUP_MODES
         self.f_mode.SelectedIndex = 0
@@ -1560,7 +1590,6 @@ class VerifyWindow(forms.WPFWindow):
         self.f_text.TextChanged += self._filter
         self.t1.ColumnChanged += self._on_changed1
         self.t2.ColumnChanged += self._on_changed2
-        self.grid2.BeginningEdit += self._no_edit_group
         self.b_all.Click += lambda s, a: self._set_visible1(lambda r: True)
         self.b_none.Click += lambda s, a: self._set_visible1(lambda r: False)
         self.b_fill.Click += lambda s, a: self._set_visible1(lambda r: not r["over"])
@@ -1570,7 +1599,7 @@ class VerifyWindow(forms.WPFWindow):
         self.b_apply.Click += self._apply
         self.b_cancel.Click += self._cancel
 
-    # ---- montagem das tabelas (com linhas de grupo) ----
+    # ---- montagem das tabelas (agrupadas pela coluna Grp) ----
     @staticmethod
     def _new_table(cols):
         tb = DataTable("t")
@@ -1593,19 +1622,8 @@ class VerifyWindow(forms.WPFWindow):
         tb.Rows.Clear()
         store.clear()
         ordered = sorted(items, key=lambda r: (grp_of(r) == NO_KEY, grp_of(r)) + sort_extra(r))
-        gid, last = 0, None
         for r in ordered:
             g = grp_of(r)
-            if g != last:
-                gid -= 1
-                last = g
-                row = tb.NewRow()
-                row["RowId"], row["Kind"], row["Grp"] = gid, u"group", g
-                row["Sel"], row["Enabled"] = False, True
-                for i, c in enumerate(values_of(None)):
-                    row[c] = g if i == 0 else u""
-                tb.Rows.Add(row)
-                store[gid] = row
             row = tb.NewRow()
             row["RowId"], row["Grp"] = r["rid"], g
             vals = values_of(r)
@@ -1617,16 +1635,12 @@ class VerifyWindow(forms.WPFWindow):
             store[r["rid"]] = row
 
     def _vals1(self, r):
-        if r is None:
-            return COLS1
         v = r["view"]
         return dict(zip(COLS1, (v["grp"], v["category"], v["family"], v["type"], v["key"],
                                 v["ptCur"], v["ptNew"], v["enCur"], v["enNew"], v["dest"])),
                     _kind=v["kind"])
 
     def _vals2(self, r):
-        if r is None:
-            return COLS2
         return dict(zip(COLS2, (r["category"], r["family"], r["name"], to_unicode(r["count"]),
                                 r["key"], r["pt"], r["en"], r["check"])),
                     _kind=u"changed" if inc_changed(r) else u"inc")
@@ -1642,7 +1656,7 @@ class VerifyWindow(forms.WPFWindow):
             groups = []
             for tb in (self.t1, self.t2):
                 for row in tb.Rows:
-                    if row["Kind"] == u"group" and row["Grp"] not in groups:
+                    if row["Grp"] not in groups:
                         groups.append(row["Grp"])
             self.f_grp.ItemsSource = [u"Todos"] + sorted(groups)
             self.f_grp.SelectedIndex = 0
@@ -1666,22 +1680,51 @@ class VerifyWindow(forms.WPFWindow):
                 parts.append(u"Grp = '{}'".format(_flt(g)))
             if t:
                 like = u" OR ".join(u"{} LIKE '%{}%'".format(c, t) for c in cols)
-                parts.append(u"(Kind = 'group' OR {})".format(like))
+                parts.append(u"({})".format(like))
             try:
                 tb.DefaultView.RowFilter = u" AND ".join(parts)
             except Exception:
                 tb.DefaultView.RowFilter = u""
-        self._sync_groups()
         self._update_counter()
 
     @staticmethod
     def _visible(tb):
-        out = []
-        for drv in tb.DefaultView:
-            rid = int(drv.Row["RowId"])
-            if rid >= 0:
-                out.append(rid)
-        return out
+        return [int(drv.Row["RowId"]) for drv in tb.DefaultView]
+
+    @staticmethod
+    def _group_button(args):
+        """-> (grupo, marcar?) se o clique veio de um botão de cabeçalho de grupo."""
+        from System.Windows.Controls import Button
+        src = args.OriginalSource
+        if not isinstance(src, Button) or src.Tag is None:
+            return None, None
+        return to_unicode(src.Tag), to_unicode(src.Content).startswith(u"Marcar")
+
+    def _grp_click1(self, sender, args):
+        grp, val = self._group_button(args)
+        if grp is None:
+            return
+        self._busy = True
+        try:
+            for rid in self._visible(self.t1):
+                if self.d1[rid]["Grp"] == grp:
+                    self._check1(rid, val)
+            self._update_counter()
+        finally:
+            self._busy = False
+
+    def _grp_click2(self, sender, args):
+        grp, val = self._group_button(args)
+        if grp is None:
+            return
+        self._busy = True
+        try:
+            for rid in self._visible(self.t2):
+                if self.d2[rid]["Grp"] == grp:
+                    self._check2(rid, val)
+            self._update_counter()
+        finally:
+            self._busy = False
 
     def _commit(self):
         """Confirma uma célula em edição na tabela 2 antes de ler os valores."""
@@ -1703,14 +1746,7 @@ class VerifyWindow(forms.WPFWindow):
             return
         self._busy = True
         try:
-            rid, val = int(e.Row["RowId"]), e.Row["Sel"] == True
-            if rid < 0:
-                for vr in self._visible(self.t1):
-                    if self.d1[vr]["Grp"] == e.Row["Grp"]:
-                        self._check1(vr, val)
-            else:
-                self._check1(rid, val)
-            self._sync_groups()
+            self._check1(int(e.Row["RowId"]), e.Row["Sel"] == True)
             self._update_counter()
         finally:
             self._busy = False
@@ -1720,19 +1756,11 @@ class VerifyWindow(forms.WPFWindow):
         try:
             for rid in self._visible(self.t1):
                 self._check1(rid, rule(self.by_rid[rid]))
-            self._sync_groups()
             self._update_counter()
         finally:
             self._busy = False
 
     # ---- tabela 2 (editável) ----
-    def _no_edit_group(self, sender, e):
-        try:
-            if e.Row.Item["Kind"] == u"group":
-                e.Cancel = True
-        except Exception:
-            pass
-
     def _check2(self, rid, value):
         r = self.by_rid2[rid]
         r["sel"] = bool(value)
@@ -1746,14 +1774,8 @@ class VerifyWindow(forms.WPFWindow):
         try:
             rid = int(e.Row["RowId"])
             if name == "Sel":
-                val = e.Row["Sel"] == True
-                if rid < 0:
-                    for vr in self._visible(self.t2):
-                        if self.d2[vr]["Grp"] == e.Row["Grp"]:
-                            self._check2(vr, val)
-                else:
-                    self._check2(rid, val)
-            elif rid >= 0:
+                self._check2(rid, e.Row["Sel"] == True)
+            else:
                 r = self.by_rid2[rid]
                 r[EDIT2[name]] = to_unicode(e.Row[name] or u"")
                 verify_incomplete(r, autofill=False)
@@ -1761,7 +1783,6 @@ class VerifyWindow(forms.WPFWindow):
                 e.Row["Kind"] = u"changed" if inc_changed(r) else u"inc"
                 if inc_changed(r):
                     self._check2(rid, True)
-            self._sync_groups()
             self._update_counter()
         finally:
             self._busy = False
@@ -1771,7 +1792,6 @@ class VerifyWindow(forms.WPFWindow):
         try:
             for rid in self._visible(self.t2):
                 self._check2(rid, value)
-            self._sync_groups()
             self._update_counter()
         finally:
             self._busy = False
@@ -1790,29 +1810,11 @@ class VerifyWindow(forms.WPFWindow):
                 row["Kind"] = u"changed" if inc_changed(r) else u"inc"
                 if inc_changed(r):
                     self._check2(r["rid"], True)
-            self._sync_groups()
             self._update_counter()
         finally:
             self._busy = False
 
     # ---- comum ----
-    def _sync_groups(self):
-        was = self._busy
-        self._busy = True
-        try:
-            for tb, store, by_rid in ((self.t1, self.d1, self.by_rid),
-                                      (self.t2, self.d2, self.by_rid2)):
-                vis = set(self._visible(tb))
-                for gid, g in store.items():
-                    if gid >= 0:
-                        continue
-                    kids = [by_rid[rid] for rid in vis if store[rid]["Grp"] == g["Grp"]]
-                    on = [r for r in kids if r.get("enabled", True)]
-                    g["Enabled"] = bool(on)
-                    g["Sel"] = bool(on) and all(r["sel"] for r in on)
-        finally:
-            self._busy = was
-
     def _update_counter(self):
         s1, s2 = self.selected(), self.selected_inc()
         tot1 = len([r for r in self.rows if r["enabled"]])
