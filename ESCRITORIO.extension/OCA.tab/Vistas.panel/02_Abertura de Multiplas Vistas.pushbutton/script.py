@@ -28,7 +28,8 @@
 #      num ponto dentro do Room, e as elevações Norte/Leste/Sul/Oeste criadas
 #      a partir dele (como Vista > Elevação). Elevações já existentes são
 #      ignoradas. Margem, View Template e pasta próprios das elevações.
-#      View Name: PREFIXO_Nº - AMBIENTE - ELEVAÇÃO NORTE; títulos: ... 01.
+#      View Name: PREFIXO_Nº - AMBIENTE - ELEVAÇÃO 01; títulos: ... 01
+#      (01 Norte, 02 Leste, 03 Sul, 04 Oeste).
 #
 # A descrição fica em comentário (e não em docstring) de propósito: o
 # pyRevit 5.2 lê a docstring do módulo com .decode('utf-8'), que falha com
@@ -981,8 +982,13 @@ def apply_template(view, template, notes):
 # relação ao Norte do Projeto (+Y interno = "para cima" nas plantas).
 # (chave, palavra no View Name, nº nos títulos): 01 N, 02 L, 03 S, 04 O
 ELEV_DIRS = (("N", u"NORTE", 1), ("L", u"LESTE", 2), ("S", u"SUL", 3), ("O", u"OESTE", 4))
-ELEV_WORD = dict((k, w) for k, w, _n in ELEV_DIRS)
+ELEV_WORD = dict((k, w) for k, w, _n in ELEV_DIRS)   # direção (só no resumo de erros)
 ELEV_NUM = dict((k, n) for k, _w, n in ELEV_DIRS)
+
+
+def elev_tag(key):
+    """'ELEVAÇÃO 01' ... 'ELEVAÇÃO 04' - o mesmo texto no View Name e nos títulos."""
+    return u"ELEVAÇÃO {:02d}".format(ELEV_NUM[key])
 ELEV_TYPES = [v for v in VIEW_FAMILY_TYPES if v.ViewFamily == DB.ViewFamily.Elevation]
 GRID = 16   # malha de busca de ponto livre dentro do ambiente
 
@@ -1080,12 +1086,12 @@ def ensure_elev_type(item):
 
 def elevation_names(room, key, prefix):
     """(View Name, Title on Sheet, English) de uma elevação do ambiente.
-    View Name leva a direção (NORTE...); os títulos, o número (01..04).
+    View Name = prefixo + Title on Sheet; os dois levam 'ELEVAÇÃO 01..04'.
     Inglês: mesma regra das plantas (Room Name English, senão o nome PT)."""
     number, name, name_en = room_info(room)
     num = u"{:02d}".format(ELEV_NUM[key])
-    vname = with_prefix(prefix, u"{} - {} - ELEVAÇÃO {}".format(number, name, ELEV_WORD[key]))
-    title = u"{} - {} - ELEVAÇÃO {}".format(number, name, num)
+    title = u"{} - {} - {}".format(number, name, elev_tag(key))
+    vname = with_prefix(prefix, title)   # View Name = prefixo + Title on Sheet
     en = u"{} - {} - ELEVATION {}".format(number, name_en or name, num)
     return clean_name(vname), title, en
 
@@ -1413,10 +1419,10 @@ CROP_XAML = u"""
             <TextBlock Text="Tipo de elevação (família do marcador carregada no modelo)"/>
             <ComboBox x:Name="etype"/>
             <TextBlock Text="Direções (um marcador novo por ambiente)"/>
-            <CheckBox x:Name="cb_n" Content="1. Norte   →  ELEVAÇÃO 01"/>
-            <CheckBox x:Name="cb_s" Content="2. Sul   →  ELEVAÇÃO 03"/>
-            <CheckBox x:Name="cb_l" Content="3. Leste   →  ELEVAÇÃO 02"/>
-            <CheckBox x:Name="cb_o" Content="4. Oeste   →  ELEVAÇÃO 04"/>
+            <CheckBox x:Name="cb_n" Content="ELEVAÇÃO 01" ToolTip="Norte"/>
+            <CheckBox x:Name="cb_l" Content="ELEVAÇÃO 02" ToolTip="Leste"/>
+            <CheckBox x:Name="cb_s" Content="ELEVAÇÃO 03" ToolTip="Sul"/>
+            <CheckBox x:Name="cb_o" Content="ELEVAÇÃO 04" ToolTip="Oeste"/>
             <TextBlock Text="Elevações que já existirem no ambiente são ignoradas: o marcador e as vistas são criados de novo."
                        TextWrapping="Wrap" FontSize="11" Foreground="#7A8FA9" Margin="0,8,0,0"/>
             <TextBlock x:Name="elev_reason" TextWrapping="Wrap" FontSize="11"
@@ -1535,7 +1541,7 @@ CROP_XAML = u"""
 
 FOLDER_MODES = ("existing", "new", "none")
 CREATE_MODES = ("plans", "elev", "both")
-DIR_ORDER = ("N", "S", "L", "O")   # ordem dos checkboxes no diálogo
+DIR_ORDER = ("N", "L", "S", "O")   # ordem dos checkboxes: ELEVAÇÃO 01..04
 
 
 class FolderPicker(object):
@@ -1908,8 +1914,8 @@ class CropWindow(forms.WPFWindow):
         dirs = sorted(self.elev_dirs, key=lambda k: ELEV_NUM[k])
         if dirs:
             e_name, e_title, e_en = elevation_names(self.ctx["room"], dirs[0], name_prefix(e_fold))
-            others = [u"{} ({:02d})".format(ELEV_WORD[k], ELEV_NUM[k]) for k in dirs[1:]]
-            self.pv_e_lbl.Text = (u"ELEVAÇÃO {}  ·  VIEW NAME".format(ELEV_WORD[dirs[0]])
+            others = [u"{:02d}".format(ELEV_NUM[k]) for k in dirs[1:]]
+            self.pv_e_lbl.Text = (u"{}  ·  VIEW NAME".format(elev_tag(dirs[0]))
                                   + (u"   (+ {})".format(u", ".join(others)) if others else u""))
         else:
             e_name = e_title = e_en = u"—"
@@ -2247,7 +2253,7 @@ def create_room_elevations(g, host, etype_id):
             setup_elevation(view, g, key, view_notes)
             st.Commit()
             made.append((key, view))
-            room_notes.extend(u"ELEVAÇÃO {}: {}".format(ELEV_WORD[key], n) for n in view_notes)
+            room_notes.extend(u"{}: {}".format(elev_tag(key), n) for n in view_notes)
         except Exception as exc:
             if st.GetStatus() == DB.TransactionStatus.Started:
                 st.RollBack()
@@ -2267,7 +2273,7 @@ def create_room_elevations(g, host, etype_id):
 
 
 def elev_label(g, key):
-    return u"{} · ELEVAÇÃO {}".format(g.label, ELEV_WORD[key])
+    return u"{} · {} ({})".format(g.label, elev_tag(key), ELEV_WORD[key].capitalize())
 
 
 # um grupo = um único Desfazer; uma transação por ambiente (planta e
