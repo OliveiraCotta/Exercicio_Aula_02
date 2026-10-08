@@ -608,8 +608,8 @@ VERTICAL_TITLES = (
     ("elevacao", u"ELEVAÇÃO", u"ELEVATION", False),
 )
 # complemento: (chave, texto PT, texto EN). FREE_SUFFIX = texto digitado
-# (ou nada) e vale para todos os títulos; PAV./AMPLIAÇÃO + nível só para
-# as plantas 2..6. O complemento sempre entra depois de " - ".
+# (ou nada); PAV./AMPLIAÇÃO + nível. Todas as opções valem para qualquer
+# A - Principal (exceto "Manter"). O complemento sempre entra depois de " - ".
 FREE_SUFFIX = "none"
 SUFFIXES = ((FREE_SUFFIX, u"", u""),
             ("pav", u"PAV.", u"LEVEL"),
@@ -708,8 +708,6 @@ def compose_names(opt, suffix_key, level, room, manual, suffix_text=u"", suffix_
         pt, en = manual.strip(), manual_en.strip()
     else:
         pt, en = opt["pt"], opt["en"]
-    if not opt["suffix"]:
-        suffix_key = FREE_SUFFIX   # PAV./AMPLIAÇÃO só nas plantas 2..6
     if suffix_key == FREE_SUFFIX:
         pt = _join(pt, free_suffix(suffix_text), u" - ")
         en = _join(en, free_suffix(suffix_text_en), EN_SEP)
@@ -1531,6 +1529,10 @@ class CropWindow(forms.WPFWindow):
         self._busy = True
         try:
             self.vsuffix.ItemsSource = suffix_labels(self.ctx["level"][mode])
+            # corte/elevação abrem em "Sem complemento" (ELEVAÇÃO - A, B...);
+            # plantas abrem na última escolha
+            if self.simple_kind:
+                self._suffix_idx = 0
             self.vsuffix.SelectedIndex = self._suffix_idx
         finally:
             self._busy = False
@@ -1576,18 +1578,12 @@ class CropWindow(forms.WPFWindow):
         return resolve_names(name_prefix(folder), title, en)
 
     def _sync_suffix(self, opt):
-        """PAV./AMPLIAÇÃO só nas plantas 2..6: nas demais o combo fica em
-        'Sem nomenclatura' e a escolha anterior volta depois."""
-        if opt["suffix"]:
-            if self._forced or self.vsuffix.SelectedIndex < 0:
-                if self.vsuffix.Items.Count:
-                    self.vsuffix.SelectedIndex = self._suffix_idx
-                self._forced = False
-            if self.vsuffix.SelectedIndex >= 0:   # combo ainda vazio: mantém a escolha salva
-                self._suffix_idx = self.vsuffix.SelectedIndex
-        else:
-            self._forced = True
-            self.vsuffix.SelectedIndex = 0
+        """Todas as opções do complemento valem para qualquer A - Principal:
+        só guarda a escolha atual (o combo não é mais travado)."""
+        if self.vsuffix.SelectedIndex < 0 and self.vsuffix.Items.Count:
+            self.vsuffix.SelectedIndex = self._suffix_idx
+        if self.vsuffix.SelectedIndex >= 0:
+            self._suffix_idx = self.vsuffix.SelectedIndex
 
     def _update_names(self):
         if self._busy or not self._names:   # mudar o combo aqui dispara SelectionChanged
@@ -1603,7 +1599,7 @@ class CropWindow(forms.WPFWindow):
         is_manual = opt["key"] == MANUAL_KEY
         keep_name = opt["key"] == KEEP_NAME_KEY
         self._sync_suffix(opt)
-        self.vsuffix.IsEnabled = opt["suffix"] and not keep_name
+        self.vsuffix.IsEnabled = not keep_name
         self.suffix_lbl.Opacity = 1.0 if not keep_name else 0.4
         on = self.manual_suffix_on()
         for ctl in (self.suffix_text, self.suffix_text_en):
