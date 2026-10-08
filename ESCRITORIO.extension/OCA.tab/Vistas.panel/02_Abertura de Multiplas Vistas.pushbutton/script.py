@@ -1,31 +1,27 @@
 # -*- coding: utf-8 -*-
-"""Abertura de Vistas - ajusta o recorte (CropView) de vistas a partir de elementos.
+"""Abertura de Múltiplas Vistas - extensão do 01_Abertura de Vistas para vários ambientes.
 
-Fluxo:
-  1. Usa a seleção atual (ou pede para selecionar) - qualquer elemento do
-     modelo ou da vista: paredes, pisos, ambientes, colunas, property lines,
-     linhas, terreno, famílias, grupos, anotações... Elementos sem geometria
-     legível entram pela caixa envolvente (bounding box).
-  2. Pergunta a margem (m) e o que fazer - sempre UMA vista para toda a seleção:
-       - criar nova vista de planta (Piso, Forro, Estrutural, Área);
-       - criar vista de chamada (Callout) na vista ativa;
-       - recortar a vista ativa.
-     Antes de abrir o diálogo, cada modo é validado contra a vista ativa e o
-     modelo; modos inválidos ficam desabilitados com o motivo exibido.
-  3. VIEW NAME escolhido na lista do padrão do escritório; o parâmetro
-     "Title on Sheet - English" é preenchido automaticamente com o par em
-     inglês. O complemento (- PAV. / - AMPLIAÇÃO + nível) é um campo à
-     parte, usado só pelas plantas. Vistas novas ficam sem view template.
-  4. Calcula o retângulo ORIENTADO ao elemento (as 4 quinas, paralelo e
-     perpendicular à direção predominante do elemento) + margem. A vista
-     nunca é girada: o recorte é sempre aplicado como forma de 4 lados
-     (crop region shape), inclinada quando o elemento está girado.
-  5. Ao final, avisa apenas se houve algo a revisar (sem relatório HTML).
+Mesma lógica do 01 (geometria, recorte orientado, nomenclatura, tipos de
+vista, diálogo), aplicada a CADA ambiente da seleção:
+  1. Usa a seleção atual (ou pede para selecionar) Ambientes (Rooms).
+  2. Pergunta a margem (m) e o que fazer - UMA vista POR AMBIENTE:
+       - criar nova vista de planta (Piso, Forro, Estrutural, Área), no
+         nível de cada ambiente;
+       - criar vista de chamada (Callout) na vista ativa.
+     ("Recortar a vista ativa" do 01 não se aplica: uma vista só não pode
+     ter o recorte de vários ambientes separados.)
+  3. VIEW NAME escolhido uma vez e composto para cada ambiente; as opções
+     "Nº - AMBIENTE - ..." usam o número/nome de cada um.
+  4. Recorte orientado + margem calculado por ambiente (igual ao 01).
+  5. Ordem: nível (de baixo para cima) e número do ambiente. As vistas
+     criadas são abertas nessa ordem; a primeira fica ativa no final.
+  6. Ambiente sem vista (não colocado, sem geometria ou falha na criação)
+     é ignorado; ao final, um resumo lista o que precisa ser revisado.
 """
 
-__title__ = "Abertura\nde Vistas"
-__doc__ = ("Recorta a vista ativa, cria plantas ou chamadas ajustadas ao "
-           "elemento selecionado, com margem em metros.")
+__title__ = "Abertura de\nMúltiplas Vistas"
+__doc__ = ("Cria uma planta ou chamada recortada para cada ambiente "
+           "selecionado, com margem em metros, e abre todas as vistas.")
 
 import re
 import math
@@ -76,43 +72,70 @@ N_BINS = int(round(HALF_PI / ANGLE_BIN))  # 180 bins cobrindo 0..90°
 ANGLE_SNAP = math.radians(0.01)           # abaixo disso o elemento está "alinhado"
 MIN_SEG = m_to_ft(0.001)                  # ignora arestas < 1 mm na projeção
 MIN_CROP = m_to_ft(0.01)                  # recorte mínimo de 1 cm por lado
-LOCATION_WEIGHT = 10.0                    # peso extra do eixo de elementos lineares retos
+LOCATION_WEIGHT = 10.0                    # peso extra do eixo de paredes retas
 
 
 # ------------------------------------------------------------------
-# 1. Seleção: qualquer elemento com categoria (exceto vistas e tipos)
+# 1. Categorias aceitas + seleção
 # ------------------------------------------------------------------
-def is_target(el):
+def _bic_int(name):
+    bic = getattr(DB.BuiltInCategory, name, None)   # OST_Toposolid: Revit 2024+
+    if bic is None:
+        return None
     try:
-        if el is None or el.Category is None:
-            return False
+        return int(bic)
     except Exception:
-        return False
-    return not isinstance(el, (DB.View, DB.Viewport, DB.ElementType))
+        return None
 
 
-class TargetFilter(ISelectionFilter):
+# comando 02: só ambientes (o 01 aceita também linhas, terreno, pisos e paredes)
+ALLOWED_CATS = {}
+for _name, _label in (("OST_Rooms", u"Ambiente"),):
+    _v = _bic_int(_name)
+    if _v is not None:
+        ALLOWED_CATS[_v] = _label
+
+
+def elem_cat_int(el):
+    try:
+        cat = el.Category
+        return eid_int(cat.Id) if cat is not None else None
+    except Exception:
+        return None
+
+
+class AllowedFilter(ISelectionFilter):
     def AllowElement(self, el):
-        return is_target(el)
+        return elem_cat_int(el) in ALLOWED_CATS
 
     def AllowReference(self, ref, point):
         return False
 
 
+def _unique(elements):
+    seen, out = set(), []
+    for el in elements:
+        key = eid_int(el.Id)
+        if key not in seen:
+            seen.add(key)
+            out.append(el)
+    return out
+
+
 def get_target_elements():
     """Seleção atual filtrada; se vazia, pede para o usuário selecionar."""
     current = list(revit.get_selection().elements)
-    picked = [el for el in current if is_target(el)]
+    picked = [el for el in current if elem_cat_int(el) in ALLOWED_CATS]
     ignored = len(current) - len(picked)
     if picked:
-        return picked, ignored
+        return _unique(picked), ignored
     try:
         refs = uidoc.Selection.PickObjects(
-            ObjectType.Element, TargetFilter(),
-            u"Selecione os elementos da vista e clique em Concluir")
+            ObjectType.Element, AllowedFilter(),
+            u"Selecione os ambientes e clique em Concluir")
     except Exception:
         script.exit()   # Esc
-    return [doc.GetElement(r) for r in refs], ignored
+    return _unique([doc.GetElement(r) for r in refs]), ignored
 
 
 def elem_label(el):
@@ -122,7 +145,7 @@ def elem_label(el):
         parts = [to_unicode(p.AsString()) for p in (num, name)
                  if p is not None and p.AsString()]
         return u" ".join(parts) or u"Ambiente [{}]".format(eid_int(el.Id))
-    kind = to_unicode(el.Category.Name) if el.Category is not None else u"Elemento"
+    kind = ALLOWED_CATS.get(elem_cat_int(el), u"Elemento")
     type_name = u""
     try:
         etype = doc.GetElement(el.GetTypeId())
@@ -140,26 +163,6 @@ GEOM_OPT = DB.Options()
 GEOM_OPT.DetailLevel = DB.ViewDetailLevel.Fine
 GEOM_OPT.ComputeReferences = False
 GEOM_OPT.IncludeNonVisibleObjects = False
-
-
-def owner_view(el):
-    """Vista dona de elementos específicos de vista (detalhes, anotações)."""
-    try:
-        if el.ViewSpecific:
-            return doc.GetElement(el.OwnerViewId)
-    except Exception:
-        pass
-    return None
-
-
-def geom_options(el):
-    view = owner_view(el)
-    if view is None:
-        return GEOM_OPT
-    opt = DB.Options()   # com View definida o DetailLevel vem da própria vista
-    opt.View = view
-    opt.ComputeReferences = False
-    return opt
 
 
 class ElemGeom(object):
@@ -181,20 +184,6 @@ class ElemGeom(object):
         except Exception:
             pass
 
-    def add_bbox(self):
-        """Fallback: 8 cantos da caixa envolvente (orientação pelo casco convexo)."""
-        try:
-            bb = self.el.get_BoundingBox(owner_view(self.el))
-        except Exception:
-            bb = None
-        if bb is None:
-            return
-        t, lo, hi = bb.Transform, bb.Min, bb.Max
-        for x in (lo.X, hi.X):
-            for y in (lo.Y, hi.Y):
-                for z in (lo.Z, hi.Z):
-                    self.points.append(t.OfPoint(DB.XYZ(x, y, z)))
-
     def walk(self, geom):
         if geom is None:
             return
@@ -214,39 +203,28 @@ class ElemGeom(object):
                 self.points.extend(obj.Vertices)
 
 
-# vínculos e importações: a geometria inteira seria pesada demais - só a caixa
-BBOX_ONLY = (DB.RevitLinkInstance, DB.ImportInstance)
-
-
 def extract_geometry(el):
     g = ElemGeom(el)
-    try:
-        if isinstance(el, BBOX_ONLY):
-            pass
-        elif isinstance(el, DB.SpatialElement):
-            loops = el.GetBoundarySegments(DB.SpatialElementBoundaryOptions()) or []
-            for loop in loops:
-                for seg in loop:
-                    g.add_curve(seg.GetCurve())
-            if isinstance(el, Room):
+    if isinstance(el, DB.SpatialElement):
+        loops = el.GetBoundarySegments(DB.SpatialElementBoundaryOptions()) or []
+        for loop in loops:
+            for seg in loop:
+                g.add_curve(seg.GetCurve())
+        if isinstance(el, Room):
+            try:
                 g.walk(el.ClosedShell)   # altura do ambiente (cortes/elevações)
-        elif isinstance(el, DB.CurveElement):
-            g.add_curve(el.GeometryCurve)
-        elif isinstance(el, DB.Grid):
-            g.add_curve(el.Curve)
-        elif isinstance(el, DB.ReferencePlane):
-            g.add_polyline([el.BubbleEnd, el.FreeEnd])
-        else:
-            g.walk(el.get_Geometry(geom_options(el)))
-            loc = getattr(el, "Location", None)
-            if isinstance(loc, DB.LocationCurve) and isinstance(loc.Curve, DB.Line):
-                # eixo de paredes/vigas/tubos retos manda na orientação
-                c = loc.Curve
-                g.segs.append((c.GetEndPoint(0), c.GetEndPoint(1), LOCATION_WEIGHT))
-    except Exception:
-        pass
-    if not g.points:
-        g.add_bbox()
+            except Exception:
+                pass
+    elif isinstance(el, DB.CurveElement):
+        g.add_curve(el.GeometryCurve)
+    else:
+        g.walk(el.get_Geometry(GEOM_OPT))
+        loc = getattr(el, "Location", None)
+        if (isinstance(el, DB.Wall) and isinstance(loc, DB.LocationCurve)
+                and isinstance(loc.Curve, DB.Line)):
+            # o eixo da parede reta manda na orientação (juntas em ângulo não)
+            c = loc.Curve
+            g.segs.append((c.GetEndPoint(0), c.GetEndPoint(1), LOCATION_WEIGHT))
     return g
 
 
@@ -549,23 +527,13 @@ PLAN_TITLES = (
     ("piso", u"PLANTA DE PISO", u"FLOOR FINISH PLAN", True),
     ("forro", u"PLANTA DE FORRO", u"REFLECTED CEILING PLAN", True),
 )
-# outros títulos principais de planta (sem versão por ambiente)
-EXTRA_PLAN_TITLES = (
-    ("memoria", u"MEMÓRIA DE CÁLCULO", u"CALCULATION REPORT", False),
-    ("implantacao", u"IMPLANTAÇÃO", u"SITE PLAN", False),
-    ("pavimentacao", u"PAVIMENTAÇÃO", u"PAVING PLAN", False),
-)
 VERTICAL_TITLES = (
     ("corte", u"CORTE", u"SECTION", False),
     ("elevacao", u"ELEVAÇÃO", u"ELEVATION", False),
 )
-# complemento: (chave, texto PT, texto EN). FREE_SUFFIX = texto digitado
-# (ou nada) e vale para todos os títulos; PAV./AMPLIAÇÃO + nível só para
-# as plantas 2..6. O complemento sempre entra depois de " - ".
-FREE_SUFFIX = "none"
-SUFFIXES = ((FREE_SUFFIX, u"", u""),
-            ("pav", u"PAV.", u"LEVEL"),
-            ("amp", u"AMPLIAÇÃO", u"ENLARGED"))
+# complemento das plantas 2..6: (chave, texto PT, texto EN) + nome do nível
+SUFFIXES = (("pav", u"- PAV.", u"LEVEL"),
+            ("amp", u"- AMPLIAÇÃO", u"ENLARGED"))
 MANUAL_KEY = "manual"
 
 
@@ -579,24 +547,21 @@ def room_info(room):
     return number, name, name_en
 
 
-def room_prefix(room):
-    number, name, _en = room_info(room)
-    return u"{} - {} - ".format(number, name)
+# vários ambientes: o rótulo mostra o marcador; o nome real sai de cada ambiente
+ROOM_PREFIX_LABEL = u"<Nº> - <AMBIENTE> - "
 
 
-def name_options(target, room):
+def name_options(target):
     """VIEW NAME na ordem do padrão do escritório (1..11) para o tipo de vista."""
     if target == "plan":
-        # cobertura e os títulos extras não têm versão por ambiente
-        base, room_base = PLAN_TITLES + EXTRA_PLAN_TITLES, PLAN_TITLES[1:]
+        base, room_base = PLAN_TITLES, PLAN_TITLES[1:]   # cobertura não tem versão por ambiente
     else:
         base, room_base = VERTICAL_TITLES, VERTICAL_TITLES
     opts = [{"key": key, "label": pt, "pt": pt, "en": en, "suffix": suf, "room": False}
             for key, pt, en, suf in base]
-    if room is not None:   # depois dos simples, as versões "Nº - AMBIENTE - ..."
-        prefix = room_prefix(room)
-        opts.extend({"key": "room_" + key, "label": prefix + pt, "pt": pt, "en": en,
-                     "suffix": suf, "room": True} for key, pt, en, suf in room_base)
+    # depois dos simples, as versões "Nº - AMBIENTE - ..."
+    opts.extend({"key": "room_" + key, "label": ROOM_PREFIX_LABEL + pt, "pt": pt, "en": en,
+                 "suffix": suf, "room": True} for key, pt, en, suf in room_base)
     opts.append({"key": MANUAL_KEY, "label": u"Sem nome (manual ou sequência)",
                  "pt": u"", "en": u"", "suffix": False, "room": False})
     return opts
@@ -612,33 +577,19 @@ def level_text(level):
 def suffix_labels(level):
     """Itens do combo Complemento, já com o nome do nível."""
     lv = level_text(level)
-    return [u"Sem complemento ou manual" if key == FREE_SUFFIX
-            else u" ".join(x for x in (u"-", pt, lv) if x)
-            for key, pt, _en in SUFFIXES]
+    return [(pt + u" " + lv).strip() for _k, pt, _en in SUFFIXES]
 
 
-def free_suffix(text):
-    """Complemento digitado, sem hífens/travessões iniciais (o ' - ' é automático)."""
-    return re.sub(u"^[\\s\\-\u2013]+", u"", to_unicode(text)).strip()
-
-
-def compose_names(opt, suffix_key, level, room, manual, suffix_text=u""):
+def compose_names(opt, suffix_key, level, room, manual):
     """Devolve (VIEW NAME, Title on Sheet - English)."""
     if opt["key"] == MANUAL_KEY:
         return manual.strip(), u""
     pt, en = opt["pt"], opt["en"]
-    if not opt["suffix"]:
-        suffix_key = FREE_SUFFIX   # PAV./AMPLIAÇÃO só nas plantas 2..6
-    if suffix_key == FREE_SUFFIX:
-        extra = free_suffix(suffix_text)
-        if extra:
-            pt += u" - " + extra
-            en += EN_DASH + extra
-    else:
+    if opt["suffix"]:
         lv = level_text(level)
         _k, suf_pt, suf_en = next(s for s in SUFFIXES if s[0] == suffix_key)
-        pt += u" - " + u" ".join(x for x in (suf_pt, lv) if x)
-        en += EN_DASH + u" ".join(x for x in (suf_en, lv) if x)
+        pt = u" ".join(x for x in (pt, suf_pt, lv) if x)
+        en = en + EN_DASH + u" ".join(x for x in (suf_en, lv) if x)
     if opt["room"] and room is not None:
         number, name, name_en = room_info(room)
         pt = u"{} - {} - {}".format(number, name, pt)
@@ -706,10 +657,9 @@ def apply_names(view, pt, en, notes):
 # ------------------------------------------------------------------
 # 7. Validação prévia dos modos (antes de abrir o diálogo)
 # ------------------------------------------------------------------
-MODES = ("plans", "callout", "current")
+MODES = ("plans", "callout")   # "current" do 01 não se aplica a vários ambientes
 MODE_LABELS = {"plans": u"Nova vista de planta",
-               "callout": u"Nova vista de chamada (Callout)",
-               "current": u"Recortar a vista atual"}
+               "callout": u"Nova vista de chamada (Callout)"}
 
 
 def target_kind(mode):
@@ -731,8 +681,6 @@ def check_modes(plan_items, callout_items, plan_level):
                               u"(use planta, corte, elevação ou detalhe).".format(av_name))
     elif not callout_items:
         reasons["callout"] = u"Nenhum tipo de vista compatível para a chamada."
-    if active_view.IsTemplate or active_view.ViewType not in CROPPABLE_VIEWTYPES:
-        reasons["current"] = u"A vista ativa '{}' não suporta recorte.".format(av_name)
     return reasons
 
 
@@ -744,6 +692,21 @@ def parse_margin(text):
     if val < 0 or val > 100:
         raise ValueError(u"fora do intervalo")
     return val
+
+
+def natural_key(text):
+    """'2', '10', 'A1' em ordem humana (2 antes de 10)."""
+    return [(0, int(t), u"") if t.isdigit() else (1, 0, t.lower())
+            for t in re.split(u"(\\d+)", to_unicode(text)) if t]
+
+
+def room_sort_key(g):
+    """Ordem de criação/abertura: nível (de baixo para cima), número, nome."""
+    lid = element_level_id(g.el)
+    level = doc.GetElement(lid) if lid is not None else None
+    number, name, _en = room_info(g.el)
+    return (level.ProjectElevation if level is not None else 0.0,
+            natural_key(number), natural_key(name))
 
 
 # ------------------------------------------------------------------
@@ -781,21 +744,19 @@ CROP_XAML = u"""
     </Style>
   </Window.Resources>
   <StackPanel Margin="18">
-    <TextBlock Text="RECORTE POR ELEMENTO" FontSize="15" FontWeight="SemiBold"
+    <TextBlock Text="RECORTE POR AMBIENTE  ·  MÚLTIPLAS VISTAS" FontSize="15" FontWeight="SemiBold"
                Foreground="#65E3FF" Margin="0,0,0,4"/>
     <TextBlock x:Name="info" TextWrapping="Wrap" FontSize="11"
                Foreground="#7A8FA9" Margin="0,0,0,6"/>
 
-    <TextBlock Text="Margem ao redor do elemento (m)"/>
+    <TextBlock Text="Margem ao redor de cada ambiente (m)"/>
     <TextBox x:Name="margin"/>
 
-    <TextBlock Text="O que fazer" Margin="0,14,0,0"/>
+    <TextBlock Text="O que fazer (uma vista por ambiente)" Margin="0,14,0,0"/>
     <RadioButton x:Name="rb_plans" GroupName="mode"
                  Content="Criar nova vista de planta (Piso, Forro, Estrutural, Área)"/>
     <RadioButton x:Name="rb_callout" GroupName="mode"
                  Content="Criar vista de chamada (Callout) na vista ativa"/>
-    <RadioButton x:Name="rb_current" GroupName="mode"
-                 Content="Recortar a vista ativa"/>
     <TextBlock x:Name="reasons" TextWrapping="Wrap" FontSize="11"
                Foreground="#FFB454" Margin="0,8,0,0"/>
 
@@ -807,9 +768,6 @@ CROP_XAML = u"""
     <ComboBox x:Name="vname"/>
     <TextBlock x:Name="suffix_lbl" Text="Complemento"/>
     <ComboBox x:Name="vsuffix"/>
-    <TextBlock x:Name="suffix_text_lbl"
-               Text="Complemento manual (vazio = sem complemento; entra depois de ' - ')"/>
-    <TextBox x:Name="suffix_text"/>
     <TextBlock x:Name="manual_lbl"
                Text="Nome manual (vazio = mantém o nome do Revit;  # = sequência 01, 02...)"/>
     <TextBox x:Name="manual"/>
@@ -817,7 +775,8 @@ CROP_XAML = u"""
     <Border Background="#131D33" BorderBrush="#26405F" BorderThickness="1"
             Padding="10,6,10,8" Margin="0,12,0,0">
       <StackPanel>
-        <TextBlock Text="VIEW NAME" FontSize="10" Foreground="#7A8FA9" Margin="0"/>
+        <TextBlock x:Name="pv_lbl" Text="VIEW NAME" FontSize="10" Foreground="#7A8FA9"
+                   TextWrapping="Wrap" Margin="0"/>
         <TextBlock x:Name="pv_pt" FontWeight="SemiBold" TextWrapping="Wrap" Margin="0,2,0,8"/>
         <TextBlock Text="TITLE ON SHEET - ENGLISH  (automático)" FontSize="10"
                    Foreground="#7A8FA9" Margin="0"/>
@@ -826,6 +785,8 @@ CROP_XAML = u"""
     </Border>
     <TextBlock x:Name="name_hint" TextWrapping="Wrap" FontSize="11"
                Foreground="#FFB454" Margin="0,6,0,0"/>
+
+    <CheckBox x:Name="open_views" Content="Abrir as vistas criadas ao final"/>
 
     <TextBlock x:Name="error" TextWrapping="Wrap" FontSize="11"
                Foreground="#FF4F9A" Margin="0,10,0,0"/>
@@ -844,18 +805,17 @@ class CropWindow(forms.WPFWindow):
         self.confirmed = False
         self.ctx = ctx
         self._saved = cfg
-        self._radios = {"plans": self.rb_plans, "callout": self.rb_callout,
-                        "current": self.rb_current}
+        self._radios = {"plans": self.rb_plans, "callout": self.rb_callout}
 
         self.info.Text = info
         self.margin.Text = u"{:.2f}".format(cfg["margin"])
         self.reasons.Text = u"\n".join(
             u"• {}: {}".format(MODE_LABELS[k], reasons[k]) for k in MODES if k in reasons)
         self.name_hint.Text = u"\n".join(ctx["hints"])
+        self.pv_lbl.Text = u"VIEW NAME  ·  exemplo (1º ambiente): {}".format(ctx["example"])
+        self.open_views.IsChecked = bool(cfg["open"])
         self._suffix_idx = next(
             (i for i, s in enumerate(SUFFIXES) if s[0] == cfg["suffix"]), 0)
-        self._forced = False   # combo travado em "Sem complemento ou manual"
-        self._busy = False
 
         enabled = [k for k in MODES if k not in reasons]
         for key, rb in self._radios.items():
@@ -864,7 +824,6 @@ class CropWindow(forms.WPFWindow):
         self.vname.SelectionChanged += self._on_name
         self.vsuffix.SelectionChanged += self._on_name
         self.manual.TextChanged += self._on_name
-        self.suffix_text.TextChanged += self._on_name
         start = cfg["mode"] if cfg["mode"] in enabled else enabled[0]
         self._radios[start].IsChecked = True
         self._refresh()
@@ -900,11 +859,14 @@ class CropWindow(forms.WPFWindow):
         self._names = self.ctx["names"][mode]
         keys = [o["key"] for o in self._names]
         self.vname.ItemsSource = [o["label"] for o in self._names]
-        self.vname.SelectedIndex = (keys.index(self._saved["vname"])
-                                    if self._saved["vname"] in keys else 0)
+        if self._saved["vname"] in keys:
+            self.vname.SelectedIndex = keys.index(self._saved["vname"])
+        else:   # vários ambientes: por padrão, a 1ª opção "Nº - AMBIENTE - ..."
+            self.vname.SelectedIndex = next(
+                (i for i, o in enumerate(self._names) if o["room"]), 0)
 
         # complemento traz o nome do nível da vista resultante
-        if self.vsuffix.SelectedIndex >= 0 and not self._forced:
+        if self.vsuffix.SelectedIndex >= 0:
             self._suffix_idx = self.vsuffix.SelectedIndex
         self.vsuffix.ItemsSource = suffix_labels(self.ctx["level"][mode])
         self.vsuffix.SelectedIndex = self._suffix_idx
@@ -921,49 +883,24 @@ class CropWindow(forms.WPFWindow):
         return SUFFIXES[idx if idx >= 0 else 0][0]
 
     def names(self):
+        """Prévia com o 1º ambiente; na execução o nome é composto por ambiente."""
         opt = self.name_opt
         manual = to_unicode(self.manual.Text)
         pt, en = compose_names(opt, self.suffix_key, self.ctx["level"][self.mode],
-                               self.ctx["room"], manual, to_unicode(self.suffix_text.Text))
+                               self.ctx["room"], manual)
         if opt["key"] == MANUAL_KEY:
             pt = sequence_name(pt) if pt else u""
         return pt, en
 
-    def _sync_suffix(self, opt):
-        """PAV./AMPLIAÇÃO só nas plantas 2..6: nas demais o combo fica em
-        'Sem complemento ou manual' e a escolha anterior volta depois."""
-        if opt["suffix"]:
-            if self._forced:
-                self.vsuffix.SelectedIndex = self._suffix_idx
-                self._forced = False
-            self._suffix_idx = self.vsuffix.SelectedIndex
-        else:
-            self._forced = True
-            self.vsuffix.SelectedIndex = 0
-
     def _update_names(self):
-        if self._busy:   # mudar o combo aqui dispara SelectionChanged de novo
-            return
-        self._busy = True
-        try:
-            self._render_names()
-        finally:
-            self._busy = False
-
-    def _render_names(self):
         opt = self.name_opt
         is_manual = opt["key"] == MANUAL_KEY
-        self._sync_suffix(opt)
-        free = self.suffix_key == FREE_SUFFIX
         self.vsuffix.IsEnabled = opt["suffix"]
-        self.suffix_lbl.Opacity = 1.0 if not is_manual else 0.4
-        self.suffix_text.IsEnabled = free and not is_manual
-        self.suffix_text_lbl.Opacity = 1.0 if free and not is_manual else 0.4
+        self.suffix_lbl.Opacity = 1.0 if opt["suffix"] else 0.4
         self.manual.IsEnabled = is_manual
         self.manual_lbl.Opacity = 1.0 if is_manual else 0.4
         pt, en = self.names()
-        keep = u"(mantém o nome atual)" if self.mode == "current" else u"(nome padrão do Revit)"
-        self.pv_pt.Text = clean_name(pt) if pt else keep
+        self.pv_pt.Text = clean_name(pt) if pt else u"(nome padrão do Revit)"
         self.pv_en.Text = en or u"—"
 
     def _ok(self, sender, args):
@@ -982,74 +919,88 @@ class CropWindow(forms.WPFWindow):
     def result(self):
         types = self.ctx["types"].get(self.mode, [])
         sel = self.vtype.SelectedItem
-        pt, en = self.names()
         return {"mode": self.mode, "margin": self.margin_m,
                 "type": next((i for i in types if i["label"] == sel), None),
                 "vname": self.name_opt["key"], "suffix": self.suffix_key,
-                "name_pt": pt, "name_en": en}
+                "name_opt": self.name_opt, "manual": to_unicode(self.manual.Text),
+                "open": bool(self.open_views.IsChecked)}
 
 
 # ------------------------------------------------------------------
 # 9. Execução
 # ------------------------------------------------------------------
 warnings = []
+skipped = []   # ambientes sem vista: (rótulo, motivo)
 
 elements, ignored = get_target_elements()
 if ignored:
-    warnings.append(u"{} elemento(s) da seleção ignorado(s): vistas, viewports e tipos não definem recorte.".format(ignored))
+    warnings.append(u"{} elemento(s) da seleção ignorado(s): não são ambientes.".format(ignored))
 
 geoms = []
 for el in elements:
     if isinstance(el, DB.SpatialElement) and el.Area <= 0:
-        warnings.append(u"{}: ambiente não colocado ou não delimitado - ignorado.".format(elem_label(el)))
+        skipped.append((elem_label(el), u"ambiente não colocado ou não delimitado"))
         continue
     g = extract_geometry(el)
     if not g.points:
-        warnings.append(u"{}: sem geometria utilizável - ignorado.".format(g.label))
+        skipped.append((g.label, u"sem geometria utilizável"))
         continue
     geoms.append(g)
 
-if not geoms:
-    forms.alert(u"Nenhum elemento válido selecionado.\n\n" + u"\n".join(warnings), exitscript=True)
 
-plan_level, other_levels = pick_plan_level(geoms)
+def skipped_lines(items):
+    return [u"- {}: {}".format(label, why) for label, why in items]
+
+
+if not geoms:
+    forms.alert(u"Nenhum ambiente válido selecionado.\n\n"
+                + u"\n".join(skipped_lines(skipped) + warnings), exitscript=True)
+
+geoms.sort(key=room_sort_key)
+room_levels = [pick_plan_level([g])[0] for g in geoms]   # cada planta no nível do seu ambiente
+
+plan_level = next((l for l in room_levels if l is not None), None)
 plan_items = plan_type_items()
 callout_items = callout_type_items(active_view)
 reasons = check_modes(plan_items, callout_items, plan_level)
 if len(reasons) == len(MODES):
     forms.alert(u"Nenhuma ação disponível:\n\n" + u"\n".join(reasons.values()), exitscript=True)
 
-# ambiente usado nas opções "Nº - AMBIENTE - ...": exatamente 1 na seleção
-rooms = [g.el for g in geoms if isinstance(g.el, Room)]
-the_room = rooms[0] if len(rooms) == 1 else None
 name_hints = []
-if len(rooms) > 1:
-    name_hints.append(u"Opções com número/nome do ambiente exigem exatamente 1 ambiente "
-                      u"na seleção (há {}).".format(len(rooms)))
-if the_room is not None and not room_info(the_room)[2]:
-    name_hints.append(u"'{}' vazio neste ambiente: o título em inglês usará o nome em português."
-                      .format(ROOM_EN_PARAM))
+level_ids = set(eid_int(l.Id) for l in room_levels if l is not None)
+if len(level_ids) > 1:
+    name_hints.append(u"Ambientes em {} níveis: cada planta é criada no nível do seu ambiente "
+                      u"e o complemento usa esse nível.".format(len(level_ids)))
+no_en = [g for g in geoms if not room_info(g.el)[2]]
+if no_en:
+    name_hints.append(u"'{}' vazio em {} ambiente(s): o título em inglês usará o nome em português."
+                      .format(ROOM_EN_PARAM, len(no_en)))
+if len(geoms) > 1:
+    name_hints.append(u"Nomes sem <Nº> - <AMBIENTE> se repetem entre as vistas e recebem "
+                      u"(2), (3)...; no nome manual, use # para numerar.")
 if not en_param_bound():
     name_hints.append(u"'{}' não está vinculado à categoria Vistas: o título em inglês "
                       u"não será gravado.".format(EN_TITLE_PARAM))
 
 active_level = getattr(active_view, "GenLevel", None)
 dialog_ctx = {
-    "types": {"plans": plan_items, "callout": callout_items, "current": []},
-    "names": dict((m, name_options(target_kind(m), the_room)) for m in MODES),
-    "level": {"plans": plan_level, "callout": active_level, "current": active_level},
-    "room": the_room,
+    "types": {"plans": plan_items, "callout": callout_items},
+    "names": dict((m, name_options(target_kind(m))) for m in MODES),
+    "level": {"plans": room_levels[0], "callout": active_level},
+    "room": geoms[0].el,
+    "example": geoms[0].label,
     "hints": name_hints,
 }
 
 config = script.get_config()
 cfg = {"margin": config.get_option("margin_m", 0.5),
-       "mode": config.get_option("mode", "current"),
+       "mode": config.get_option("mode", "plans"),
        "vtype": config.get_option("vtype", u""),
-       "vname": config.get_option("vname", MANUAL_KEY),
-       "suffix": config.get_option("vsuffix", "amp")}
+       "vname": config.get_option("vname", "room_civil"),
+       "suffix": config.get_option("vsuffix", "amp"),
+       "open": config.get_option("open_views", True)}
 
-info = u"{} elemento(s) → 1 vista · vista ativa: {} ({})".format(
+info = u"{} ambiente(s) → 1 vista por ambiente · vista ativa: {} ({})".format(
     len(geoms), to_unicode(active_view.Name), view_type_label(active_view))
 win = CropWindow(CROP_XAML, info, dialog_ctx, reasons, cfg)
 win.ShowDialog()
@@ -1062,24 +1013,14 @@ config.mode = opts["mode"]
 config.vtype = opts["type"]["label"] if opts["type"] else cfg["vtype"]
 config.vname = opts["vname"]
 config.vsuffix = opts["suffix"]
+config.open_views = opts["open"]
 script.save_config()
 
 mode = opts["mode"]
 margin_ft = m_to_ft(opts["margin"])
 
 # --- verificações específicas do modo, antes de qualquer alteração ---------
-remove_scope_box = False
-if mode == "current":
-    sb = active_view.get_Parameter(BIP.VIEWER_VOLUME_OF_INTEREST_CROP)
-    if sb is not None and sb.AsElementId() != INVALID_ID:
-        sb_name = to_unicode(doc.GetElement(sb.AsElementId()).Name)
-        if not forms.alert(u"O recorte da vista ativa está vinculado à Scope Box '{}'.\n\n"
-                           u"Remover o vínculo e aplicar o recorte do elemento?".format(sb_name),
-                           yes=True, no=True):
-            script.exit()
-        remove_scope_box = True
-
-if mode in ("current", "callout"):
+if mode == "callout":
     visible = set(eid_int(i) for i in
                   DB.FilteredElementCollector(doc, active_view.Id)
                   .WhereElementIsNotElementType().ToElementIds())
@@ -1087,58 +1028,102 @@ if mode in ("current", "callout"):
         if eid_int(g.el.Id) not in visible:
             warnings.append(u"{}: não está visível na vista ativa (recorte calculado mesmo assim).".format(g.label))
 
-if mode == "plans" and other_levels:
-    warnings.append(u"Elementos em mais de um nível: planta criada no nível '{}' "
-                    u"(também havia: {}).".format(to_unicode(plan_level.Name),
-                                                  u", ".join(other_levels)))
-
 
 vtype = opts["type"]
+name_opt = opts["name_opt"]
 notes = []
-error = None
+created = []   # (ElemGeom, ElementId da vista), na ordem dos ambientes
+failed = []    # (rótulo, motivo)
 
-with revit.Transaction(u"OCA - Abertura de Vistas"):
-    if remove_scope_box:
-        active_view.get_Parameter(BIP.VIEWER_VOLUME_OF_INTEREST_CROP).Set(INVALID_ID)
-        doc.Regenerate()
 
-    try:
-        if mode == "current":
-            view = active_view
-        elif mode == "callout":
-            parent_calc = CropCalc(geoms, Frame(active_view), margin_ft)
-            u0, v0, u1, v1 = parent_calc.envelope()
-            f = parent_calc.frame
-            view = DB.ViewSection.CreateCallout(doc, active_view.Id, vtype["id"],
-                                                f.to3d((u0, v0)), f.to3d((u1, v1)))
-        elif vtype["kind"] == "area":
-            view = DB.ViewPlan.CreateAreaPlan(doc, vtype["id"], plan_level.Id)
+def create_room_view(g, level):
+    """Mesma sequência do 01 para UM ambiente. Devolve (vista, avisos)."""
+    room_notes = []
+    if mode == "callout":
+        parent_calc = CropCalc([g], Frame(active_view), margin_ft)
+        u0, v0, u1, v1 = parent_calc.envelope()
+        f = parent_calc.frame
+        view = DB.ViewSection.CreateCallout(doc, active_view.Id, vtype["id"],
+                                            f.to3d((u0, v0)), f.to3d((u1, v1)))
+        name_level = active_level
+    else:
+        if level is None:
+            raise ValueError(u"nível do ambiente não identificado.")
+        if vtype["kind"] == "area":
+            view = DB.ViewPlan.CreateAreaPlan(doc, vtype["id"], level.Id)
         else:
-            view = DB.ViewPlan.Create(doc, vtype["id"], plan_level.Id)
+            view = DB.ViewPlan.Create(doc, vtype["id"], level.Id)
+        name_level = level
 
-        if mode != "current":
-            # o tipo de vista pode ter template padrão para vistas novas: remover
-            view.ViewTemplateId = INVALID_ID
+    # o tipo de vista pode ter template padrão para vistas novas: remover
+    view.ViewTemplateId = INVALID_ID
 
-        apply_names(view, opts["name_pt"], opts["name_en"], notes)
-        doc.Regenerate()
+    pt, en = compose_names(name_opt, opts["suffix"], name_level, g.el, opts["manual"])
+    if name_opt["key"] == MANUAL_KEY:
+        pt = sequence_name(pt) if pt else u""
+    apply_names(view, pt, en, room_notes)
+    doc.Regenerate()
 
-        # recalcula no sistema da vista-alvo: a orientação relativa pode
-        # mudar (ex.: planta nova sem a rotação de recorte da vista ativa)
-        calc = CropCalc(geoms, Frame(view), margin_ft)
-        _method, warn = apply_crop(view, calc)
-        if warn:
-            notes.append(warn)
-    except Exception as exc:
-        error = to_unicode(exc)
+    # recalcula no sistema da vista-alvo (igual ao 01)
+    calc = CropCalc([g], Frame(view), margin_ft)
+    _method, warn = apply_crop(view, calc)
+    if warn:
+        room_notes.append(warn)
+    return view, room_notes
+
+
+# um grupo = um único Desfazer; uma transação por ambiente = falha isolada
+tgroup = DB.TransactionGroup(doc, u"OCA - Abertura de Múltiplas Vistas")
+tgroup.Start()
+try:
+    for g, level in zip(geoms, room_levels):
+        names_before = set(VIEW_NAMES)
+        t = DB.Transaction(doc, u"OCA - Vista {}".format(g.label))
+        t.Start()
+        try:
+            view, room_notes = create_room_view(g, level)
+            status = t.Commit()
+            if status != DB.TransactionStatus.Committed:
+                raise Exception(u"o Revit desfez a criação da vista ({}).".format(status))
+            created.append((g, view.Id))
+            notes.extend(u"{}: {}".format(g.label, n) for n in room_notes)
+        except Exception as exc:
+            if t.GetStatus() == DB.TransactionStatus.Started:
+                t.RollBack()
+            VIEW_NAMES.clear()   # libera nomes reservados pela vista desfeita
+            VIEW_NAMES.update(names_before)
+            failed.append((g.label, to_unicode(exc)))
+finally:
+    if tgroup.GetStatus() == DB.TransactionStatus.Started:
+        tgroup.Assimilate()
+
+# abre na mesma ordem dos ambientes; a primeira fica ativa ao final
+if opts["open"] and created:
+    for g, vid in created + created[:1]:
+        try:
+            uidoc.ActiveView = doc.GetElement(vid)
+        except Exception as exc:
+            notes.append(u"{}: vista criada, mas não foi possível abri-la ({}).".format(
+                g.label, to_unicode(exc)))
 
 
 # ------------------------------------------------------------------
 # 10. Resumo: só aparece se houver falha ou algo a revisar
 # ------------------------------------------------------------------
-if error:
-    forms.alert(u"Não foi possível concluir: {}".format(error),
-                sub_msg=u"\n".join(warnings) or None)
-elif warnings or notes:
-    forms.alert(u"Vista '{}' ajustada, com avisos:".format(to_unicode(view.Name)),
-                sub_msg=u"\n".join(u"- " + w for w in warnings + notes))
+report = []
+if skipped:
+    report.append(u"Ambientes ignorados (nenhuma vista criada):")
+    report.extend(skipped_lines(skipped))
+if failed:
+    report.append(u"Não foi possível criar a vista:")
+    report.extend(skipped_lines(failed))
+if warnings or notes:
+    report.append(u"Avisos:")
+    report.extend(u"- " + w for w in warnings + notes)
+
+if not created:
+    forms.alert(u"Nenhuma vista criada.", sub_msg=u"\n".join(report) or None)
+elif report:
+    forms.alert(u"{} de {} ambiente(s) com vista criada, com avisos:".format(
+                    len(created), len(elements)),
+                sub_msg=u"\n".join(report))
