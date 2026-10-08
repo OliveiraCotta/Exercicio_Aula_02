@@ -34,9 +34,10 @@ TAB = "OCA"
 
 # painel: (cor no tema claro, cor no tema escuro)
 CORES = {
-    "Vistas": ("#dfd6f4", "#574887"),
     "Keynote": ("#acede6", "#2e5e58"),
-    "Visualizar": ("#d9d9d9", "#5a5a5a"),
+    "Vistas": ("#d9d9d9", "#5a5a5a"),
+    "Visualizar": ("#ccb9f6", "#5b4a99"),
+    "Coordenadas": ("#ffa0da", "#7a2f5e"),
 }
 
 # chave para guardar os handlers entre recargas do pyRevit
