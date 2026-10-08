@@ -650,6 +650,8 @@ def name_options(target, room):
             prefix = room_prefix(room)
             opts.extend({"key": "room_" + key, "label": prefix + pt, "pt": pt, "en": en,
                          "suffix": suf, "room": True} for key, pt, en, suf in only)
+        opts.append({"key": MANUAL_KEY, "label": u"Sem nome (manual ou sequência)",
+                     "pt": u"", "en": u"", "suffix": False, "room": False})
         return opts
     if target == "plan":
         # cobertura e os títulos extras não têm versão por ambiente
@@ -677,7 +679,7 @@ def level_text(level):
 def suffix_labels(level):
     """Itens do combo Complemento, já com o nome do nível."""
     lv = level_text(level)
-    return [u"Sem nomenclatura (manual ou sequência)" if key == FREE_SUFFIX
+    return [u"Sem complemento, manual ou sequência" if key == FREE_SUFFIX
             else u" ".join(x for x in (u"-", pt, lv) if x)
             for key, pt, _en in SUFFIXES]
 
@@ -687,24 +689,30 @@ def free_suffix(text):
     return re.sub(u"^[\\s\\-–]+", u"", to_unicode(text)).strip()
 
 
-def compose_names(opt, suffix_key, level, room, manual, suffix_text=u"", suffix_text_en=u""):
+def _join(base, extra, sep):
+    """base + sep + extra; sem base, só o complemento."""
+    if not extra:
+        return base
+    return base + sep + extra if base else extra
+
+
+def compose_names(opt, suffix_key, level, room, manual, suffix_text=u"", suffix_text_en=u"",
+                  manual_en=u""):
     """Devolve (Title on Sheet, Title on Sheet - English) - sem prefixo de pasta.
-    Complemento manual: suffix_text vai para View Name/Title on Sheet e
-    suffix_text_en para o Title on Sheet - English (cada um pode ficar vazio)."""
-    if opt["key"] == MANUAL_KEY:
-        return manual.strip(), u""
+    Nome manual: manual vai para View Name/Title on Sheet e manual_en para o
+    Title on Sheet - English. Complemento manual: idem com suffix_text e
+    suffix_text_en (cada campo pode ficar vazio)."""
     if opt["key"] == KEEP_NAME_KEY:
         return u"", u""   # nada a gravar: nomes ficam como estão
-    pt, en = opt["pt"], opt["en"]
+    if opt["key"] == MANUAL_KEY:
+        pt, en = manual.strip(), manual_en.strip()
+    else:
+        pt, en = opt["pt"], opt["en"]
     if not opt["suffix"]:
         suffix_key = FREE_SUFFIX   # PAV./AMPLIAÇÃO só nas plantas 2..6
     if suffix_key == FREE_SUFFIX:
-        extra = free_suffix(suffix_text)
-        if extra:
-            pt += u" - " + extra
-        extra_en = free_suffix(suffix_text_en)
-        if extra_en:
-            en += EN_SEP + extra_en
+        pt = _join(pt, free_suffix(suffix_text), u" - ")
+        en = _join(en, free_suffix(suffix_text_en), EN_SEP)
     else:
         lv = level_text(level)
         _k, suf_pt, suf_en = next(s for s in SUFFIXES if s[0] == suffix_key)
@@ -1226,9 +1234,12 @@ CROP_XAML = u"""
                        TextWrapping="Wrap" FontSize="11" Foreground="#7A8FA9" Margin="0,0,0,2"/>
             <TextBlock Text="A - Principal"/>
             <ComboBox x:Name="vname"/>
-            <TextBlock x:Name="manual_lbl"
-                       Text="Nome manual (vazio = mantém o nome do Revit;  # = sequência 01, 02...)"/>
+            <TextBlock x:Name="manual_lbl" TextWrapping="Wrap"
+                       Text="Nome manual - View Name e Title on Sheet (vazio = mantém o nome do Revit;  # = sequência 01, 02...)"/>
             <TextBox x:Name="manual"/>
+            <TextBlock x:Name="manual_en_lbl" TextWrapping="Wrap"
+                       Text="Nome manual - Title on Sheet - English (vazio = sem título em inglês)"/>
+            <TextBox x:Name="manual_en"/>
             <TextBlock x:Name="suffix_lbl" Text="B - Complemento"/>
             <ComboBox x:Name="vsuffix"/>
             <TextBlock x:Name="suffix_text_lbl" TextWrapping="Wrap"
@@ -1381,8 +1392,10 @@ class CropWindow(forms.WPFWindow):
         self.sel_txt.Text = ctx["sel_text"]
         self.view_txt.Text = ctx["view_text"]
         self.margin.Text = u"{:.2f}".format(cfg["margin"])
+        # corte/elevação: planta nova só fica apagada, sem aviso (ctx["silent"])
         self.reasons.Text = u"\n".join(
-            u"• {}: {}".format(MODE_LABELS[k], reasons[k]) for k in MODES if k in reasons)
+            u"• {}: {}".format(MODE_LABELS[k], reasons[k]) for k in MODES
+            if k in reasons and k not in ctx["silent"])
         self.name_hint.Text = u"\n".join(ctx["hints"])
         self.open_views.IsChecked = bool(cfg["open"])
         self._suffix_idx = next(
@@ -1407,6 +1420,7 @@ class CropWindow(forms.WPFWindow):
         self.vname.SelectionChanged += self._on_name
         self.vsuffix.SelectionChanged += self._on_name
         self.manual.TextChanged += self._on_name
+        self.manual_en.TextChanged += self._on_name
         self.suffix_text.TextChanged += self._on_name
         self.suffix_text_en.TextChanged += self._on_name
 
@@ -1535,8 +1549,9 @@ class CropWindow(forms.WPFWindow):
         return SUFFIXES[idx if idx >= 0 else 0][0]
 
     def manual_suffix_on(self):
-        """Os campos de complemento manual valem? (combo em 'Sem nomenclatura')."""
-        if self.name_opt["key"] in (MANUAL_KEY, KEEP_NAME_KEY):
+        """Os campos de complemento manual valem? Sim com o combo em 'Sem
+        complemento, manual ou sequência', exceto em 'Manter nomenclatura atual'."""
+        if self.name_opt["key"] == KEEP_NAME_KEY:
             return False
         return self.suffix_key == FREE_SUFFIX
 
@@ -1549,10 +1564,12 @@ class CropWindow(forms.WPFWindow):
         on = self.manual_suffix_on()
         pt_txt = to_unicode(self.suffix_text.Text) if on else u""
         en_txt = to_unicode(self.suffix_text_en.Text) if on else u""
+        is_manual = self.name_opt["key"] == MANUAL_KEY
         title, en = compose_names(self.name_opt, self.suffix_key, self.ctx["level"][self.mode],
                                   self.ctx["room"], to_unicode(self.manual.Text),
-                                  pt_txt, en_txt)
-        if on and self.simple_kind and not free_suffix(pt_txt) and not free_suffix(en_txt):
+                                  pt_txt, en_txt, to_unicode(self.manual_en.Text))
+        if (on and self.simple_kind and not is_manual
+                and not free_suffix(pt_txt) and not free_suffix(en_txt)):
             # corte/elevação sem complemento: próxima letra livre (CORTE - A, B...)
             own = to_unicode(active_view.Name) if self.mode == "current" else None
             return letter_names(name_prefix(folder), title, en, own)
@@ -1587,24 +1604,25 @@ class CropWindow(forms.WPFWindow):
         keep_name = opt["key"] == KEEP_NAME_KEY
         self._sync_suffix(opt)
         self.vsuffix.IsEnabled = opt["suffix"] and not keep_name
-        self.suffix_lbl.Opacity = 1.0 if not (is_manual or keep_name) else 0.4
+        self.suffix_lbl.Opacity = 1.0 if not keep_name else 0.4
         on = self.manual_suffix_on()
         for ctl in (self.suffix_text, self.suffix_text_en):
             ctl.IsEnabled = on
         for lbl in (self.suffix_text_lbl, self.suffix_text_en_lbl):
             lbl.Opacity = 1.0 if on else 0.4
-        self.manual.IsEnabled = is_manual
-        self.manual_lbl.Opacity = 1.0 if is_manual else 0.4
+        for ctl in (self.manual, self.manual_en):
+            ctl.IsEnabled = is_manual
+        for lbl in (self.manual_lbl, self.manual_en_lbl):
+            lbl.Opacity = 1.0 if is_manual else 0.4
 
         template = self.effective_template()
         folder = self.p_folder.render(template)
         vname, title, en = self.names(folder)
-        if keep_name and self.mode == "current":
-            # nada muda: a prévia mostra os nomes que a vista já tem
-            vname, title, en = self.ctx["active_names"]
-        keep = (u"(mantém o nome atual)" if self.mode == "current"
-                else u"(nome padrão do Revit)")
-        self.pv_name.Text = vname or keep
+        if self.mode == "current":
+            # campo não gravado = continua o valor que a vista ativa já tem
+            cur = self.ctx["active_names"]
+            vname, title, en = vname or cur[0], title or cur[1], en or cur[2]
+        self.pv_name.Text = vname or u"(nome padrão do Revit)"
         self.pv_title.Text = title or u"—"
         self.pv_en.Text = en or u"—"
         self.pv_folder.Text = folder["name"] or (u"??? (template)" if folder["locked"]
@@ -1727,6 +1745,7 @@ dialog_ctx = {
                   for m in MODES),
     "kinds": dict((m, target_kind(m)) for m in MODES),
     "active_names": view_names(active_view),
+    "silent": set(["plans"]) if is_vertical_view(active_view) else set(),
     "level": {"plans": plan_level, "callout": active_level, "current": active_level},
     "room": the_room,
     "hints": name_hints,
