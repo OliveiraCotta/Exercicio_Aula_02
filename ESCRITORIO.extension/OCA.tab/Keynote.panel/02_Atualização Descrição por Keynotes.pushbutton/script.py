@@ -39,12 +39,9 @@ Ao final pergunta se gera o relatório HTML.
 """
 
 __title__ = "Atualização\ndas Descrições\npor Keynote"
-__doc__ = ("ATUALIZAÇÃO DAS DESCRIÇÕES DO MODELO POR KEYNOTE\n\n"
-           "Lê a planilha de Keynotes (aba MATERIAIS) e atualiza a Description e a "
-           "Descrição IN dos tipos do modelo pelo código de Keynote (Excel → Modelo). "
-           "Mostra antes o que vai mudar, destaca em laranja na vista ativa o que "
-           "está incompleto e permite completar Keynote e Descrição direto na tabela. "
-           "Opcional: gera e carrega o TXT de Keynotes do Revit.")
+__doc__ = ("Lê a planilha de Keynotes (aba MATERIAIS) e atualiza a Descrição, "
+           "Descrição IN e Texto do Keynote do modelo pelo código de Keynote.\n"
+           "Fluxo: Excel > Modelo.")
 
 import os
 import re
