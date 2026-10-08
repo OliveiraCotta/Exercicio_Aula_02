@@ -650,8 +650,8 @@ def name_options(target, room):
             prefix = room_prefix(room)
             opts.extend({"key": "room_" + key, "label": prefix + pt, "pt": pt, "en": en,
                          "suffix": suf, "room": True} for key, pt, en, suf in only)
-        opts.append({"key": MANUAL_KEY, "label": u"Sem nome (manual ou sequência)",
-                     "pt": u"", "en": u"", "suffix": False, "room": False})
+        opts.insert(0, {"key": MANUAL_KEY, "label": u"Sem nome (manual ou sequência)",
+                        "pt": u"", "en": u"", "suffix": False, "room": False})
         return opts
     if target == "plan":
         # cobertura e os títulos extras não têm versão por ambiente
@@ -664,8 +664,9 @@ def name_options(target, room):
         prefix = room_prefix(room)
         opts.extend({"key": "room_" + key, "label": prefix + pt, "pt": pt, "en": en,
                      "suffix": suf, "room": True} for key, pt, en, suf in room_base)
-    opts.append({"key": MANUAL_KEY, "label": u"Sem nome (manual ou sequência)",
-                 "pt": u"", "en": u"", "suffix": False, "room": False})
+    # "Sem nome" fica no topo da lista (só ordem: o padrão continua o 1º título)
+    opts.insert(0, {"key": MANUAL_KEY, "label": u"Sem nome (manual ou sequência)",
+                    "pt": u"", "en": u"", "suffix": False, "room": False})
     return opts
 
 
@@ -1491,15 +1492,19 @@ class CropWindow(forms.WPFWindow):
         """Elevação ou corte: nome simples; complemento vazio = letra sequencial."""
         return self.ctx["kinds"][self.mode] in SIMPLE_KINDS
 
+    def _first_title_index(self):
+        """1º título da lista, pulando 'Sem nome' (que agora fica no topo)."""
+        return next((i for i, o in enumerate(self._names) if o["key"] != MANUAL_KEY), 0)
+
     def _default_name_index(self):
         if self.simple_kind:   # padrão exclusivo: ELEVAÇÃO / CORTE
-            return 0
+            return self._first_title_index()
         keys = [o["key"] for o in self._names]
         if self._saved["vname"] in keys:
             return keys.index(self._saved["vname"])
         # sem escolha salva compatível: corte/elevação pelo tipo da vista ativa
         guess = {VT.Section: "corte", VT.Elevation: "elevacao"}.get(active_view.ViewType)
-        return keys.index(guess) if guess in keys else 0
+        return keys.index(guess) if guess in keys else self._first_title_index()
 
     def _refresh(self):
         mode = self.mode
@@ -1543,7 +1548,9 @@ class CropWindow(forms.WPFWindow):
     @property
     def name_opt(self):
         idx = self.vname.SelectedIndex
-        return self._names[idx] if 0 <= idx < len(self._names) else self._names[-1]
+        if 0 <= idx < len(self._names):
+            return self._names[idx]
+        return next((o for o in self._names if o["key"] == MANUAL_KEY), self._names[-1])
 
     @property
     def suffix_key(self):
