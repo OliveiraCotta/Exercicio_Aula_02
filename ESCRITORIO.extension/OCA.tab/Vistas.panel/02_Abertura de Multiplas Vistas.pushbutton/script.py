@@ -206,6 +206,20 @@ class ElemGeom(object):
         except Exception:
             pass
 
+    def add_bbox(self):
+        """Fallback (igual ao 01): 8 cantos da caixa envolvente do elemento."""
+        try:
+            bb = self.el.get_BoundingBox(None)
+        except Exception:
+            bb = None
+        if bb is None:
+            return
+        t, lo, hi = bb.Transform, bb.Min, bb.Max
+        for x in (lo.X, hi.X):
+            for y in (lo.Y, hi.Y):
+                for z in (lo.Z, hi.Z):
+                    self.points.append(t.OfPoint(DB.XYZ(x, y, z)))
+
     def walk(self, geom):
         if geom is None:
             return
@@ -227,26 +241,31 @@ class ElemGeom(object):
 
 def extract_geometry(el):
     g = ElemGeom(el)
-    if isinstance(el, DB.SpatialElement):
-        loops = el.GetBoundarySegments(DB.SpatialElementBoundaryOptions()) or []
-        for loop in loops:
-            for seg in loop:
-                g.add_curve(seg.GetCurve())
-        if isinstance(el, Room):
-            try:
-                g.walk(el.ClosedShell)   # altura do ambiente (cortes/elevações)
-            except Exception:
-                pass
-    elif isinstance(el, DB.CurveElement):
-        g.add_curve(el.GeometryCurve)
-    else:
-        g.walk(el.get_Geometry(GEOM_OPT))
-        loc = getattr(el, "Location", None)
-        if (isinstance(el, DB.Wall) and isinstance(loc, DB.LocationCurve)
-                and isinstance(loc.Curve, DB.Line)):
-            # o eixo da parede reta manda na orientação (juntas em ângulo não)
-            c = loc.Curve
-            g.segs.append((c.GetEndPoint(0), c.GetEndPoint(1), LOCATION_WEIGHT))
+    try:   # leitura com erro não derruba o comando (igual ao 01)
+        if isinstance(el, DB.SpatialElement):
+            loops = el.GetBoundarySegments(DB.SpatialElementBoundaryOptions()) or []
+            for loop in loops:
+                for seg in loop:
+                    g.add_curve(seg.GetCurve())
+            if isinstance(el, Room):
+                try:
+                    g.walk(el.ClosedShell)   # altura do ambiente (cortes/elevações)
+                except Exception:
+                    pass
+        elif isinstance(el, DB.CurveElement):
+            g.add_curve(el.GeometryCurve)
+        else:
+            g.walk(el.get_Geometry(GEOM_OPT))
+            loc = getattr(el, "Location", None)
+            if (isinstance(el, DB.Wall) and isinstance(loc, DB.LocationCurve)
+                    and isinstance(loc.Curve, DB.Line)):
+                # o eixo da parede reta manda na orientação (juntas em ângulo não)
+                c = loc.Curve
+                g.segs.append((c.GetEndPoint(0), c.GetEndPoint(1), LOCATION_WEIGHT))
+    except Exception:
+        pass
+    if not g.points:
+        g.add_bbox()
     return g
 
 
@@ -501,6 +520,8 @@ def family_view_type(fam):
                   (DB.ViewFamily.CeilingPlan, VT.CeilingPlan),
                   (DB.ViewFamily.StructuralPlan, VT.EngineeringPlan),
                   (DB.ViewFamily.AreaPlan, VT.AreaPlan),
+                  (DB.ViewFamily.Section, VT.Section),
+                  (DB.ViewFamily.Elevation, VT.Elevation),
                   (DB.ViewFamily.Detail, VT.Detail)):
         if fam == f:
             return vt
@@ -521,19 +542,29 @@ def plan_type_items():
     return items
 
 
+CALLOUT_KIND = ((DB.ViewFamily.FloorPlan, u"Planta"),
+                (DB.ViewFamily.CeilingPlan, u"Forro"),
+                (DB.ViewFamily.StructuralPlan, u"Estrutural"),
+                (DB.ViewFamily.Section, u"Corte"),
+                (DB.ViewFamily.Elevation, u"Elevação"),
+                (DB.ViewFamily.Detail, u"Detalhe"))
+
+
 def callout_type_items(parent):
+    """Tipos aceitos numa chamada (igual ao 01): o mesmo tipo da vista-mãe
+    (planta -> planta, corte -> corte, elevação -> elevação, para
+    ampliações) e Detalhe."""
     if parent.IsTemplate or parent.ViewType not in CALLOUT_PARENTS:
         return []
     fams = [DB.ViewFamily.Detail]
-    if parent.ViewType in PLAN_VIEWTYPES:
-        parent_type = doc.GetElement(parent.GetTypeId())
-        if parent_type is not None:
-            fams.insert(0, parent_type.ViewFamily)
+    parent_type = doc.GetElement(parent.GetTypeId())
+    if parent_type is not None and parent_type.ViewFamily != DB.ViewFamily.Detail:
+        fams.insert(0, parent_type.ViewFamily)
     items = []
     for fam in fams:
+        kind = next((k for f, k in CALLOUT_KIND if f == fam), u"Vista")
         for vft in VIEW_FAMILY_TYPES:
             if vft.ViewFamily == fam:
-                kind = u"Detalhe" if fam == DB.ViewFamily.Detail else u"Planta"
                 items.append({"label": u"Chamada ({}): {}".format(kind, _vft_name(vft)),
                               "kind": "callout", "id": vft.Id, "vt": family_view_type(fam)})
     return items
@@ -567,8 +598,8 @@ VERTICAL_TITLES = (
     ("elevacao", u"ELEVAÇÃO", u"ELEVATION", False),
 )
 # complemento: (chave, texto PT, texto EN). FREE_SUFFIX = texto digitado
-# (ou nada) e vale para todos os títulos; PAV./AMPLIAÇÃO + nível só para
-# as plantas 2..6. O complemento sempre entra depois de " - " (como no 01).
+# (ou nada); PAV./AMPLIAÇÃO + nível. Todas as opções valem para qualquer
+# A - Principal (igual ao 01). O complemento sempre entra depois de " - ".
 FREE_SUFFIX = "none"
 SUFFIXES = ((FREE_SUFFIX, u"", u""),
             ("pav", u"PAV.", u"LEVEL"),
@@ -590,19 +621,28 @@ def room_info(room):
 ROOM_PREFIX_LABEL = u"<Nº> - <AMBIENTE> - "
 
 
+# chamada numa elevação/corte: só o próprio título (+ versão por ambiente)
+SIMPLE_KINDS = {"elevation": "elevacao", "section": "corte"}
+MANUAL_OPT = {"key": MANUAL_KEY, "label": u"Sem nome, manual ou sequência",
+              "pt": u"", "en": u"", "suffix": False, "room": False}
+
+
 def name_options(target):
-    """VIEW NAME na ordem do padrão do escritório (1..11) para o tipo de vista."""
-    if target == "plan":
+    """Nome principal na ordem do padrão do escritório para o tipo de vista;
+    'Sem nome, manual ou sequência' no topo (igual ao 01)."""
+    if target in SIMPLE_KINDS:
+        base = [t for t in VERTICAL_TITLES if t[0] == SIMPLE_KINDS[target]]
+        room_base = base
+    elif target == "plan":
         base, room_base = PLAN_TITLES, PLAN_TITLES[1:]   # cobertura não tem versão por ambiente
     else:
         base, room_base = VERTICAL_TITLES, VERTICAL_TITLES
-    opts = [{"key": key, "label": pt, "pt": pt, "en": en, "suffix": suf, "room": False}
-            for key, pt, en, suf in base]
+    opts = [dict(MANUAL_OPT)]
+    opts.extend({"key": key, "label": pt, "pt": pt, "en": en, "suffix": suf, "room": False}
+                for key, pt, en, suf in base)
     # depois dos simples, as versões "Nº - AMBIENTE - ..."
     opts.extend({"key": "room_" + key, "label": ROOM_PREFIX_LABEL + pt, "pt": pt, "en": en,
                  "suffix": suf, "room": True} for key, pt, en, suf in room_base)
-    opts.append({"key": MANUAL_KEY, "label": u"Sem nome (manual ou sequência)",
-                 "pt": u"", "en": u"", "suffix": False, "room": False})
     return opts
 
 
@@ -616,7 +656,7 @@ def level_text(level):
 def suffix_labels(level):
     """Itens do combo Complemento, já com o nome do nível."""
     lv = level_text(level)
-    return [u"Sem nomenclatura (manual ou sequência)" if key == FREE_SUFFIX
+    return [u"Sem complemento, manual ou sequência" if key == FREE_SUFFIX
             else u" ".join(x for x in (u"-", pt, lv) if x)
             for key, pt, _en in SUFFIXES]
 
@@ -626,18 +666,26 @@ def free_suffix(text):
     return re.sub(u"^[\\s\\-–]+", u"", to_unicode(text)).strip()
 
 
-def compose_names(opt, suffix_key, level, room, manual, suffix_text=u""):
-    """Devolve (Title on Sheet, Title on Sheet - English) - sem prefixo de pasta."""
+def _join(base, extra, sep):
+    """base + sep + extra; sem base, só o complemento."""
+    if not extra:
+        return base
+    return base + sep + extra if base else extra
+
+
+def compose_names(opt, suffix_key, level, room, manual, suffix_text=u"", suffix_text_en=u"",
+                  manual_en=u""):
+    """Devolve (Title on Sheet, Title on Sheet - English) - sem prefixo de pasta.
+    Igual ao 01: nome manual -> manual (View Name/Title on Sheet) e manual_en
+    (English); complemento manual -> suffix_text e suffix_text_en (cada campo
+    pode ficar vazio). Todo complemento vale para qualquer opção."""
     if opt["key"] == MANUAL_KEY:
-        return manual.strip(), u""
-    pt, en = opt["pt"], opt["en"]
-    if not opt["suffix"]:
-        suffix_key = FREE_SUFFIX   # PAV./AMPLIAÇÃO só nas plantas 2..6
+        pt, en = manual.strip(), manual_en.strip()
+    else:
+        pt, en = opt["pt"], opt["en"]
     if suffix_key == FREE_SUFFIX:
-        extra = free_suffix(suffix_text)
-        if extra:
-            pt += u" - " + extra
-            en += EN_SEP + extra
+        pt = _join(pt, free_suffix(suffix_text), u" - ")
+        en = _join(en, free_suffix(suffix_text_en), EN_SEP)
     else:
         lv = level_text(level)
         _k, suf_pt, suf_en = next(s for s in SUFFIXES if s[0] == suffix_key)
@@ -667,14 +715,50 @@ def with_prefix(prefix, title):
 def resolve_names(prefix, title, en):
     """(View Name, Title on Sheet, English). '#' vira 01, 02... - o primeiro
     número com View Name livre - e o mesmo número vai para os dois títulos."""
-    if u"#" not in title:
+    if u"#" not in title and u"#" not in en:
         return clean_name(with_prefix(prefix, title)), title, en
-    n = 1
-    while clean_name(with_prefix(prefix, title.replace(u"#", u"{:02d}".format(n)))) in VIEW_NAMES:
+    n = 1   # '#' só no inglês: usa 01 (sem laço infinito - igual ao 01)
+    while u"#" in title and clean_name(with_prefix(
+            prefix, title.replace(u"#", u"{:02d}".format(n)))) in VIEW_NAMES:
         n += 1
     num = u"{:02d}".format(n)
     title, en = title.replace(u"#", num), en.replace(u"#", num)
     return clean_name(with_prefix(prefix, title)), title, en
+
+
+def seq_letters():
+    """A, B, ..., Z, AA, AB, ..."""
+    n = 0
+    while True:
+        n += 1
+        k, out = n, u""
+        while k:
+            k, r = divmod(k - 1, 26)
+            out = unichr(65 + r) + out
+        yield out
+
+
+def letter_names(prefix, title, en):
+    """Chamada em elevação/corte sem complemento (igual ao 01): '<nome> - A',
+    ou a próxima letra cujo View Name esteja livre."""
+    for letter in seq_letters():
+        t = u"{} - {}".format(title, letter)
+        vname = clean_name(with_prefix(prefix, t))
+        if vname not in VIEW_NAMES:
+            return vname, t, (en + EN_SEP + letter) if en else en
+
+
+def plan_names(opt, suffix_key, level, room, prefix, texts, simple_kind):
+    """(View Name, Title on Sheet, English) de uma planta/chamada. texts =
+    (manual, manual_en, complemento, complemento_en). Chamada em elevação/
+    corte com o título simples e sem complemento recebe a próxima letra livre;
+    a versão por ambiente já é única e fica sem letra."""
+    manual, manual_en, suf, suf_en = texts
+    title, en = compose_names(opt, suffix_key, level, room, manual, suf, suf_en, manual_en)
+    if (simple_kind and suffix_key == FREE_SUFFIX and opt["key"] != MANUAL_KEY
+            and not opt["room"] and not free_suffix(suf) and not free_suffix(suf_en)):
+        return letter_names(prefix, title, en)
+    return resolve_names(prefix, title, en)
 
 
 def unique_view_name(base):
@@ -1143,7 +1227,33 @@ def target_kind(mode):
     """Tipo da vista resultante: define quais nomes fazem sentido."""
     if mode == "plans":
         return "plan"
-    return "plan" if active_view.ViewType in PLAN_VIEWTYPES + (VT.AreaPlan,) else "vertical"
+    if active_view.ViewType in PLAN_VIEWTYPES + (VT.AreaPlan,):
+        return "plan"
+    # chamada numa elevação/corte gera elevação/corte (ou detalhe dele)
+    return {VT.Elevation: "elevation", VT.Section: "section"}.get(
+        active_view.ViewType, "vertical")
+
+
+MODE_HINTS = {
+    "plans": u"Uma planta nova por ambiente, no nível de cada ambiente, recortada ao "
+             u"redor dele.",
+    "callout": u"Uma chamada por ambiente dentro da vista ativa. Numa elevação ou corte, "
+               u"escolha o mesmo tipo para abrir outra elevação/corte (ampliação) ou Detalhe.",
+}
+
+
+def active_view_text(callout_items):
+    """Vista ativa e o que a chamada gera a partir dela (igual ao 01)."""
+    kinds = []
+    for it in callout_items:
+        k = it["label"].split(u")")[0].replace(u"Chamada (", u"")
+        if k not in kinds:
+            kinds.append(k)
+    lines = [u"Vista ativa: {} ({})".format(to_unicode(active_view.Name),
+                                            view_type_label(active_view))]
+    if kinds:
+        lines.append(u"Chamada gera: {}".format(u" ou ".join(kinds)))
+    return u"\n".join(lines)
 
 
 def check_modes(plan_items, callout_items, plan_level):
@@ -1266,6 +1376,8 @@ CROP_XAML = u"""
             <TextBlock Text="PREMISSAS" FontSize="12" FontWeight="SemiBold" Foreground="#65E3FF"/>
             <TextBlock x:Name="rooms_txt" TextWrapping="Wrap" FontSize="11"
                        Foreground="#7A8FA9" Margin="0,0,0,2"/>
+            <TextBlock x:Name="view_txt" TextWrapping="Wrap" FontSize="11"
+                       Foreground="#7A8FA9" Margin="0,4,0,2"/>
             <TextBlock x:Name="margin_lbl" Text="Plantas: margem ao redor de cada ambiente (m)"/>
             <TextBox x:Name="margin"/>
             <TextBlock x:Name="e_margin_lbl" Text="Elevações: margem ao redor de cada ambiente (m)"/>
@@ -1285,6 +1397,8 @@ CROP_XAML = u"""
                          Content="Criar nova vista de planta (Piso, Forro, Estrutural, Área)"/>
             <RadioButton x:Name="rb_callout" GroupName="mode"
                          Content="Criar vista de chamada de detalhe (Callout) na vista ativa"/>
+            <TextBlock x:Name="mode_hint" TextWrapping="Wrap" FontSize="11"
+                       Foreground="#7A8FA9" Margin="20,4,0,0"/>
             <TextBlock x:Name="reasons" TextWrapping="Wrap" FontSize="11"
                        Foreground="#FFB454" Margin="0,8,0,0"/>
             <TextBlock x:Name="vtype_lbl" Text="Tipo de vista da planta"/>
@@ -1352,14 +1466,20 @@ CROP_XAML = u"""
                        TextWrapping="Wrap" FontSize="11" Foreground="#7A8FA9" Margin="0,0,0,2"/>
             <TextBlock Text="A - Principal"/>
             <ComboBox x:Name="vname"/>
-            <TextBlock x:Name="manual_lbl"
-                       Text="Nome manual (vazio = mantém o nome do Revit;  # = sequência 01, 02...)"/>
+            <TextBlock x:Name="manual_lbl" TextWrapping="Wrap"
+                       Text="Nome manual - View Name e Title on Sheet (vazio = mantém o nome do Revit;  # = sequência 01, 02...)"/>
             <TextBox x:Name="manual"/>
+            <TextBlock x:Name="manual_en_lbl" TextWrapping="Wrap"
+                       Text="Nome manual - Title on Sheet - English (vazio = sem título em inglês)"/>
+            <TextBox x:Name="manual_en"/>
             <TextBlock x:Name="suffix_lbl" Text="B - Complemento"/>
             <ComboBox x:Name="vsuffix"/>
-            <TextBlock x:Name="suffix_text_lbl"
-                       Text="Complemento manual (vazio = sem complemento;  # = sequência 01, 02...)"/>
+            <TextBlock x:Name="suffix_text_lbl" TextWrapping="Wrap"
+                       Text="Complemento manual - View Name e Title on Sheet (vazio = sem complemento;  # = sequência 01, 02...)"/>
             <TextBox x:Name="suffix_text"/>
+            <TextBlock x:Name="suffix_text_en_lbl" TextWrapping="Wrap"
+                       Text="Complemento manual - Title on Sheet - English (vazio = sem complemento)"/>
+            <TextBox x:Name="suffix_text_en"/>
           </StackPanel>
         </Border>
 
@@ -1444,9 +1564,9 @@ class FolderPicker(object):
             rb.Checked += on_change
         self.list.SelectionChanged += on_change
         self.new.TextChanged += on_change
-        start = saved["folder_mode"]
-        if not allowed.get(start):
-            start = next(k for k in FOLDER_MODES if allowed[k])
+        # sempre abre em "Pasta existente" (igual ao 01; a pasta escolhida da
+        # última vez continua selecionada na lista); sem pastas, a próxima opção
+        start = next(k for k in FOLDER_MODES if allowed[k])
         self.rb[start].IsChecked = True
 
     @property
@@ -1502,7 +1622,6 @@ class CropWindow(forms.WPFWindow):
         self._saved = cfg
         self._ready = False    # eventos disparados durante a montagem são ignorados
         self._busy = False
-        self._forced = False
         self._names = []
         self._templates = []
         self._radios = {"plans": self.rb_plans, "callout": self.rb_callout}
@@ -1511,6 +1630,7 @@ class CropWindow(forms.WPFWindow):
 
         self.info.Text = info
         self.rooms_txt.Text = ctx["rooms_text"]
+        self.view_txt.Text = ctx["view_text"]
         self.margin.Text = u"{:.2f}".format(cfg["margin"])
         self.e_margin.Text = u"{:.2f}".format(cfg["e_margin"])
         self.reasons.Text = u"\n".join(
@@ -1524,6 +1644,7 @@ class CropWindow(forms.WPFWindow):
         enabled = [k for k in MODES if k not in reasons]
         for key, rb in self._radios.items():
             rb.IsEnabled = key in enabled
+            rb.Opacity = 1.0 if key in enabled else 0.4   # bloqueada: tom mais claro
             rb.Checked += self._on_mode
         self._init_elevations()
         self._init_create(bool(enabled))
@@ -1543,7 +1664,9 @@ class CropWindow(forms.WPFWindow):
         self.vname.SelectionChanged += self._on_name
         self.vsuffix.SelectionChanged += self._on_name
         self.manual.TextChanged += self._on_name
+        self.manual_en.TextChanged += self._on_name
         self.suffix_text.TextChanged += self._on_name
+        self.suffix_text_en.TextChanged += self._on_name
 
         self._ready = True
         start = cfg["mode"] if cfg["mode"] in enabled else (enabled[0] if enabled else "plans")
@@ -1559,6 +1682,7 @@ class CropWindow(forms.WPFWindow):
         allowed = {"plans": plans_ok, "elev": elev_ok, "both": plans_ok and elev_ok}
         for key, rb in self._cradios.items():
             rb.IsEnabled = allowed[key]
+            rb.Opacity = 1.0 if allowed[key] else 0.4   # bloqueada: tom mais claro
             rb.Checked += self._on_name
         start = self._saved["create"]
         if not allowed.get(start):
@@ -1669,6 +1793,7 @@ class CropWindow(forms.WPFWindow):
                                        else labels[0])
         self.vtype.IsEnabled = bool(labels)
         self.vtype_lbl.Opacity = 1.0 if labels else 0.4
+        self.mode_hint.Text = MODE_HINTS.get(mode, u"")
 
         # nomes dependem do tipo da vista resultante (planta x corte/elevação)
         self._names = self.ctx["names"][mode]
@@ -1682,11 +1807,14 @@ class CropWindow(forms.WPFWindow):
 
         # complemento traz o nome do nível da vista resultante; com eventos
         # travados, senão a seleção vazia (-1) da troca de itens vira a escolha
-        if self.vsuffix.SelectedIndex >= 0 and not self._forced:
+        if self.vsuffix.SelectedIndex >= 0:
             self._suffix_idx = self.vsuffix.SelectedIndex
         self._busy = True
         try:
             self.vsuffix.ItemsSource = suffix_labels(self.ctx["level"][mode])
+            # chamada em elevação/corte abre em "Sem complemento" (letra A, B...)
+            if self.simple_kind:
+                self._suffix_idx = 0
             self.vsuffix.SelectedIndex = self._suffix_idx
         finally:
             self._busy = False
@@ -1695,9 +1823,24 @@ class CropWindow(forms.WPFWindow):
 
     # --- nomenclatura --------------------------------------------------
     @property
+    def simple_kind(self):
+        """Chamada numa elevação/corte: nome simples; sem complemento = letra."""
+        return self.ctx["kinds"].get(self.mode) in SIMPLE_KINDS
+
+    @property
     def name_opt(self):
         idx = self.vname.SelectedIndex
-        return self._names[idx] if 0 <= idx < len(self._names) else self._names[-1]
+        if 0 <= idx < len(self._names):
+            return self._names[idx]
+        return next((o for o in self._names if o["key"] == MANUAL_KEY), self._names[-1])
+
+    def name_texts(self):
+        """(manual, manual_en, complemento, complemento_en) digitados; os
+        complementos só valem com o combo em 'Sem complemento, manual ou sequência'."""
+        on = self.suffix_key == FREE_SUFFIX
+        return (to_unicode(self.manual.Text), to_unicode(self.manual_en.Text),
+                to_unicode(self.suffix_text.Text) if on else u"",
+                to_unicode(self.suffix_text_en.Text) if on else u"")
 
     @property
     def suffix_key(self):
@@ -1706,24 +1849,17 @@ class CropWindow(forms.WPFWindow):
 
     def names(self, folder):
         """Prévia com o 1º ambiente: (View Name, Title on Sheet, English)."""
-        title, en = compose_names(self.name_opt, self.suffix_key, self.ctx["level"][self.mode],
-                                  self.ctx["room"], to_unicode(self.manual.Text),
-                                  to_unicode(self.suffix_text.Text))
-        return resolve_names(name_prefix(folder), title, en)
+        return plan_names(self.name_opt, self.suffix_key, self.ctx["level"][self.mode],
+                          self.ctx["room"], name_prefix(folder), self.name_texts(),
+                          self.simple_kind)
 
     def _sync_suffix(self, opt):
-        """PAV./AMPLIAÇÃO só nas plantas 2..6: nas demais o combo fica em
-        'Sem nomenclatura' e a escolha anterior volta depois (igual ao 01)."""
-        if opt["suffix"]:
-            if self._forced or self.vsuffix.SelectedIndex < 0:
-                if self.vsuffix.Items.Count:
-                    self.vsuffix.SelectedIndex = self._suffix_idx
-                self._forced = False
-            if self.vsuffix.SelectedIndex >= 0:   # combo ainda vazio: mantém a escolha salva
-                self._suffix_idx = self.vsuffix.SelectedIndex
-        else:
-            self._forced = True
-            self.vsuffix.SelectedIndex = 0
+        """Todas as opções do complemento valem para qualquer A - Principal
+        (igual ao 01): só guarda a escolha atual - o combo não trava mais."""
+        if self.vsuffix.SelectedIndex < 0 and self.vsuffix.Items.Count:
+            self.vsuffix.SelectedIndex = self._suffix_idx
+        if self.vsuffix.SelectedIndex >= 0:
+            self._suffix_idx = self.vsuffix.SelectedIndex
 
     def _update_names(self):
         if self._busy or not self._names:   # mudar o combo aqui dispara SelectionChanged
@@ -1751,12 +1887,14 @@ class CropWindow(forms.WPFWindow):
         is_manual = opt["key"] == MANUAL_KEY
         self._sync_suffix(opt)
         free = self.suffix_key == FREE_SUFFIX
-        self.vsuffix.IsEnabled = opt["suffix"]
-        self.suffix_lbl.Opacity = 1.0 if not is_manual else 0.4
-        self.suffix_text.IsEnabled = free and not is_manual
-        self.suffix_text_lbl.Opacity = 1.0 if free and not is_manual else 0.4
-        self.manual.IsEnabled = is_manual
-        self.manual_lbl.Opacity = 1.0 if is_manual else 0.4
+        for ctl in (self.suffix_text, self.suffix_text_en):
+            ctl.IsEnabled = free
+        for lbl in (self.suffix_text_lbl, self.suffix_text_en_lbl):
+            lbl.Opacity = 1.0 if free else 0.4
+        for ctl in (self.manual, self.manual_en):
+            ctl.IsEnabled = is_manual
+        for lbl in (self.manual_lbl, self.manual_en_lbl):
+            lbl.Opacity = 1.0 if is_manual else 0.4
 
         p_tpl, e_tpl = self.template_choice, self.elev_template
         p_fold = self.p_folder.render(p_tpl)
@@ -1802,7 +1940,9 @@ class CropWindow(forms.WPFWindow):
             if fold["mode"] == "new" and fold["name"] in entries:
                 hints.append(u"{}: a pasta '{}' já existe - as vistas vão para ela."
                              .format(label, fold["name"]))
-        if self.do_plans and self.ctx["count"] > 1 and not self.name_opt["room"]:
+        opt = self.name_opt
+        letters = self.simple_kind and opt["key"] != MANUAL_KEY   # recebem A, B...
+        if self.do_plans and self.ctx["count"] > 1 and not opt["room"] and not letters:
             hints.append(u"Nomes sem <Nº> - <AMBIENTE> se repetem entre as vistas e recebem "
                          u"(2), (3)...; no nome manual, use # para numerar.")
         return hints
@@ -1844,8 +1984,8 @@ class CropWindow(forms.WPFWindow):
                 "create": self.create,
                 "type": self.vtype_item,
                 "vname": self.name_opt["key"], "suffix": self.suffix_key,
-                "name_opt": self.name_opt, "manual": to_unicode(self.manual.Text),
-                "suffix_text": to_unicode(self.suffix_text.Text),
+                "name_opt": self.name_opt, "texts": self.name_texts(),
+                "simple_kind": self.simple_kind,
                 "open": bool(self.open_views.IsChecked),
                 "folder": self.p_folder.choice(self.template_choice),
                 "e_folder": self.e_folder.choice(self.elev_template),
@@ -1926,6 +2066,8 @@ dialog_ctx = {
     "room": geoms[0].el,
     "example": geoms[0].label,
     "count": len(geoms),
+    "kinds": dict((m, target_kind(m)) for m in MODES),
+    "view_text": active_view_text(callout_items),
     "rooms_text": u"{} ambiente(s) selecionado(s): {}".format(len(geoms), rooms_preview),
     "hints": name_hints,
     "folders": folders,
@@ -1954,7 +2096,7 @@ cfg = {"margin": INITIAL_MARGIN_M,
        "elev_dirs": config.get_option("elev_dirs", u"NLSO"),
        "etemplate": config.get_option("etemplate", NO_TEMPLATE)}
 
-info = u"vista ativa: {} ({})".format(to_unicode(active_view.Name), view_type_label(active_view))
+info = u"{} ambiente(s) → uma vista por ambiente".format(len(geoms))
 win = CropWindow(CROP_XAML, info, dialog_ctx, reasons, cfg)
 win.ShowDialog()
 if not win.confirmed:
@@ -2038,9 +2180,8 @@ def create_room_view(g, level):
     # (o template escolhido no diálogo entra no fim, depois do recorte)
     view.ViewTemplateId = INVALID_ID
 
-    title, en = compose_names(name_opt, opts["suffix"], name_level, g.el,
-                              opts["manual"], opts["suffix_text"])
-    vname, title, en = resolve_names(prefix, title, en)
+    vname, title, en = plan_names(name_opt, opts["suffix"], name_level, g.el, prefix,
+                                  opts["texts"], opts["simple_kind"])
     apply_names(view, vname, en, room_notes)      # View Name (com prefixo) + English
     apply_title_on_sheet(view, title, room_notes)  # Title on Sheet (sem prefixo)
     ProjectFolders.apply(view, folder_to_write(folder), room_notes)
