@@ -1,59 +1,50 @@
 # -*- coding: utf-8 -*-
-"""Atualização Descrição por Keynotes - sincroniza Keynotes do modelo com o Excel.
+"""ATUALIZAÇÃO DAS DESCRIÇÕES DO MODELO POR KEYNOTE.
 
-Base única de Keynotes entre o Revit e a planilha do escritório
-(OCA_XXX_Lista_de_Materiais - aba MATERIAIS).
+Lê a planilha de Keynotes do escritório (OCA_XXX_Lista_de_Materiais - aba
+MATERIAIS) e atualiza as descrições dos TIPOS do modelo pelo código de Keynote.
+Fluxo único: EXCEL -> MODELO. Escopo: modelo inteiro. Materiais não são lidos.
 
 Onde cada dado mora:
-  * Keynote ........ parâmetro nativo KEYNOTE dos TIPOS usados no modelo e dos
-                     MATERIAIS usados pelos elementos (opcional).
-  * Descrição PT ... parâmetro nativo "Description" (tipo / material).
-  * Descrição IN ... parâmetro compartilhado "Descrição IN" (tipo / material),
-                     associado pelo GUID 70307f6e-3b31-4049-bed4-62dfc3570fec
-                     (OCA_Parametros_Template.txt). Quando o modo grava no
-                     modelo e falta em alguma categoria, oferece vincular ao
-                     projeto como parâmetro de TIPO.
-  * Excel .......... aba MATERIAIS: colunas KEYNOTE, DESCRIÇÃO, DESCRIÇÃO IN.
+  * Keynote ........ parâmetro nativo KEYNOTE dos TIPOS usados no modelo.
+  * Descrição PT ... parâmetro nativo "Description" do tipo.
+  * Descrição IN ... parâmetro compartilhado "Descrição IN" do tipo, associado
+                     pelo GUID 70307f6e-3b31-4049-bed4-62dfc3570fec
+                     (OCA_Parametros_Template.txt). Se faltar em alguma
+                     categoria, oferece vincular ao projeto como parâmetro de TIPO.
+  * Excel .......... aba MATERIAIS: colunas KEYNOTE, DESCRIÇÃO, DESCRIÇÃO IN
+                     (somente leitura - o Excel não é alterado).
 
-Verificação nos DOIS sentidos (tabela única, agrupada pela estrutura de
-agrupamentos de Keynotes: CATEGORIA > GRUPO/prefixo, abas DADOS e KEYNOTE BÁSICO):
-  * Excel -> Modelo: o que está no Excel e difere do tipo/material no modelo.
-  * Modelo -> Excel: o que está no modelo e falta/difere no Excel (keynote
-    novo entra no FIM da tabela com PREFIXO/SEQUENCIA + fórmulas do template).
-  * Ambos: as duas listas juntas; o usuário marca o que vai para cada lado.
-    Um mesmo campo do mesmo keynote não pode ir para os dois lados.
-  Padrões: Excel -> Modelo marcado; Modelo -> Excel marcado só quando preenche
-  vazio (sobrescrever o Excel começa desmarcado). Valor vazio nunca apaga o
-  outro lado. Keynote do Excel não usado no modelo nunca é apagado.
+Aba 1 - configurações: planilha, destaque na vista ativa e TXT de Keynotes.
 
-Destaque temporário (vista ativa, desfeito ao fechar a tabela):
-  Keynote + Description ............ nada
-  Keynote sem Description .......... VERMELHO
-  Description sem Keynote .......... VERMELHO
-  Sem Keynote e sem Description .... LARANJA
+Aba 2 - tabela de verificação (uma janela, duas tabelas, busca e agrupamento
+por Keynote ou por Categoria):
+  1. Excel -> Modelo: o que o Excel tem e difere do modelo. Tipos com o mesmo
+     Keynote, mesma Descrição, mesma Descrição IN e mesma Categoria viram UMA
+     linha. Valor vazio no Excel nunca apaga o modelo.
+  2. Elementos do modelo SEM Keynote ou SEM Descrição: editável - digite
+     Keynote / Descrição / Descrição IN, "Verificar" confere com o Excel e
+     completa os campos vazios a partir dele.
+  "Gravar marcados" grava no modelo só as linhas marcadas das duas tabelas.
+
+Destaque temporário (vista ativa, desfeito ao fechar a tabela): LARANJA nos
+elementos cujo tipo não tem Keynote, Descrição ou Descrição IN.
 
 TXT de Keynotes do Revit (opcional, confirma no final): gerado do Excel com a
 mesma estrutura do arquivo do escritório - CATEGORIA/prefixos, PREFIXO/GRUPO/
 CATEGORIA e KEYNOTE / "DESCRIÇÃO | DESCRIÇÃO IN" / PREFIXO - e carregado no
 projeto.
 
-Modos: Somente analisar (nada é gravado) · Modelo -> Excel · Excel -> Modelo ·
-Ambos (simultâneo).
-
-O Excel é lido e gravado direto no XML do .xlsx (sem Excel/COM). Antes de
-gravar é feito um backup com data/hora ao lado do arquivo. O arquivo precisa
-estar FECHADO no Excel.
-
-Ao final pergunta se gera o relatório HTML (sempre gerado em "Somente
-analisar"): verificação nos dois sentidos, tabela final do Excel (filtro por
-agrupamento, só alterados, download), destaques e inconsistências.
+Ao final pergunta se gera o relatório HTML.
 """
 
-__title__ = "Atualização\nDescrição\npor Keynotes"
-__doc__ = ("Compara os Keynotes do modelo (tipos e materiais) com a planilha "
-           "Excel (aba MATERIAIS), atualiza o Excel a partir do modelo ou as "
-           "descrições do modelo a partir do Excel e gera um relatório de "
-           "inconsistências agrupado por categoria.")
+__title__ = "Atualização\ndas Descrições\npor Keynote"
+__doc__ = ("ATUALIZAÇÃO DAS DESCRIÇÕES DO MODELO POR KEYNOTE\n\n"
+           "Lê a planilha de Keynotes (aba MATERIAIS) e atualiza a Description e a "
+           "Descrição IN dos tipos do modelo pelo código de Keynote (Excel → Modelo). "
+           "Mostra antes o que vai mudar, destaca em laranja na vista ativa o que "
+           "está incompleto e permite completar Keynote e Descrição direto na tabela. "
+           "Opcional: gera e carrega o TXT de Keynotes do Revit.")
 
 import os
 import re
@@ -105,15 +96,10 @@ PARAM_IN_GROUP = u"Informações do Modelo"        # grupo no arquivo compartilh
 PARAM_IN_GUID = Guid(PARAM_IN_GUID_STR)
 MATERIALS_LABEL = u"Materiais"     # categoria usada no relatório p/ materiais
 
-MODES = OrderedDict([
-    ("analyze", u"Somente analisar"),
-    ("to_excel", u"Modelo → Excel"),
-    ("to_model", u"Excel → Modelo"),
-    ("both", u"Ambos (simultâneo)"),
-])
-# sentidos de verificação incluídos em cada modo
-MODE_DIRS = {"analyze": ("model", "excel"), "to_excel": ("excel",),
-             "to_model": ("model",), "both": ("model", "excel")}
+TOOL_TITLE = u"ATUALIZAÇÃO DAS DESCRIÇÕES DO MODELO POR KEYNOTE"
+# fluxo único: Excel -> Modelo (o Excel é só lido)
+MODES = OrderedDict([("to_model", u"Excel → Modelo")])
+MODE_DIRS = {"to_model": ("model",)}
 
 
 # ------------------------------------------------------------------
@@ -206,7 +192,7 @@ def open_in_browser(path):
 KN_XAML = u"""
 <Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="Atualização Descrição por Keynotes" Height="Auto" Width="560"
+        Title="Atualização das Descrições do Modelo por Keynote" Height="Auto" Width="580"
         SizeToContent="Height" WindowStartupLocation="CenterScreen"
         ResizeMode="NoResize" Background="#0E1526">
   <Window.Resources>
@@ -215,11 +201,6 @@ KN_XAML = u"""
       <Setter Property="FontFamily" Value="Segoe UI"/>
       <Setter Property="Margin" Value="0,12,0,4"/>
     </Style>
-    <Style TargetType="RadioButton">
-      <Setter Property="Foreground" Value="#D9E8F5"/>
-      <Setter Property="FontFamily" Value="Segoe UI"/>
-      <Setter Property="Margin" Value="0,4,0,0"/>
-    </Style>
     <Style TargetType="CheckBox">
       <Setter Property="Foreground" Value="#D9E8F5"/>
       <Setter Property="FontFamily" Value="Segoe UI"/>
@@ -227,35 +208,27 @@ KN_XAML = u"""
     </Style>
   </Window.Resources>
   <StackPanel Margin="18">
-    <TextBlock Text="KEYNOTES  ×  EXCEL" FontSize="15" FontWeight="SemiBold"
-               Foreground="#65E3FF" Margin="0,0,0,4"/>
+    <TextBlock Text="ATUALIZAÇÃO DAS DESCRIÇÕES DO MODELO POR KEYNOTE" FontSize="15"
+               FontWeight="SemiBold" Foreground="#65E3FF" Margin="0,0,0,4"/>
     <TextBlock TextWrapping="Wrap" FontSize="11" Foreground="#7A8FA9" Margin="0,0,0,4"
-               Text="Compara os Keynotes dos tipos e materiais usados no modelo com a aba MATERIAIS da planilha, nos dois sentidos. Descrição PT = parâmetro Description; Descrição IN = parâmetro compartilhado 'Descrição IN' (GUID 70307f6e). Antes de gravar abre a tabela de verificação para marcar o que muda no modelo e o que muda no Excel."/>
+               Text="Lê a aba MATERIAIS da planilha e atualiza a Description e a Descrição IN dos tipos do modelo pelo Keynote. Fluxo: Excel → Modelo (o Excel não é alterado). Escopo: modelo inteiro, sem materiais. Na próxima etapa você confere a tabela e grava só o que marcar."/>
 
-    <TextBlock Text="Planilha Excel (.xlsx - feche o arquivo no Excel antes de gravar)"/>
+    <TextBlock Text="1. Planilha Excel de Keynotes (.xlsx)"/>
     <DockPanel LastChildFill="True">
       <Button x:Name="browse" DockPanel.Dock="Right" Content="Procurar..." Width="90"
               Height="26" Margin="8,0,0,0"/>
       <TextBox x:Name="xlsx" Height="26" Padding="4,3,4,2"/>
     </DockPanel>
 
-    <TextBlock Text="Verificação / atualização"/>
-    <RadioButton x:Name="m_analyze" GroupName="mode"
-                 Content="Somente analisar  (tabela de verificação + relatório - nada é gravado)"/>
-    <RadioButton x:Name="m_to_excel" GroupName="mode"
-                 Content="Modelo → Excel  (dados do modelo comparados com o Excel)"/>
-    <RadioButton x:Name="m_to_model" GroupName="mode"
-                 Content="Excel → Modelo  (dados do Excel comparados com o modelo)"/>
-    <RadioButton x:Name="m_both" GroupName="mode"
-                 Content="Ambos, simultâneo  (escolher na tabela o que vai para cada lado)"/>
+    <TextBlock Text="2. Fluxo e escopo"/>
+    <TextBlock Margin="0,0,0,0" FontSize="12" Foreground="#D9E8F5"
+               Text="Excel → Modelo  ·  modelo inteiro  ·  somente tipos (materiais não são lidos)"/>
 
-    <TextBlock Text="Escopo"/>
-    <RadioButton x:Name="s_model" GroupName="scope" Content="Modelo inteiro"/>
-    <RadioButton x:Name="s_view" GroupName="scope" Content="Somente elementos visíveis na vista ativa"/>
-    <CheckBox x:Name="materials" Content="Incluir Keynotes de materiais"/>
-    <CheckBox x:Name="highlight" Content="Destacar no modelo (vista ativa) durante a verificação: vermelho / laranja"/>
+    <TextBlock Text="3. Verificação visual"/>
+    <CheckBox x:Name="highlight" Margin="0,2,0,0"
+              Content="Destacar em LARANJA na vista ativa os elementos sem Keynote, Descrição ou Descrição IN"/>
 
-    <TextBlock Text="TXT de Keynotes do Revit"/>
+    <TextBlock Text="4. TXT de Keynotes do Revit"/>
     <CheckBox x:Name="txt_on" Margin="0,2,0,6"
               Content="Gerar o TXT a partir do Excel e carregar no projeto (confirma no final)"/>
     <DockPanel LastChildFill="True">
@@ -266,7 +239,7 @@ KN_XAML = u"""
 
     <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,20,0,0">
       <Button x:Name="cancel" Content="Cancelar" Width="90" Height="28" Margin="0,0,10,0"/>
-      <Button x:Name="ok" Content="Executar" Width="120" Height="28"/>
+      <Button x:Name="ok" Content="Executar  →" Width="120" Height="28"/>
     </StackPanel>
   </StackPanel>
 </Window>
@@ -284,11 +257,6 @@ class KeynoteWindow(forms.WPFWindow):
         self.confirmed = False
         self.result = None
         self.xlsx.Text = cfg["xlsx"]
-        {"to_excel": self.m_to_excel,
-         "to_model": self.m_to_model,
-         "both": self.m_both}.get(cfg["mode"], self.m_analyze).IsChecked = True
-        (self.s_view if cfg["scope"] == "view" else self.s_model).IsChecked = True
-        self.materials.IsChecked = bool(cfg["materials"])
         self.highlight.IsChecked = bool(cfg["highlight"])
         self.txt_on.IsChecked = bool(cfg["txt_on"])
         self.txt_path.Text = cfg["txt_path"] or default_txt_path(cfg["xlsx"])
@@ -327,19 +295,11 @@ class KeynoteWindow(forms.WPFWindow):
         if self.txt_on.IsChecked and not os.path.isdir(os.path.dirname(txt) or u"."):
             forms.alert(u"Pasta do TXT de Keynotes não existe:\n{}".format(txt))
             return
-        if self.m_to_excel.IsChecked:
-            mode = "to_excel"
-        elif self.m_to_model.IsChecked:
-            mode = "to_model"
-        elif self.m_both.IsChecked:
-            mode = "both"
-        else:
-            mode = "analyze"
         self.result = {
             "xlsx": path,
-            "mode": mode,
-            "scope": "view" if self.s_view.IsChecked else "model",
-            "materials": bool(self.materials.IsChecked),
+            "mode": "to_model",            # fluxo único
+            "scope": "model",              # sempre o modelo inteiro
+            "materials": False,            # materiais não são lidos
             "highlight": bool(self.highlight.IsChecked),
             "txt_on": bool(self.txt_on.IsChecked),
             "txt_path": txt,
@@ -354,9 +314,6 @@ class KeynoteWindow(forms.WPFWindow):
 
 config = script.get_config()
 saved_cfg = {"xlsx": to_unicode(config.get_option("xlsx_path", u"")),
-             "mode": config.get_option("mode", "analyze"),
-             "scope": config.get_option("scope", "model"),
-             "materials": config.get_option("materials", True),
              "highlight": config.get_option("highlight", True),
              "txt_on": config.get_option("txt_on", False),
              "txt_path": to_unicode(config.get_option("txt_path", u""))}
@@ -368,32 +325,15 @@ if not win.confirmed:
 opts = win.result
 
 config.xlsx_path = opts["xlsx"]
-config.mode = opts["mode"]
-config.scope = opts["scope"]
-config.materials = opts["materials"]
 config.highlight = opts["highlight"]
 config.txt_on = opts["txt_on"]
 config.txt_path = opts["txt_path"]
 script.save_config()
 
 XLSX_PATH = opts["xlsx"]
-MODE = opts["mode"]
-
+MODE = "to_model"                  # Excel -> Modelo
 active_view = doc.ActiveView
-use_view = opts["scope"] == "view"
-if use_view:
-    bad = set()
-    for _n in ("Schedule", "DrawingSheet", "Report", "ColumnSchedule",
-               "PanelSchedule", "Internal", "Undefined", "ProjectBrowser",
-               "SystemBrowser"):
-        _vt = getattr(DB.ViewType, _n, None)
-        if _vt is not None:
-            bad.add(_vt)
-    if active_view is None or getattr(active_view, "IsTemplate", False) \
-            or active_view.ViewType in bad:
-        forms.alert(u"A vista ativa não é uma vista gráfica (tabela, folha...).\n"
-                    u"Abra uma planta, corte, elevação ou 3D, ou use o escopo "
-                    u"'Modelo inteiro'.", exitscript=True)
+use_view = False                   # escopo: modelo inteiro
 
 
 # ------------------------------------------------------------------
@@ -821,8 +761,15 @@ FILE_TEXT = keynote_file_texts()
 # 3b. Vincular o parâmetro compartilhado 'Descrição IN' (quando grava no modelo)
 # ------------------------------------------------------------------
 def in_param_missing_categories():
-    """Categorias (Category) de tipos/materiais com keynote sem o parâmetro."""
+    """Categorias (Category) sem o parâmetro: tipos com keynote (tabela 1) e
+    tipos com parâmetro Keynote ainda vazio (tabela 2)."""
     cats = OrderedDict()
+    for info in scan_types():
+        try:
+            if in_param(info["t"]) is None and info["t"].Category is not None:
+                cats.setdefault(eid_int(info["t"].Category.Id), info["t"].Category)
+        except Exception:
+            continue
     for holders in MODEL.values():
         for h in holders:
             if h["en_p"] is not None:
@@ -943,29 +890,6 @@ def bind_in_param(cats):
         return False, to_unicode(ex)
 
 
-if "model" in MODE_DIRS[MODE] and MODE != "analyze":
-    missing_cats = in_param_missing_categories()
-    clash = sorted(set(h["category"] for hs in MODEL.values() for h in hs if h["en_clash"]))
-    if missing_cats:
-        msg = (u"O parâmetro compartilhado '{}' (GUID {}) não está disponível em:\n\n"
-               u"{}\n\nVincular ao projeto como parâmetro de TIPO nessas categorias?\n"
-               u"(sem ele, a descrição em inglês não é gravada nesses itens)").format(
-                   PARAM_IN_NAME, PARAM_IN_GUID_STR,
-                   u"\n".join(u"  • " + to_unicode(c.Name) for c in missing_cats))
-        if clash:
-            msg += (u"\n\nAtenção: em {} já existe um parâmetro '{}' que NÃO é o "
-                    u"compartilhado do escritório (GUID diferente). Ele será ignorado."
-                    ).format(u", ".join(clash), PARAM_IN_NAME)
-        if forms.alert(msg, yes=True, no=True):
-            ok, info = bind_in_param(missing_cats)
-            output.print_md(u"- Parâmetro **{}**: {}{}".format(
-                PARAM_IN_NAME, u"" if ok else u":warning: não vinculado - ", info))
-            if ok:
-                MODEL = collect_model(use_view, opts["materials"])   # relê os parâmetros
-
-if not MODEL and MODE == "to_model":
-    forms.alert(u"Nenhum tipo ou material com Keynote preenchido foi encontrado "
-                u"no escopo escolhido.", exitscript=True)
 
 
 # ------------------------------------------------------------------
@@ -996,50 +920,8 @@ xl_written = {"backup": u"", "appended": 0, "filled": 0}
 
 
 # ------------------------------------------------------------------
-# 5a. Modelo -> Excel
+# 5a. Backup de arquivos gravados (TXT de Keynotes)
 # ------------------------------------------------------------------
-def plan_to_excel_rows():
-    """Sentido MODELO -> EXCEL: uma linha por keynote do modelo que falta no
-    Excel ou cuja descrição difere. Valor vazio no modelo nunca apaga o Excel.
-    Linhas que SOBRESCREVEM célula preenchida começam desmarcadas."""
-    rows = []
-    for key, holders in MODEL.items():
-        pts, ens = weighted_values(holders, "pt"), weighted_values(holders, "en")
-        pt = pts[0] if pts else u""
-        en = ens[0] if ens else u""
-        # tipo/material "representante": o mais usado entre os que têm o valor proposto
-        cands = [h for h in holders if (pt and h["pt"] == pt)] or holders
-        rep = sorted(cands, key=lambda h: -h["count"])[0]
-        multi = len(pts) > 1 or len(ens) > 1
-        rec = XL["by_key"].get(key)
-        if rec is None:
-            prefix, seq = split_keynote(key)
-            grp, cat = XL["prefix_map"].get(prefix, (u"", u""))
-            note = u"Incluído via Revit em {}".format(datetime.now().strftime("%d/%m/%Y"))
-            if prefix not in XL["prefix_map"]:
-                note += u" - prefixo não cadastrado em DADOS"
-            if multi:
-                note += u" - modelo com descrições diferentes, revisar"
-            rows.append({"dir": "excel", "key": key, "rep": rep, "nh": len(holders),
-                         "multi": multi, "rec": None,
-                         "append": {"key": key, "prefix": prefix, "seq": seq, "grp": grp,
-                                    "cat": cat, "pt": pt, "en": en, "obs": note},
-                         "pt_old": None, "en_old": None, "pt_new": pt, "en_new": en,
-                         "over": set(), "blocked": {}, "enabled": True})
-            continue
-        pt_new = pt if (pt and pt != rec["pt"]) else None
-        en_new = en if (en and en != rec["en"]) else None
-        if pt_new is None and en_new is None:
-            continue
-        over = set(f for f, v in (("pt", pt_new), ("en", en_new)) if v is not None and rec[f])
-        rows.append({"dir": "excel", "key": key, "rep": rep, "nh": len(holders),
-                     "multi": multi, "rec": rec, "append": None,
-                     "pt_old": rec["pt"], "en_old": rec["en"],
-                     "pt_new": pt_new, "en_new": en_new,
-                     "over": over, "blocked": {}, "enabled": True})
-    return rows
-
-
 def backup_path(path):
     """<arquivo>_backup_AAAAMMDD_HHMMSS.<ext>, sem colidir com um backup já existente."""
     base, ext = os.path.splitext(path)
@@ -1049,172 +931,6 @@ def backup_path(path):
         n += 1
         cand = u"{}_backup_{}_{}{}".format(base, stamp, n, ext)
     return cand
-
-
-def ensure_file_closed(path):
-    try:
-        fs = File.Open(path, FileMode.Open, FileAccess.ReadWrite,
-                       getattr(FileShare, "None"))
-        fs.Dispose()
-        return True
-    except Exception:
-        return False
-
-
-def write_excel(fills, appends):
-    """Grava direto no XML da aba: preenche F/G, acrescenta linhas no fim da
-    tabela (PREFIXO/SEQUENCIA + fórmulas do template com valor em cache) e
-    ajusta AutoFiltro/dimensão. O resto do arquivo não é tocado."""
-    backup = backup_path(XLSX_PATH)
-    File.Copy(XLSX_PATH, backup, False)
-
-    cols = XL["cols"]
-    archive = ZipFile.Open(XLSX_PATH, ZipArchiveMode.Update)
-    try:
-        sd = load_xml(zip_read(archive, XL["part"]))
-        nsm = ns_manager(sd)
-        sheet_data = sd.SelectSingleNode("//a:sheetData", nsm)
-        row_nodes = {}
-        for r in sheet_data.SelectNodes("a:row", nsm):
-            try:
-                row_nodes[int(r.GetAttribute("r"))] = r
-            except Exception:
-                continue
-
-        def get_row(rn):
-            node = row_nodes.get(rn)
-            if node is not None:
-                return node
-            node = sd.CreateElement("row", NS_MAIN)
-            node.SetAttribute("r", str(rn))
-            after = [k for k in row_nodes if k > rn]
-            if after:
-                sheet_data.InsertBefore(node, row_nodes[min(after)])
-            else:
-                sheet_data.AppendChild(node)
-            row_nodes[rn] = node
-            return node
-
-        def set_cell(rn, ci, text=None, formula=None):
-            row = get_row(rn)
-            ref = col_letters(ci) + str(rn)
-            target, before = None, None
-            for c in row.SelectNodes("a:c", nsm):
-                cref = to_unicode(c.GetAttribute("r"))
-                if cref == ref:
-                    target = c
-                    break
-                if cref and split_ref(cref)[0] > ci:
-                    before = c
-                    break
-            if target is None:
-                target = sd.CreateElement("c", NS_MAIN)
-                target.SetAttribute("r", ref)
-                if before is not None:
-                    row.InsertBefore(target, before)
-                else:
-                    row.AppendChild(target)
-            while target.HasChildNodes:              # mantém só o estilo (s)
-                target.RemoveChild(target.FirstChild)
-            if target.HasAttribute("t"):
-                target.RemoveAttribute("t")
-            text = to_unicode(text or u"")
-            if formula:
-                target.SetAttribute("t", "str")
-                f = sd.CreateElement("f", NS_MAIN)
-                f.InnerText = formula
-                target.AppendChild(f)
-                v = sd.CreateElement("v", NS_MAIN)
-                v.InnerText = text
-                target.AppendChild(v)
-            elif text:
-                target.SetAttribute("t", "inlineStr")
-                is_el = sd.CreateElement("is", NS_MAIN)
-                t_el = sd.CreateElement("t", NS_MAIN)
-                t_el.InnerText = text
-                is_el.AppendChild(t_el)
-                target.AppendChild(is_el)
-
-        # preencher descrições vazias
-        for rec, field, value in fills:
-            set_cell(rec["row"], cols[field], value)
-            rec[field] = value
-
-        # acrescentar no fim da tabela: próxima linha sem conteúdo e sem fórmula
-        last = XL["last_row"]
-        rn = last
-        for item in appends:
-            rn += 1
-            while rn in XL["grid"] or rn in XL["formula_rows"]:
-                rn += 1
-            if "prefix" in cols and "seq" in cols:
-                c_pf, c_sq = col_letters(cols["prefix"]), col_letters(cols["seq"])
-                set_cell(rn, cols["prefix"], item["prefix"])
-                set_cell(rn, cols["seq"], item["seq"])
-                set_cell(rn, cols["key"], item["key"],
-                         formula=u"_xlfn.CONCAT({0}{2}:{1}{2})".format(c_pf, c_sq, rn))
-                if "grp" in cols:
-                    set_cell(rn, cols["grp"], item["grp"], formula=(
-                        u'IFERROR(VLOOKUP({0}{1},{2}!A:B,2,FALSE),"")'.format(
-                            c_pf, rn, DATA_SHEET_NAME)))
-                    if "cat" in cols:
-                        set_cell(rn, cols["cat"], item["cat"], formula=(
-                            u'IFERROR(VLOOKUP({0}{1},{2}!B:C,2,FALSE),"")'.format(
-                                col_letters(cols["grp"]), rn, DATA_SHEET_NAME)))
-            else:
-                set_cell(rn, cols["key"], item["key"])
-            set_cell(rn, cols["pt"], item["pt"])
-            set_cell(rn, cols["en"], item["en"])
-            if "obs" in cols:
-                set_cell(rn, cols["obs"], item["obs"])
-            last = rn
-            rec = {"row": rn, "key": item["key"], "pt": item["pt"], "en": item["en"],
-                   "cat": item["cat"], "grp": item["grp"], "prefix": item["prefix"],
-                   "seq": item["seq"], "obs": item["obs"]}
-            XL["rows"].append(rec)
-            XL["by_key"][item["key"]] = rec
-
-        # AutoFiltro e dimensão acompanham a nova última linha
-        def grow_ref(ref):
-            m = re.match(r"^(\$?[A-Z]+\$?\d+:\$?[A-Z]+\$?)(\d+)$", ref)
-            if m and int(m.group(2)) < last:
-                return m.group(1) + str(last)
-            return ref
-
-        af = sd.SelectSingleNode("//a:autoFilter", nsm)
-        if af is not None and af.GetAttribute("ref"):
-            af.SetAttribute("ref", grow_ref(to_unicode(af.GetAttribute("ref"))))
-        dim = sd.SelectSingleNode("//a:dimension", nsm)
-        if dim is not None and dim.GetAttribute("ref"):
-            dim.SetAttribute("ref", grow_ref(to_unicode(dim.GetAttribute("ref"))))
-
-        # workbook: intervalo do filtro + recalcular fórmulas ao abrir
-        wb = load_xml(zip_read(archive, "xl/workbook.xml"))
-        wnsm = ns_manager(wb)
-        for dn in wb.SelectNodes("//a:definedNames/a:definedName", wnsm):
-            if to_unicode(dn.GetAttribute("name")) == u"_xlnm._FilterDatabase" and \
-                    to_unicode(dn.GetAttribute("localSheetId")) == str(XL["pos"]):
-                txt = to_unicode(dn.InnerText)
-                m = re.match(r"^(.*!\$?[A-Z]+\$?\d+:\$?[A-Z]+\$?)(\d+)$", txt)
-                if m and int(m.group(2)) < last:
-                    dn.InnerText = m.group(1) + str(last)
-        calc = wb.SelectSingleNode("//a:calcPr", wnsm)
-        if calc is not None:
-            calc.SetAttribute("fullCalcOnLoad", "1")
-
-        for part, xdoc in ((XL["part"], sd), ("xl/workbook.xml", wb)):
-            old = archive.GetEntry(part)
-            if old is not None:
-                old.Delete()
-            entry = archive.CreateEntry(part)
-            writer = StreamWriter(entry.Open(), UTF8Encoding(False))
-            try:
-                writer.Write(xdoc.OuterXml)
-            finally:
-                writer.Dispose()
-    finally:
-        archive.Dispose()
-    return backup
 
 
 # ------------------------------------------------------------------
@@ -1309,21 +1025,13 @@ def cat_rank(cat):
 
 
 # ------------------------------------------------------------------
-# 5d. Destaque temporário no modelo (vista ativa)
-#     Caso 1  keynote + description ......... nada
-#     Caso 2  keynote + description vazia ... VERMELHO
-#     Caso 3  keynote vazio + description ... VERMELHO
-#     Caso 4  keynote vazio + description vazia LARANJA
-#   Avaliado nos TIPOS (onde ficam Keynote e Description). As cores são
-#   sobreposições de vista aplicadas numa transação que é DESFEITA ao fechar a
-#   tabela de verificação - nada fica gravado no modelo.
+# 5d. Situação dos TIPOS no modelo + destaque temporário (vista ativa)
+#   LARANJA: tipo sem Keynote, sem Descrição (Description) ou sem
+#   Descrição IN (parâmetro ausente ou vazio). As cores são sobreposições de
+#   vista aplicadas numa transação DESFEITA ao fechar a tabela - nada fica
+#   gravado no modelo.
 # ------------------------------------------------------------------
-HL_CASES = {
-    2: (u"red", u"Keynote preenchido, Description vazia"),
-    3: (u"red", u"Keynote vazio, Description preenchida"),
-    4: (u"orange", u"Keynote e Description vazios"),
-}
-HL_RGB = {u"red": (232, 74, 74), u"orange": (255, 140, 0)}
+HL_RGB = (255, 140, 0)
 hl_note = u""
 
 
@@ -1343,19 +1051,16 @@ def view_allows_overrides(view):
     return view.ViewType not in bad
 
 
-def collect_highlight():
-    """Tipos (com parâmetro Keynote) dos elementos VISÍVEIS na vista ativa
-    que caem nos casos 2, 3 ou 4."""
-    global hl_note
-    if not view_allows_overrides(active_view):
-        hl_note = u"vista ativa não aceita sobreposição de cores (tabela, folha...)"
-        return []
-    by_type = {}
+def scan_types(view=None):
+    """Tipos COM parâmetro Keynote usados por elementos de categorias de modelo
+    (no modelo inteiro ou só os visíveis na vista). -> lista de dicts."""
     try:
-        elems = (DB.FilteredElementCollector(doc, active_view.Id)
-                 .WhereElementIsNotElementType().ToElements())
+        col = (DB.FilteredElementCollector(doc, view.Id) if view is not None
+               else DB.FilteredElementCollector(doc))
+        elems = col.WhereElementIsNotElementType().ToElements()
     except Exception:
         elems = []
+    by_type = OrderedDict()
     for e in elems:
         cat = e.Category
         if cat is None or not is_model_category(cat):
@@ -1366,28 +1071,52 @@ def collect_highlight():
             continue
         if tid is None or tid == INVALID_ID:
             continue
-        info = by_type.setdefault(eid_int(tid), [tid, [], to_unicode(cat.Name)])
-        info[1].append(e.Id)
+        info = by_type.setdefault(eid_int(tid), {"tid": tid, "ids": [],
+                                                 "category": to_unicode(cat.Name)})
+        info["ids"].append(e.Id)
     out = []
-    for tid, ids, cname in by_type.values():
-        t = doc.GetElement(tid)
+    for info in by_type.values():
+        t = doc.GetElement(info["tid"])
         if t is None:
             continue
         try:
-            kp = t.get_Parameter(BIP.KEYNOTE_PARAM)
+            if t.get_Parameter(BIP.KEYNOTE_PARAM) is None:
+                continue                   # categoria sem parâmetro Keynote
         except Exception:
-            kp = None
-        if kp is None:
-            continue                       # categoria sem parâmetro Keynote
-        key, desc = param_text(kp), param_text(desc_param(t))
-        if key and desc:
-            continue                       # caso 1
-        case = 2 if key else (3 if desc else 4)
-        color, label = HL_CASES[case]
-        out.append({"case": case, "color": color, "label": label, "category": cname,
-                    "family": family_name(t), "type": elem_name(t), "typeId": eid_int(tid),
-                    "key": key, "desc": desc, "count": len(ids), "ids": ids})
-    out.sort(key=lambda x: (x["case"], x["category"], x["family"], x["type"]))
+            continue
+        info["t"] = t
+        out.append(info)
+    return out
+
+
+def type_status(t):
+    """-> (keynote, descrição, descrição IN, tem parâmetro IN, campos faltando)"""
+    key = keynote_of(t)
+    desc = param_text(desc_param(t))
+    ip = in_param(t)
+    en = param_text(ip) if ip is not None else u""
+    missing = [lbl for lbl, v in ((u"Keynote", key), (u"Descrição", desc),
+                                  (PARAM_IN_NAME, en)) if not v]
+    return key, desc, en, ip is not None, missing
+
+
+def collect_highlight():
+    """Tipos visíveis na vista ativa sem Keynote, Descrição ou Descrição IN."""
+    global hl_note
+    if not view_allows_overrides(active_view):
+        hl_note = u"vista ativa não aceita sobreposição de cores (tabela, folha...)"
+        return []
+    out = []
+    for info in scan_types(active_view):
+        t = info["t"]
+        key, desc, en, has_in, missing = type_status(t)
+        if not missing:
+            continue
+        out.append({"color": u"orange", "missing": missing, "category": info["category"],
+                    "family": family_name(t), "type": elem_name(t), "typeId": eid_int(t.Id),
+                    "key": key, "desc": desc, "en": en, "hasIn": has_in,
+                    "count": len(info["ids"]), "ids": info["ids"]})
+    out.sort(key=lambda x: (x["category"], x["family"], x["type"]))
     return out
 
 
@@ -1405,29 +1134,26 @@ def solid_fill_id():
 
 
 def apply_highlight(hl):
-    """Aplica as cores numa transação ABERTA e redesenha a vista. Devolve a
+    """Aplica o LARANJA numa transação ABERTA e redesenha a vista. Devolve a
     transação para ser desfeita (RollBack) quando a tabela fechar."""
     if not hl:
         return None
     fill = solid_fill_id()
-    ogs = {}
-    for color, (r_, g_, b_) in HL_RGB.items():
-        c = DB.Color(r_, g_, b_)
-        o = DB.OverrideGraphicSettings()
-        o.SetProjectionLineColor(c)
-        o.SetCutLineColor(c)
-        if fill != INVALID_ID:
-            o.SetSurfaceForegroundPatternId(fill)
-            o.SetSurfaceForegroundPatternColor(c)
-            o.SetCutForegroundPatternId(fill)
-            o.SetCutForegroundPatternColor(c)
-        ogs[color] = o
+    c = DB.Color(*HL_RGB)
+    ogs = DB.OverrideGraphicSettings()
+    ogs.SetProjectionLineColor(c)
+    ogs.SetCutLineColor(c)
+    if fill != INVALID_ID:
+        ogs.SetSurfaceForegroundPatternId(fill)
+        ogs.SetSurfaceForegroundPatternColor(c)
+        ogs.SetCutForegroundPatternId(fill)
+        ogs.SetCutForegroundPatternColor(c)
     t = DB.Transaction(doc, u"Destaque temporário - Keynotes")
     t.Start()
     for item in hl:
         for eid in item["ids"]:
             try:
-                active_view.SetElementOverrides(eid, ogs[item["color"]])
+                active_view.SetElementOverrides(eid, ogs)
             except Exception:
                 pass
     try:
@@ -1450,54 +1176,67 @@ def remove_highlight(t):
 
 
 # ------------------------------------------------------------------
-# 5e. Linhas de verificação nos dois sentidos
-#     dir "model": EXCEL -> MODELO (uma linha por tipo/material)
-#     dir "excel": MODELO -> EXCEL (uma linha por keynote)
+# 5e. Tabela 1 - Excel -> Modelo
+#     Tipos com o MESMO Keynote, mesma Descrição, mesma Descrição IN e mesma
+#     Categoria (e a mesma alteração proposta) viram UMA linha.
 # ------------------------------------------------------------------
 def model_rows():
     plan, blocked = plan_to_model()
     by_h = OrderedDict()
     for it in plan + blocked:
         by_h.setdefault(it["h"]["id"], []).append(it)
-    rows = []
+    merged = OrderedDict()
     for its in by_h.values():
         h = its[0]["h"]
-        r = {"dir": "model", "key": h["key"], "h": h, "items": its,
-             "pt_old": h["pt"], "en_old": h["en"], "pt_new": None, "en_new": None,
-             "over": set(), "blocked": {}}
+        new = {"pt": None, "en": None}
+        blk = {}
         for it in its:
             if it["reason"]:
-                r["blocked"][it["field"]] = it["reason"]
+                blk[it["field"]] = it["reason"]
             else:
-                r[it["field"] + "_new"] = it["new"]
-                if it["old"]:
-                    r["over"].add(it["field"])
-        r["enabled"] = any(not it["reason"] for it in its)
-        rows.append(r)
+                new[it["field"]] = it["new"]
+        gkey = (h["key"], h["category"], h["pt"], h["en"], new["pt"], new["en"],
+                tuple(sorted(blk.items())))
+        r = merged.get(gkey)
+        if r is None:
+            r = merged[gkey] = {
+                "dir": "model", "key": h["key"], "h": h, "hs": [], "items": [],
+                "category": h["category"], "pt_old": h["pt"], "en_old": h["en"],
+                "pt_new": new["pt"], "en_new": new["en"], "over": set(), "blocked": blk}
+        r["hs"].append(h)
+        r["items"].extend(its)
+        for it in its:
+            if not it["reason"] and it["old"]:
+                r["over"].add(it["field"])
+    rows = list(merged.values())
+    for r in rows:
+        r["enabled"] = any(not it["reason"] for it in r["items"])
     return rows, plan, blocked
 
 
-def fam_type(h):
-    if h["kind"] == "material":
-        return u"Material", h["name"]
-    return (h["family"] or h["category"]), h["name"]
+def _names(values, n=2):
+    vals = []
+    for v in values:
+        if v and v not in vals:
+            vals.append(v)
+    if len(vals) <= n:
+        return u", ".join(vals)
+    return u"{} (+{})".format(u", ".join(vals[:n]), len(vals) - n)
 
 
 def row_view(r):
-    """Texto das colunas da tabela (janela e HTML)."""
+    """Texto das colunas da tabela 1 (janela e HTML)."""
     cat, grp = agrup_of(r["key"])
-    if r["dir"] == "model":
-        fam, typ = fam_type(r["h"])
+    hs = r["hs"]
+    fam = _names([h["family"] or h["category"] for h in hs])
+    if len(hs) == 1:
+        typ = hs[0]["name"]
     else:
-        fam, typ = fam_type(r["rep"])
-        if r["nh"] > 1:
-            typ = u"{}  (+{} tipo/material)".format(typ, r["nh"] - 1)
+        typ = u"{} tipos: {}".format(len(hs), _names([h["name"] for h in hs], 3))
 
     def cur(v, no_param=False):
         if no_param:
             return u"(sem parâmetro)"
-        if v is None:
-            return u"(não está no Excel)"
         return v or u"(vazio)"
 
     def new(f):
@@ -1508,44 +1247,89 @@ def row_view(r):
             return u"(bloqueado)"
         return u"(mantém)"
 
-    if r["dir"] == "model":
-        pt_cur, en_cur = cur(r["pt_old"]), cur(r["en_old"], r["h"]["en"] is None)
-        dest = u"→ Modelo"
-    else:
-        pt_cur, en_cur = cur(r["pt_old"]), cur(r["en_old"])
-        dest = u"→ Excel · nova linha" if r["append"] else u"→ Excel"
+    dest = u"→ Modelo"
     notes = []
     if r["over"]:
         notes.append(u"sobrescreve")
-    if r["dir"] == "excel" and r["multi"]:
-        notes.append(u"modelo com valores diferentes")
     for f, why in sorted(r["blocked"].items()):
         notes.append(u"{} bloqueado: {}".format(u"PT" if f == "pt" else u"IN", why))
     if notes:
         dest += u" · " + u" · ".join(notes)
-    if not r["enabled"]:
-        kind = u"blocked"
-    elif r["over"]:
-        kind = u"over"
-    else:
-        kind = u"fill"
-    return {"cat": cat, "grp": grp, "family": fam, "type": typ, "key": r["key"],
-            "ptCur": pt_cur, "ptNew": new("pt"), "enCur": en_cur, "enNew": new("en"),
+    kind = u"blocked" if not r["enabled"] else (u"over" if r["over"] else u"fill")
+    return {"cat": cat, "grp": grp, "category": r["category"], "family": fam,
+            "type": typ, "nTypes": len(hs), "count": sum(h["count"] for h in hs),
+            "key": r["key"], "ptCur": cur(r["pt_old"]), "ptNew": new("pt"),
+            "enCur": cur(r["en_old"], r["h"]["en"] is None), "enNew": new("en"),
             "dest": dest, "dir": r["dir"], "kind": kind}
 
 
-def writes_of(r):
-    return set(f for f in ("pt", "en") if r[f + "_new"] is not None)
+# ------------------------------------------------------------------
+# 5e'. Tabela 2 - tipos do modelo SEM Keynote ou SEM Descrição (editável)
+# ------------------------------------------------------------------
+def collect_incomplete():
+    rows = []
+    for info in scan_types():
+        t = info["t"]
+        key, desc, en, has_in, missing = type_status(t)
+        if key and desc:
+            continue
+        rows.append({"t": t, "id": eid_int(t.Id), "category": info["category"],
+                     "family": family_name(t), "name": elem_name(t),
+                     "count": len(info["ids"]), "hasIn": has_in,
+                     "key0": key, "pt0": desc, "en0": en,
+                     "key": key, "pt": desc, "en": en,
+                     "sel": False, "check": u"", "status": u""})
+    rows.sort(key=lambda r: (r["category"], r["family"], r["name"]))
+    return rows
 
 
-def conflicts(a, b):
-    """Mesmo keynote, sentidos opostos e o mesmo campo sendo gravado."""
-    return (a["dir"] != b["dir"] and a["key"] == b["key"]
-            and bool(writes_of(a) & writes_of(b)))
+def inc_changed(r):
+    """Algum campo digitado difere do valor atual? (vazio nunca apaga)"""
+    return any(clean(r[f]) and clean(r[f]) != r[f + "0"] for f in ("key", "pt", "en"))
+
+
+def verify_incomplete(r, autofill):
+    """Confere a linha com o Excel. autofill: completa Descrição / Descrição IN
+    vazias com os valores do Excel quando o Keynote existe na planilha."""
+    for f in ("key", "pt", "en"):
+        r[f] = clean(r[f])
+    rec = XL["by_key"].get(r["key"]) if r["key"] else None
+    filled = []
+    if autofill and rec is not None:
+        if not r["pt"] and rec["pt"]:
+            r["pt"] = rec["pt"]
+            filled.append(u"Descrição")
+        if not r["en"] and rec["en"] and r["hasIn"]:
+            r["en"] = rec["en"]
+            filled.append(PARAM_IN_NAME)
+    errs, warns = [], []
+    if not r["key"]:
+        errs.append(u"falta Keynote")
+    elif rec is None:
+        warns.append(u"Keynote não está no Excel")
+    if not r["pt"]:
+        errs.append(u"falta Descrição")
+    elif rec is not None and rec["pt"] and r["pt"] != rec["pt"]:
+        warns.append(u"Descrição difere do Excel")
+    if not r["hasIn"]:
+        warns.append(u"sem parâmetro {}".format(PARAM_IN_NAME))
+    elif not r["en"]:
+        warns.append(u"{} vazia".format(PARAM_IN_NAME))
+    elif rec is not None and rec["en"] and r["en"] != rec["en"]:
+        warns.append(u"{} difere do Excel".format(PARAM_IN_NAME))
+    parts = []
+    if errs:
+        parts.append(u"Erro: " + u", ".join(errs))
+    if warns:
+        parts.append(u"Aviso: " + u", ".join(warns))
+    if filled:
+        parts.append(u"Completado do Excel: " + u", ".join(filled))
+    r["check"] = u" · ".join(parts) if parts else u"OK"
+    return r["check"]
 
 
 # ------------------------------------------------------------------
-# 5f. Janela de verificação: tabela única agrupada por Agrupamento
+# 5f. Janela de verificação (Aba 2): duas tabelas, busca e agrupamento
 # ------------------------------------------------------------------
 for _asm in ("PresentationFramework", "PresentationCore", "WindowsBase", "System.Data"):
     try:
@@ -1555,12 +1339,42 @@ for _asm in ("PresentationFramework", "PresentationCore", "WindowsBase", "System
 import System
 from System.Data import DataTable
 
+_GRID_STYLE = u"""
+              AutoGenerateColumns="False" CanUserAddRows="False"
+              CanUserDeleteRows="False" CanUserSortColumns="False" CanUserReorderColumns="False"
+              CanUserResizeRows="False" HeadersVisibility="Column" SelectionMode="Single"
+              SelectionUnit="FullRow" GridLinesVisibility="Horizontal"
+              HorizontalGridLinesBrush="#1C2B44" Background="#0A1120" RowBackground="#0E1526"
+              AlternatingRowBackground="#111C31" Foreground="#D9E8F5" BorderBrush="#2A4A66"
+              BorderThickness="1" FontFamily="Segoe UI" FontSize="12"
+              VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Auto"
+              EnableRowVirtualization="True" FrozenColumnCount="1"
+              ColumnHeaderStyle="{StaticResource head}" RowStyle="{StaticResource row}" """
+
+_CHECK_COL = u"""
+        <DataGridTemplateColumn Header="✓" Width="36">
+          <DataGridTemplateColumn.CellTemplate>
+            <DataTemplate>
+              <CheckBox HorizontalAlignment="Center" VerticalAlignment="Center"
+                        IsChecked="{Binding Sel, UpdateSourceTrigger=PropertyChanged}"
+                        IsEnabled="{Binding Enabled}"/>
+            </DataTemplate>
+          </DataGridTemplateColumn.CellTemplate>
+        </DataGridTemplateColumn>"""
+
+
+def _col(header, binding, width, style=u"wrap", readonly=True):
+    return (u'<DataGridTextColumn Header="{}" Binding="{{Binding {}}}" Width="{}" '
+            u'IsReadOnly="{}" ElementStyle="{{StaticResource {}}}"/>'.format(
+                header, binding, width, u"True" if readonly else u"False", style))
+
+
 VERIFY_XAML = u"""
 <Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="Verificação de Keynotes · Modelo × Excel" Width="1400" Height="780"
-        MinWidth="900" MinHeight="460" WindowStartupLocation="CenterScreen"
-        Background="#0E1526">
+        Title="Atualização das Descrições do Modelo por Keynote · Verificação"
+        Width="1450" Height="900" MinWidth="900" MinHeight="560"
+        WindowStartupLocation="CenterScreen" Background="#0E1526">
   <Window.Resources>
     <Style TargetType="Button">
       <Setter Property="Height" Value="28"/>
@@ -1575,99 +1389,122 @@ VERIFY_XAML = u"""
       <Setter Property="FontFamily" Value="Consolas"/>
       <Setter Property="Padding" Value="4,2,4,2"/>
     </Style>
+    <Style x:Key="edit" TargetType="TextBlock">
+      <Setter Property="TextWrapping" Value="Wrap"/>
+      <Setter Property="Padding" Value="4,2,4,2"/>
+      <Setter Property="Background" Value="#16233B"/>
+    </Style>
+    <Style x:Key="lbl" TargetType="TextBlock">
+      <Setter Property="Foreground" Value="#65E3FF"/>
+      <Setter Property="FontFamily" Value="Segoe UI"/>
+      <Setter Property="FontWeight" Value="SemiBold"/>
+      <Setter Property="VerticalAlignment" Value="Center"/>
+      <Setter Property="Margin" Value="0,0,16,0"/>
+    </Style>
+    <Style x:Key="head" TargetType="DataGridColumnHeader">
+      <Setter Property="Background" Value="#13203A"/>
+      <Setter Property="Foreground" Value="#65E3FF"/>
+      <Setter Property="FontWeight" Value="SemiBold"/>
+      <Setter Property="Padding" Value="6,6,6,6"/>
+      <Setter Property="BorderBrush" Value="#2A4A66"/>
+      <Setter Property="BorderThickness" Value="0,0,1,1"/>
+    </Style>
+    <Style x:Key="row" TargetType="DataGridRow">
+      <Style.Triggers>
+        <DataTrigger Binding="{Binding Kind}" Value="group">
+          <Setter Property="Background" Value="#1B2A47"/>
+          <Setter Property="Foreground" Value="#65E3FF"/>
+          <Setter Property="FontWeight" Value="Bold"/>
+        </DataTrigger>
+        <DataTrigger Binding="{Binding Kind}" Value="fill">
+          <Setter Property="Foreground" Value="#7BE3A0"/>
+        </DataTrigger>
+        <DataTrigger Binding="{Binding Kind}" Value="over">
+          <Setter Property="Foreground" Value="#FFB454"/>
+        </DataTrigger>
+        <DataTrigger Binding="{Binding Kind}" Value="blocked">
+          <Setter Property="Foreground" Value="#7A8FA9"/>
+        </DataTrigger>
+        <DataTrigger Binding="{Binding Kind}" Value="changed">
+          <Setter Property="Foreground" Value="#7BE3A0"/>
+        </DataTrigger>
+      </Style.Triggers>
+    </Style>
   </Window.Resources>
   <Grid Margin="16">
     <Grid.RowDefinitions>
       <RowDefinition Height="Auto"/>
       <RowDefinition Height="Auto"/>
-      <RowDefinition Height="*"/>
+      <RowDefinition Height="Auto"/>
+      <RowDefinition Height="3*"/>
+      <RowDefinition Height="6"/>
+      <RowDefinition Height="Auto"/>
+      <RowDefinition Height="2*"/>
       <RowDefinition Height="Auto"/>
     </Grid.RowDefinitions>
     <StackPanel Grid.Row="0">
-      <TextBlock Text="VERIFICAÇÃO  ·  MODELO × EXCEL" FontSize="15" FontWeight="SemiBold"
-                 Foreground="#65E3FF" FontFamily="Segoe UI"/>
+      <TextBlock Text="ATUALIZAÇÃO DAS DESCRIÇÕES DO MODELO POR KEYNOTE" FontSize="15"
+                 FontWeight="SemiBold" Foreground="#65E3FF" FontFamily="Segoe UI"/>
       <TextBlock x:Name="info" TextWrapping="Wrap" FontSize="12" Foreground="#CFE3FF"
                  FontFamily="Segoe UI" Margin="0,6,0,0"/>
-      <TextBlock x:Name="hlinfo" TextWrapping="Wrap" FontSize="12" Foreground="#FF9A9A"
+      <TextBlock x:Name="hlinfo" TextWrapping="Wrap" FontSize="12" Foreground="#FFB454"
                  FontFamily="Segoe UI" Margin="0,4,0,0"/>
-      <TextBlock TextWrapping="Wrap" FontSize="11" Foreground="#7A8FA9" FontFamily="Segoe UI"
-                 Margin="0,4,0,0"
-                 Text="→ Modelo = valor do Excel gravado no tipo/material  ·  → Excel = valor do modelo gravado na planilha  ·  Verde = preenche vazio  ·  Âmbar = sobrescreve valor existente  ·  Cinza = não pode ser gravado. Marcar a linha do agrupamento marca o grupo inteiro (linhas visíveis). Um mesmo campo não pode ir para os dois lados ao mesmo tempo: marcar um lado desmarca o outro."/>
     </StackPanel>
-    <WrapPanel Grid.Row="1" Margin="0,12,0,8">
-      <TextBlock Text="Sentido " Foreground="#CFE3FF" VerticalAlignment="Center" FontFamily="Segoe UI"/>
-      <ComboBox x:Name="f_dir" Width="170" Height="26" Margin="0,0,14,0"/>
-      <TextBlock Text="Agrupamento " Foreground="#CFE3FF" VerticalAlignment="Center" FontFamily="Segoe UI"/>
-      <ComboBox x:Name="f_cat" Width="210" Height="26" Margin="0,0,14,0"/>
+    <WrapPanel Grid.Row="1" Margin="0,10,0,6">
+      <TextBlock Text="Agrupar por " Foreground="#CFE3FF" VerticalAlignment="Center" FontFamily="Segoe UI"/>
+      <ComboBox x:Name="f_mode" Width="130" Height="26" Margin="0,0,14,0"/>
+      <TextBlock Text="Grupo " Foreground="#CFE3FF" VerticalAlignment="Center" FontFamily="Segoe UI"/>
+      <ComboBox x:Name="f_grp" Width="230" Height="26" Margin="0,0,14,0"/>
       <TextBlock Text="Buscar " Foreground="#CFE3FF" VerticalAlignment="Center" FontFamily="Segoe UI"/>
-      <TextBox x:Name="f_text" Width="200" Height="26" Margin="0,0,14,0" Padding="4,3,4,2"/>
+      <TextBox x:Name="f_text" Width="260" Height="26" Margin="0,0,14,0" Padding="4,3,4,2"/>
+    </WrapPanel>
+    <DockPanel Grid.Row="2" Margin="0,6,0,6" LastChildFill="False">
+      <TextBlock Style="{StaticResource lbl}"
+                 Text="1 · EXCEL → MODELO  (tipos iguais agrupados numa linha)"/>
       <Button x:Name="b_all" Content="Marcar visíveis"/>
       <Button x:Name="b_none" Content="Desmarcar visíveis"/>
       <Button x:Name="b_fill" Content="Somente preencher vazios"/>
-    </WrapPanel>
-    <DataGrid x:Name="grid" Grid.Row="2" AutoGenerateColumns="False" CanUserAddRows="False"
-              CanUserDeleteRows="False" CanUserSortColumns="False" CanUserReorderColumns="False"
-              CanUserResizeRows="False" HeadersVisibility="Column" SelectionMode="Single"
-              SelectionUnit="FullRow" GridLinesVisibility="Horizontal"
-              HorizontalGridLinesBrush="#1C2B44" Background="#0A1120" RowBackground="#0E1526"
-              AlternatingRowBackground="#111C31" Foreground="#D9E8F5" BorderBrush="#2A4A66"
-              BorderThickness="1" FontFamily="Segoe UI" FontSize="12"
-              VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Auto"
-              EnableRowVirtualization="True" FrozenColumnCount="1">
-      <DataGrid.ColumnHeaderStyle>
-        <Style TargetType="DataGridColumnHeader">
-          <Setter Property="Background" Value="#13203A"/>
-          <Setter Property="Foreground" Value="#65E3FF"/>
-          <Setter Property="FontWeight" Value="SemiBold"/>
-          <Setter Property="Padding" Value="6,6,6,6"/>
-          <Setter Property="BorderBrush" Value="#2A4A66"/>
-          <Setter Property="BorderThickness" Value="0,0,1,1"/>
-        </Style>
-      </DataGrid.ColumnHeaderStyle>
-      <DataGrid.RowStyle>
-        <Style TargetType="DataGridRow">
-          <Style.Triggers>
-            <DataTrigger Binding="{Binding Kind}" Value="group">
-              <Setter Property="Background" Value="#1B2A47"/>
-              <Setter Property="Foreground" Value="#65E3FF"/>
-              <Setter Property="FontWeight" Value="Bold"/>
-            </DataTrigger>
-            <DataTrigger Binding="{Binding Kind}" Value="fill">
-              <Setter Property="Foreground" Value="#7BE3A0"/>
-            </DataTrigger>
-            <DataTrigger Binding="{Binding Kind}" Value="over">
-              <Setter Property="Foreground" Value="#FFB454"/>
-            </DataTrigger>
-            <DataTrigger Binding="{Binding Kind}" Value="blocked">
-              <Setter Property="Foreground" Value="#7A8FA9"/>
-            </DataTrigger>
-          </Style.Triggers>
-        </Style>
-      </DataGrid.RowStyle>
-      <DataGrid.Columns>
-        <DataGridTemplateColumn Header="✓" Width="36">
-          <DataGridTemplateColumn.CellTemplate>
-            <DataTemplate>
-              <CheckBox HorizontalAlignment="Center" VerticalAlignment="Center"
-                        IsChecked="{Binding Sel, UpdateSourceTrigger=PropertyChanged}"
-                        IsEnabled="{Binding Enabled}"/>
-            </DataTemplate>
-          </DataGridTemplateColumn.CellTemplate>
-        </DataGridTemplateColumn>
-        <DataGridTextColumn Header="Agrupamento de Keynotes" Binding="{Binding Grupo}" Width="190" IsReadOnly="True" ElementStyle="{StaticResource wrap}"/>
-        <DataGridTextColumn Header="Família" Binding="{Binding Familia}" Width="150" IsReadOnly="True" ElementStyle="{StaticResource wrap}"/>
-        <DataGridTextColumn Header="Tipo" Binding="{Binding Tipo}" Width="160" IsReadOnly="True" ElementStyle="{StaticResource wrap}"/>
-        <DataGridTextColumn Header="Keynote" Binding="{Binding Keynote}" Width="80" IsReadOnly="True" ElementStyle="{StaticResource mono}"/>
-        <DataGridTextColumn Header="Descrição atual" Binding="{Binding PtAtual}" Width="200" IsReadOnly="True" ElementStyle="{StaticResource wrap}"/>
-        <DataGridTextColumn Header="Descrição nova" Binding="{Binding PtNova}" Width="200" IsReadOnly="True" ElementStyle="{StaticResource wrap}"/>
-        <DataGridTextColumn Header="Descrição em IN atual" Binding="{Binding EnAtual}" Width="180" IsReadOnly="True" ElementStyle="{StaticResource wrap}"/>
-        <DataGridTextColumn Header="Descrição em IN nova" Binding="{Binding EnNova}" Width="180" IsReadOnly="True" ElementStyle="{StaticResource wrap}"/>
-        <DataGridTextColumn Header="Destino" Binding="{Binding Destino}" Width="200" IsReadOnly="True" ElementStyle="{StaticResource wrap}"/>
+      <TextBlock DockPanel.Dock="Right" VerticalAlignment="Center" FontSize="11"
+                 Foreground="#7A8FA9" FontFamily="Segoe UI"
+                 Text="Verde = preenche vazio · Âmbar = sobrescreve · Cinza = não pode ser gravado"/>
+    </DockPanel>
+    <DataGrid x:Name="grid" Grid.Row="3" """ + _GRID_STYLE + u""">
+      <DataGrid.Columns>""" + _CHECK_COL + u"""
+        """ + _col(u"Agrupamento", u"Grupo", 150) + u"""
+        """ + _col(u"Categoria", u"Categoria", 110) + u"""
+        """ + _col(u"Família", u"Familia", 130) + u"""
+        """ + _col(u"Tipo", u"Tipo", 170) + u"""
+        """ + _col(u"Keynote", u"Keynote", 75, u"mono") + u"""
+        """ + _col(u"Descrição atual", u"PtAtual", 180) + u"""
+        """ + _col(u"Descrição nova", u"PtNova", 180) + u"""
+        """ + _col(u"Descrição em IN atual", u"EnAtual", 160) + u"""
+        """ + _col(u"Descrição em IN nova", u"EnNova", 160) + u"""
+        """ + _col(u"Destino", u"Destino", 150) + u"""
       </DataGrid.Columns>
     </DataGrid>
-    <DockPanel Grid.Row="3" Margin="0,12,0,0" LastChildFill="False">
+    <GridSplitter Grid.Row="4" Height="6" HorizontalAlignment="Stretch" Background="#1C2B44"/>
+    <DockPanel Grid.Row="5" Margin="0,8,0,6" LastChildFill="False">
+      <TextBlock Style="{StaticResource lbl}"
+                 Text="2 · ELEMENTOS DO MODELO SEM KEYNOTE OU SEM DESCRIÇÃO  (clique duas vezes para digitar)"/>
+      <Button x:Name="b2_all" Content="Marcar visíveis"/>
+      <Button x:Name="b2_none" Content="Desmarcar visíveis"/>
+      <Button x:Name="b2_check" Content="Verificar"/>
+    </DockPanel>
+    <DataGrid x:Name="grid2" Grid.Row="6" """ + _GRID_STYLE + u""">
+      <DataGrid.Columns>""" + _CHECK_COL + u"""
+        """ + _col(u"Categoria", u"Categoria", 110) + u"""
+        """ + _col(u"Família", u"Familia", 140) + u"""
+        """ + _col(u"Tipo", u"Tipo", 180) + u"""
+        """ + _col(u"Qtd", u"Qtd", 45, u"mono") + u"""
+        """ + _col(u"Keynote ✎", u"Keynote", 95, u"edit", False) + u"""
+        """ + _col(u"Descrição ✎", u"Descricao", 230, u"edit", False) + u"""
+        """ + _col(u"Descrição em IN ✎", u"DescricaoIN", 210, u"edit", False) + u"""
+        """ + _col(u"Verificação", u"Verificacao", 300) + u"""
+      </DataGrid.Columns>
+    </DataGrid>
+    <DockPanel Grid.Row="7" Margin="0,12,0,0" LastChildFill="False">
       <TextBlock x:Name="counter" DockPanel.Dock="Left" VerticalAlignment="Center"
-                 Foreground="#CFE3FF" FontFamily="Segoe UI"/>
+                 Foreground="#CFE3FF" FontFamily="Segoe UI" TextWrapping="Wrap" MaxWidth="900"/>
       <Button x:Name="b_apply" DockPanel.Dock="Right" Content="Gravar marcados"
               Width="160" Margin="0"/>
       <Button x:Name="b_cancel" DockPanel.Dock="Right" Content="Cancelar" Width="100"
@@ -1677,9 +1514,13 @@ VERIFY_XAML = u"""
 </Window>
 """
 
-DIR_LABEL = {"all": u"Todos", "model": u"Excel → Modelo", "excel": u"Modelo → Excel"}
-COLS = ("Grupo", "Familia", "Tipo", "Keynote", "PtAtual", "PtNova", "EnAtual",
-        "EnNova", "Destino")
+GROUP_MODES = [u"Keynote", u"Categoria"]
+COLS1 = ("Grupo", "Categoria", "Familia", "Tipo", "Keynote", "PtAtual", "PtNova",
+         "EnAtual", "EnNova", "Destino")
+COLS2 = ("Categoria", "Familia", "Tipo", "Qtd", "Keynote", "Descricao", "DescricaoIN",
+         "Verificacao")
+EDIT2 = {"Keynote": "key", "Descricao": "pt", "DescricaoIN": "en"}
+NO_KEY = u"(sem keynote)"
 
 
 def _flt(text):
@@ -1690,187 +1531,310 @@ def _flt(text):
     return t
 
 
+def _key_label(key):
+    if not key:
+        return NO_KEY
+    cat, grp = agrup_of(key)
+    return u"{}   ·   {} ({})".format(key, grp, cat)
+
+
 class VerifyWindow(forms.WPFWindow):
-    def __init__(self, rows, readonly, info_text, hl_text):
+    def __init__(self, rows, inc, info_text, hl_text):
         forms.WPFWindow.__init__(self, VERIFY_XAML, literal_string=True)
-        self.confirmed, self.readonly, self._busy = False, readonly, False
-        self.rows = rows
+        self.confirmed, self._busy = False, False
+        self.rows, self.inc = rows, inc
         self.by_rid = dict((r["rid"], r) for r in rows)
+        self.by_rid2 = dict((r["rid"], r) for r in inc)
         self.info.Text = info_text
         self.hlinfo.Text = hl_text
 
-        tb = DataTable("verificacao")
-        for name, typ in (("RowId", System.Int32), ("Sel", System.Boolean),
-                          ("Enabled", System.Boolean), ("Kind", System.String),
-                          ("Dir", System.String), ("Cat", System.String)) + \
-                tuple((c, System.String) for c in COLS):
-            tb.Columns.Add(name, clr.GetClrType(typ))
-        self.table, self.drow, self.cats = tb, {}, []
+        self.t1 = self._new_table(COLS1)
+        self.t2 = self._new_table(COLS2)
+        self.d1, self.d2 = {}, {}
+        self.grid.ItemsSource = self.t1.DefaultView
+        self.grid2.ItemsSource = self.t2.DefaultView
 
-        gid, last_cat = 0, None
-        for r in rows:
-            v = r["view"]
-            if v["cat"] != last_cat:
-                gid -= 1
-                last_cat = v["cat"]
-                self.cats.append(v["cat"])
-                g = tb.NewRow()
-                g["RowId"], g["Kind"], g["Dir"], g["Cat"] = gid, u"group", u"", v["cat"]
-                g["Sel"], g["Enabled"] = False, True
-                g["Grupo"] = v["cat"]
-                for c in COLS[1:]:
-                    g[c] = u""
-                tb.Rows.Add(g)
-                self.drow[gid] = g
-            d = tb.NewRow()
-            d["RowId"], d["Kind"], d["Dir"], d["Cat"] = r["rid"], v["kind"], r["dir"], v["cat"]
-            d["Sel"], d["Enabled"] = bool(r["sel"]), bool(r["enabled"]) and not readonly
-            for c, k in zip(COLS, ("grp", "family", "type", "key", "ptCur", "ptNew",
-                                   "enCur", "enNew", "dest")):
-                d[c] = v[k]
-            tb.Rows.Add(d)
-            self.drow[r["rid"]] = d
+        self.f_mode.ItemsSource = GROUP_MODES
+        self.f_mode.SelectedIndex = 0
+        self._rebuild()
 
-        self.grid.ItemsSource = tb.DefaultView
-        dirs = sorted(set(r["dir"] for r in rows))
-        self.f_dir.ItemsSource = [DIR_LABEL["all"]] + [DIR_LABEL[d] for d in dirs]
-        self.f_dir.SelectedIndex = 0
-        self.f_dir.IsEnabled = len(dirs) > 1
-        self.f_cat.ItemsSource = [u"Todos"] + self.cats
-        self.f_cat.SelectedIndex = 0
-        self.f_dir.SelectionChanged += self._filter
-        self.f_cat.SelectionChanged += self._filter
+        self.f_mode.SelectionChanged += self._on_mode
+        self.f_grp.SelectionChanged += self._filter
         self.f_text.TextChanged += self._filter
-        tb.ColumnChanged += self._on_changed
-        self.b_all.Click += lambda s, a: self._set_visible(lambda r: True)
-        self.b_none.Click += lambda s, a: self._set_visible(lambda r: False)
-        self.b_fill.Click += lambda s, a: self._set_visible(lambda r: not r["over"])
+        self.t1.ColumnChanged += self._on_changed1
+        self.t2.ColumnChanged += self._on_changed2
+        self.grid2.BeginningEdit += self._no_edit_group
+        self.b_all.Click += lambda s, a: self._set_visible1(lambda r: True)
+        self.b_none.Click += lambda s, a: self._set_visible1(lambda r: False)
+        self.b_fill.Click += lambda s, a: self._set_visible1(lambda r: not r["over"])
+        self.b2_all.Click += lambda s, a: self._set_visible2(True)
+        self.b2_none.Click += lambda s, a: self._set_visible2(False)
+        self.b2_check.Click += self._verify_all
         self.b_apply.Click += self._apply
         self.b_cancel.Click += self._cancel
-        if readonly:
-            from System.Windows import Visibility
-            self.grid.Columns[0].Visibility = Visibility.Collapsed
-            for b in (self.b_all, self.b_none, self.b_fill, self.b_apply):
-                b.Visibility = Visibility.Collapsed
-            self.b_cancel.Content = u"Fechar"
-        self._sync_groups()
-        self._update_counter()
 
-    # ---- filtros ----
-    def _filter(self, sender, args):
-        parts = []
-        d = self.f_dir.SelectedItem
-        for k, lbl in DIR_LABEL.items():
-            if k != "all" and d == lbl:
-                parts.append(u"(Kind = 'group' OR Dir = '{}')".format(k))
-        c = self.f_cat.SelectedItem
-        if c and c != u"Todos":
-            parts.append(u"Cat = '{}'".format(_flt(c)))
-        t = _flt(self.f_text.Text).strip()
-        if t:
-            like = u" OR ".join(u"{} LIKE '%{}%'".format(col, t) for col in COLS[1:])
-            parts.append(u"(Kind = 'group' OR {})".format(like))
+    # ---- montagem das tabelas (com linhas de grupo) ----
+    @staticmethod
+    def _new_table(cols):
+        tb = DataTable("t")
+        for name, typ in (("RowId", System.Int32), ("Sel", System.Boolean),
+                          ("Enabled", System.Boolean), ("Kind", System.String),
+                          ("Grp", System.String)) + tuple((c, System.String) for c in cols):
+            tb.Columns.Add(name, clr.GetClrType(typ))
+        return tb
+
+    def _mode(self):
+        return self.f_mode.SelectedItem or GROUP_MODES[0]
+
+    def _grp1(self, r):
+        return _key_label(r["key"]) if self._mode() == u"Keynote" else r["category"]
+
+    def _grp2(self, r):
+        return _key_label(clean(r["key"])) if self._mode() == u"Keynote" else r["category"]
+
+    def _fill(self, tb, store, items, grp_of, values_of, sort_extra):
+        tb.Rows.Clear()
+        store.clear()
+        ordered = sorted(items, key=lambda r: (grp_of(r) == NO_KEY, grp_of(r)) + sort_extra(r))
+        gid, last = 0, None
+        for r in ordered:
+            g = grp_of(r)
+            if g != last:
+                gid -= 1
+                last = g
+                row = tb.NewRow()
+                row["RowId"], row["Kind"], row["Grp"] = gid, u"group", g
+                row["Sel"], row["Enabled"] = False, True
+                for i, c in enumerate(values_of(None)):
+                    row[c] = g if i == 0 else u""
+                tb.Rows.Add(row)
+                store[gid] = row
+            row = tb.NewRow()
+            row["RowId"], row["Grp"] = r["rid"], g
+            vals = values_of(r)
+            row["Kind"] = vals.pop("_kind")
+            row["Sel"], row["Enabled"] = bool(r["sel"]), bool(r.get("enabled", True))
+            for c, v in vals.items():
+                row[c] = v
+            tb.Rows.Add(row)
+            store[r["rid"]] = row
+
+    def _vals1(self, r):
+        if r is None:
+            return COLS1
+        v = r["view"]
+        return dict(zip(COLS1, (v["grp"], v["category"], v["family"], v["type"], v["key"],
+                                v["ptCur"], v["ptNew"], v["enCur"], v["enNew"], v["dest"])),
+                    _kind=v["kind"])
+
+    def _vals2(self, r):
+        if r is None:
+            return COLS2
+        return dict(zip(COLS2, (r["category"], r["family"], r["name"], to_unicode(r["count"]),
+                                r["key"], r["pt"], r["en"], r["check"])),
+                    _kind=u"changed" if inc_changed(r) else u"inc")
+
+    def _rebuild(self):
+        self._busy = True
         try:
-            self.table.DefaultView.RowFilter = u" AND ".join(parts)
-        except Exception:
-            self.table.DefaultView.RowFilter = u""
+            self._fill(self.t1, self.d1, self.rows, self._grp1, self._vals1,
+                       lambda r: (r["key"], r["view"]["category"], r["view"]["family"],
+                                  r["view"]["type"]))
+            self._fill(self.t2, self.d2, self.inc, self._grp2, self._vals2,
+                       lambda r: (r["category"], r["family"], r["name"]))
+            groups = []
+            for tb in (self.t1, self.t2):
+                for row in tb.Rows:
+                    if row["Kind"] == u"group" and row["Grp"] not in groups:
+                        groups.append(row["Grp"])
+            self.f_grp.ItemsSource = [u"Todos"] + sorted(groups)
+            self.f_grp.SelectedIndex = 0
+        finally:
+            self._busy = False
+        self._filter(None, None)
+
+    def _on_mode(self, sender, args):
+        self._commit()
+        self._rebuild()
+
+    # ---- filtros (busca e grupo valem para as duas tabelas) ----
+    def _filter(self, sender, args):
+        if self._busy:
+            return
+        g = self.f_grp.SelectedItem
+        t = _flt(self.f_text.Text).strip()
+        for tb, cols in ((self.t1, COLS1), (self.t2, COLS2)):
+            parts = []
+            if g and g != u"Todos":
+                parts.append(u"Grp = '{}'".format(_flt(g)))
+            if t:
+                like = u" OR ".join(u"{} LIKE '%{}%'".format(c, t) for c in cols)
+                parts.append(u"(Kind = 'group' OR {})".format(like))
+            try:
+                tb.DefaultView.RowFilter = u" AND ".join(parts)
+            except Exception:
+                tb.DefaultView.RowFilter = u""
         self._sync_groups()
         self._update_counter()
 
-    def _visible_rids(self):
+    @staticmethod
+    def _visible(tb):
         out = []
-        for drv in self.table.DefaultView:
+        for drv in tb.DefaultView:
             rid = int(drv.Row["RowId"])
             if rid >= 0:
                 out.append(rid)
         return out
 
-    # ---- seleção ----
-    def _check(self, rid, value):
-        """Marca/desmarca respeitando bloqueio e conflito de sentido."""
-        r = self.by_rid[rid]
-        if not r["enabled"] or self.readonly:
-            value = False
-        if value:
-            for o in self.rows:
-                if o is not r and o["sel"] and conflicts(o, r):
-                    o["sel"] = False
-                    self.drow[o["rid"]]["Sel"] = False
-        r["sel"] = bool(value)
-        self.drow[rid]["Sel"] = bool(value)
+    def _commit(self):
+        """Confirma uma célula em edição na tabela 2 antes de ler os valores."""
+        try:
+            from System.Windows.Controls import DataGridEditingUnit
+            self.grid2.CommitEdit(DataGridEditingUnit.Cell, True)
+            self.grid2.CommitEdit(DataGridEditingUnit.Row, True)
+        except Exception:
+            pass
 
-    def _on_changed(self, sender, e):
+    # ---- tabela 1 ----
+    def _check1(self, rid, value):
+        r = self.by_rid[rid]
+        r["sel"] = bool(value) and r["enabled"]
+        self.d1[rid]["Sel"] = r["sel"]
+
+    def _on_changed1(self, sender, e):
         if self._busy or e.Column.ColumnName != "Sel":
             return
         self._busy = True
         try:
-            rid = int(e.Row["RowId"])
-            val = e.Row["Sel"] == True
+            rid, val = int(e.Row["RowId"]), e.Row["Sel"] == True
             if rid < 0:
-                cat = e.Row["Cat"]
-                for vr in self._visible_rids():
-                    if self.by_rid[vr]["view"]["cat"] == cat and self.by_rid[vr]["enabled"]:
-                        self._check(vr, val)
+                for vr in self._visible(self.t1):
+                    if self.d1[vr]["Grp"] == e.Row["Grp"]:
+                        self._check1(vr, val)
             else:
-                self._check(rid, val)
+                self._check1(rid, val)
             self._sync_groups()
             self._update_counter()
         finally:
             self._busy = False
 
-    def _set_visible(self, rule):
+    def _set_visible1(self, rule):
         self._busy = True
         try:
-            vis = self._visible_rids()
-            # sentido Excel -> Modelo primeiro: em conflito, o Excel (base revisada) vence
-            vis.sort(key=lambda rid: 0 if self.by_rid[rid]["dir"] == "model" else 1)
-            for rid in vis:
-                self._check(rid, False)
-            for rid in vis:
-                r = self.by_rid[rid]
-                if r["enabled"] and rule(r) and not any(
-                        o["sel"] and conflicts(o, r) for o in self.rows):
-                    self._check(rid, True)
+            for rid in self._visible(self.t1):
+                self._check1(rid, rule(self.by_rid[rid]))
             self._sync_groups()
             self._update_counter()
         finally:
             self._busy = False
 
+    # ---- tabela 2 (editável) ----
+    def _no_edit_group(self, sender, e):
+        try:
+            if e.Row.Item["Kind"] == u"group":
+                e.Cancel = True
+        except Exception:
+            pass
+
+    def _check2(self, rid, value):
+        r = self.by_rid2[rid]
+        r["sel"] = bool(value)
+        self.d2[rid]["Sel"] = r["sel"]
+
+    def _on_changed2(self, sender, e):
+        name = e.Column.ColumnName
+        if self._busy or name not in ("Sel",) + tuple(EDIT2.keys()):
+            return
+        self._busy = True
+        try:
+            rid = int(e.Row["RowId"])
+            if name == "Sel":
+                val = e.Row["Sel"] == True
+                if rid < 0:
+                    for vr in self._visible(self.t2):
+                        if self.d2[vr]["Grp"] == e.Row["Grp"]:
+                            self._check2(vr, val)
+                else:
+                    self._check2(rid, val)
+            elif rid >= 0:
+                r = self.by_rid2[rid]
+                r[EDIT2[name]] = to_unicode(e.Row[name] or u"")
+                verify_incomplete(r, autofill=False)
+                e.Row["Verificacao"] = r["check"]
+                e.Row["Kind"] = u"changed" if inc_changed(r) else u"inc"
+                if inc_changed(r):
+                    self._check2(rid, True)
+            self._sync_groups()
+            self._update_counter()
+        finally:
+            self._busy = False
+
+    def _set_visible2(self, value):
+        self._busy = True
+        try:
+            for rid in self._visible(self.t2):
+                self._check2(rid, value)
+            self._sync_groups()
+            self._update_counter()
+        finally:
+            self._busy = False
+
+    def _verify_all(self, sender, args):
+        """Confere todas as linhas com o Excel e completa os campos vazios."""
+        self._commit()
+        self._busy = True
+        try:
+            for r in self.inc:
+                verify_incomplete(r, autofill=True)
+                row = self.d2[r["rid"]]
+                for col, f in EDIT2.items():
+                    row[col] = r[f]
+                row["Verificacao"] = r["check"]
+                row["Kind"] = u"changed" if inc_changed(r) else u"inc"
+                if inc_changed(r):
+                    self._check2(r["rid"], True)
+            self._sync_groups()
+            self._update_counter()
+        finally:
+            self._busy = False
+
+    # ---- comum ----
     def _sync_groups(self):
         was = self._busy
         self._busy = True
         try:
-            vis = set(self._visible_rids())
-            for gid, g in self.drow.items():
-                if gid >= 0:
-                    continue
-                kids = [r for r in self.rows if r["view"]["cat"] == g["Cat"]
-                        and r["rid"] in vis and r["enabled"]]
-                g["Enabled"] = bool(kids) and not self.readonly
-                g["Sel"] = bool(kids) and all(r["sel"] for r in kids)
-                n = len([r for r in self.rows if r["view"]["cat"] == g["Cat"] and r["rid"] in vis])
-                g["Destino"] = u"{} linha(s)".format(n)
+            for tb, store, by_rid in ((self.t1, self.d1, self.by_rid),
+                                      (self.t2, self.d2, self.by_rid2)):
+                vis = set(self._visible(tb))
+                for gid, g in store.items():
+                    if gid >= 0:
+                        continue
+                    kids = [by_rid[rid] for rid in vis if store[rid]["Grp"] == g["Grp"]]
+                    on = [r for r in kids if r.get("enabled", True)]
+                    g["Enabled"] = bool(on)
+                    g["Sel"] = bool(on) and all(r["sel"] for r in on)
         finally:
             self._busy = was
 
     def _update_counter(self):
-        sel = self.selected()
-        tot = len([r for r in self.rows if r["enabled"]])
-        to_m = len([r for r in sel if r["dir"] == "model"])
-        to_x = len([r for r in sel if r["dir"] == "excel"])
-        over = len([r for r in sel if r["over"]])
-        if self.readonly:
-            self.counter.Text = u"{} diferença(s) encontradas · somente análise, nada será gravado".format(
-                len(self.rows))
-        else:
-            self.counter.Text = (u"{} de {} marcadas  ·  {} → Modelo  ·  {} → Excel  ·  "
-                                 u"{} sobrescrevem valor existente".format(
-                                     len(sel), tot, to_m, to_x, over))
+        s1, s2 = self.selected(), self.selected_inc()
+        tot1 = len([r for r in self.rows if r["enabled"]])
+        n_over = len([r for r in s1 if r["over"]])
+        n_types = sum(len(r["hs"]) for r in s1)
+        n_edit = len([r for r in s2 if inc_changed(r)])
+        self.counter.Text = (
+            u"Tabela 1: {} de {} linha(s) marcada(s) ({} tipo(s), {} sobrescreve(m))   ·   "
+            u"Tabela 2: {} de {} marcada(s), {} com valor digitado/completado".format(
+                len(s1), tot1, n_types, n_over, len(s2), len(self.inc), n_edit))
 
     def selected(self):
         return [r for r in self.rows if r["sel"] and r["enabled"]]
 
+    def selected_inc(self):
+        return [r for r in self.inc if r["sel"]]
+
     def _apply(self, sender, args):
+        self._commit()
         self.confirmed = True
         self.Close()
 
@@ -1963,81 +1927,98 @@ def load_keynote_txt(path):
 
 
 # ------------------------------------------------------------------
-# 5h. Executa: tabela de verificação -> grava o que foi marcado
+# 5h. Executa: tabela de verificação -> grava no modelo o que foi marcado
 # ------------------------------------------------------------------
 # (holder id, campo) -> motivo de NÃO ter sido gravado (usado no resultado)
 not_written = {}
 DIRS = MODE_DIRS[MODE]
-READONLY = MODE == "analyze"
 
-m_rows, m_plan, m_blocked = model_rows() if "model" in DIRS else ([], [], [])
+if "model" in MODE_DIRS[MODE] and MODE != "analyze":
+    missing_cats = in_param_missing_categories()
+    clash = sorted(set(h["category"] for hs in MODEL.values() for h in hs if h["en_clash"]))
+    if missing_cats:
+        msg = (u"O parâmetro compartilhado '{}' (GUID {}) não está disponível em:\n\n"
+               u"{}\n\nVincular ao projeto como parâmetro de TIPO nessas categorias?\n"
+               u"(sem ele, a descrição em inglês não é gravada nesses itens)").format(
+                   PARAM_IN_NAME, PARAM_IN_GUID_STR,
+                   u"\n".join(u"  • " + to_unicode(c.Name) for c in missing_cats))
+        if clash:
+            msg += (u"\n\nAtenção: em {} já existe um parâmetro '{}' que NÃO é o "
+                    u"compartilhado do escritório (GUID diferente). Ele será ignorado."
+                    ).format(u", ".join(clash), PARAM_IN_NAME)
+        if forms.alert(msg, yes=True, no=True):
+            ok, info = bind_in_param(missing_cats)
+            output.print_md(u"- Parâmetro **{}**: {}{}".format(
+                PARAM_IN_NAME, u"" if ok else u":warning: não vinculado - ", info))
+            if ok:
+                MODEL = collect_model(use_view, opts["materials"])   # relê os parâmetros
+
+
+
+m_rows, m_plan, m_blocked = model_rows()
 for it in m_blocked:
     h = it["h"]
     not_written[(h["id"], it["field"])] = it["reason"]
     skipped.append({"key": h["key"], "where": where_label(h), "id": h["id"],
                     "eid": h["elem"].Id, "reason": it["reason"]})
-x_rows = plan_to_excel_rows() if "excel" in DIRS else []
 
-VROWS = m_rows + x_rows
+VROWS = m_rows
 for r in VROWS:
     r["view"] = row_view(r)
-    # padrão: Excel -> Modelo marcado; Modelo -> Excel marcado só se não sobrescreve
-    r["sel"] = r["enabled"] and not READONLY and (r["dir"] == "model" or not r["over"])
-VROWS.sort(key=lambda r: (cat_rank(r["view"]["cat"]), r["view"]["cat"], r["view"]["grp"],
-                          r["key"], 0 if r["dir"] == "model" else 1,
-                          r["view"]["family"], r["view"]["type"]))
+    r["sel"] = r["enabled"]           # Excel -> Modelo começa marcado
+VROWS.sort(key=lambda r: (r["key"], r["category"], r["view"]["family"], r["view"]["type"]))
 for i, r in enumerate(VROWS):
     r["rid"] = i
-# garante que os padrões não tragam conflito (Excel -> Modelo vence)
-for r in VROWS:
-    if r["sel"] and r["dir"] == "excel" and any(
-            o["sel"] and conflicts(o, r) for o in VROWS if o["dir"] == "model"):
-        r["sel"] = False
+
+INC = collect_incomplete()
+for i, r in enumerate(INC):
+    r["rid"] = i
+    verify_incomplete(r, autofill=False)
 
 HL = collect_highlight() if opts["highlight"] else []
-hl_red = sum(x["count"] for x in HL if x["color"] == u"red")
-hl_orange = sum(x["count"] for x in HL if x["color"] == u"orange")
+hl_orange = sum(x["count"] for x in HL)
 
 keys_with_info = [k for k in MODEL if XL["by_key"].get(k) and
                   (XL["by_key"][k]["pt"] or XL["by_key"][k]["en"])]
 info_text = (u"{} keynote(s) no modelo · {} com descrição no Excel · {} fora do Excel  ·  "
-             u"{} linha(s) Excel → Modelo · {} linha(s) Modelo → Excel  ·  modo: {}".format(
+             u"Tabela 1: {} linha(s) ({} tipo(s))  ·  Tabela 2: {} tipo(s) sem Keynote ou "
+             u"sem Descrição".format(
                  len(MODEL), len(keys_with_info),
                  len([k for k in MODEL if not XL["by_key"].get(k)]),
-                 len(m_rows), len(x_rows), MODES[MODE]))
+                 len(VROWS), sum(len(r["hs"]) for r in VROWS), len(INC)))
 if not opts["highlight"]:
     hl_text = u"Destaque no modelo desligado."
 elif hl_note:
     hl_text = u"Destaque no modelo indisponível: " + hl_note
 else:
-    hl_text = (u"Destacados na vista ativa (temporário, desfeito ao fechar): {} elemento(s) em "
-               u"VERMELHO (keynote sem description / description sem keynote) · {} em LARANJA "
-               u"(sem keynote e sem description).".format(hl_red, hl_orange))
+    hl_text = (u"Destaque LARANJA na vista ativa (temporário, desfeito ao fechar): {} elemento(s) "
+               u"de {} tipo(s) sem Keynote, Descrição ou {}.".format(
+                   hl_orange, len(HL), PARAM_IN_NAME))
 
-chosen_rows = []
-if VROWS or HL:
+chosen_rows, chosen_inc = [], []
+if VROWS or INC or HL:
     hl_tx = apply_highlight(HL)
     try:
-        vw = VerifyWindow(VROWS, READONLY, info_text, hl_text)
+        vw = VerifyWindow(VROWS, INC, info_text, hl_text)
         vw.ShowDialog()
-        if vw.confirmed and not READONLY:
+        if vw.confirmed:
             chosen_rows = vw.selected()
-        elif not READONLY:
+            chosen_inc = vw.selected_inc()
+        else:
             output.print_md(u"**Cancelado - nada foi gravado.**")
     finally:
         remove_highlight(hl_tx)
 else:
-    output.print_md(u"**Verificação:** nenhuma diferença entre o modelo e o Excel.")
+    output.print_md(u"**Verificação:** nada a atualizar - o modelo já coincide com o Excel "
+                    u"e todos os tipos têm Keynote e Descrição.")
 
 chosen_ids = set(r["rid"] for r in chosen_rows)
 for r in VROWS:
-    r["status"] = u"Somente análise" if READONLY else (
-        u"Bloqueado" if not r["enabled"] else
-        (u"Marcado" if r["rid"] in chosen_ids else u"Não marcado"))
+    r["status"] = (u"Bloqueado" if not r["enabled"] else
+                   (u"Marcado" if r["rid"] in chosen_ids else u"Não marcado"))
 
-# ---- Excel -> Modelo: grava os tipos/materiais marcados ----
-chosen_items = [it for r in chosen_rows if r["dir"] == "model"
-                for it in r["items"] if not it["reason"]]
+# ---- Tabela 1 (Excel -> Modelo): grava os tipos das linhas marcadas ----
+chosen_items = [it for r in chosen_rows for it in r["items"] if not it["reason"]]
 chosen_item_ids = set(id(it) for it in chosen_items)
 for it in m_plan:
     if id(it) not in chosen_item_ids:
@@ -2051,8 +2032,6 @@ if chosen_items:
     t.Start()
     try:
         for r in chosen_rows:
-            if r["dir"] != "model":
-                continue
             for it in r["items"]:
                 if it["reason"]:
                     continue
@@ -2078,56 +2057,80 @@ if chosen_items:
         forms.alert(u"Atualização do modelo desfeita (rollback):\n{}".format(to_unicode(ex)),
                     exitscript=True)
 
-# ---- Modelo -> Excel: grava as linhas marcadas ----
-x_chosen = [r for r in chosen_rows if r["dir"] == "excel"]
-if x_chosen:
-    fills, appends = [], []
-    for r in x_chosen:
-        if r["append"]:
-            appends.append(r["append"])
-            continue
-        for f in ("pt", "en"):
-            if r[f + "_new"] is not None:
-                fills.append((r["rec"], f, r[f + "_new"]))
-    xl_ok = True
-    while not ensure_file_closed(XLSX_PATH):
-        if not forms.alert(u"A planilha está aberta (ou bloqueada).\n\n{}\n\n"
-                           u"Feche o arquivo no Excel e clique em Sim para tentar de novo.\n"
-                           u"Não = não gravar no Excel.".format(XLSX_PATH), yes=True, no=True):
-            xl_ok = False
-            break
-    if xl_ok:
-        snapshot = [(rec, f, rec[f]) for rec, f, _ in fills]
-        try:
-            xl_written["backup"] = write_excel(fills, appends)
-            xl_written["appended"] = len(appends)
-            xl_written["filled"] = len(fills)
-            for a in appends:
-                changes.append({"target": "excel", "action": "append", "key": a["key"],
-                                "field": u"Linha nova", "old": u"",
-                                "new": u"{} | {}".format(a["pt"] or u"-", a["en"] or u"-"),
-                                "where": XL["sheet"], "id": None})
-            for rec, f, old in snapshot:
-                changes.append({"target": "excel", "action": "overwrite" if old else "fill",
-                                "key": rec["key"], "fieldKey": f,
-                                "field": u"DESCRIÇÃO" if f == "pt" else u"DESCRIÇÃO IN",
-                                "old": old, "new": rec[f],
-                                "where": u"{} · linha {}".format(XL["sheet"], rec["row"]),
-                                "id": None})
-        except Exception as ex:
-            xl_ok = False
-            forms.alert(u"Falha ao gravar a planilha. Se o arquivo não abrir, restaure o "
-                        u"backup criado ao lado dele (*_backup_AAAAMMDD_HHMMSS.xlsx).\n\n{}".format(
-                            to_unicode(ex)))
-    if not xl_ok:
-        for r in x_chosen:
-            failed_rows.add(r["rid"])
-
 for r in VROWS:
     if r["rid"] in failed_rows:
         r["status"] = u"Não gravado"
     elif r["status"] == u"Marcado":
         r["status"] = u"Gravado"
+
+# ---- Tabela 2 (tipos sem Keynote / sem Descrição): grava o que foi digitado ----
+INC_FIELDS = (("key", u"Keynote", lambda t: t.get_Parameter(BIP.KEYNOTE_PARAM)),
+              ("pt", u"Description", desc_param),
+              ("en", PARAM_IN_NAME, in_param))
+chosen_inc_ids = set(r["rid"] for r in chosen_inc)
+for r in INC:
+    r["status"] = u"Não marcado"
+    r["written"] = []
+to_write = [r for r in chosen_inc if inc_changed(r)]
+for r in chosen_inc:
+    if not inc_changed(r):
+        r["status"] = u"Sem alteração"
+if to_write:
+    t = DB.Transaction(doc, u"Completar Keynote / Descrição dos tipos")
+    t.Start()
+    try:
+        for r in to_write:
+            tp = r["t"]
+            where = u"{}: {}{}".format(r["category"],
+                                       (r["family"] + u" - ") if r["family"] else u"", r["name"])
+            errs = []
+            if owned_by_other(tp):
+                errs.append(u"tipo emprestado por outro usuário (workshared)")
+            else:
+                for f, label, getp in INC_FIELDS:
+                    new, old = clean(r[f]), r[f + "0"]
+                    if not new or new == old:
+                        continue
+                    try:
+                        p = getp(tp)
+                    except Exception:
+                        p = None
+                    if p is None:
+                        errs.append(u"parâmetro '{}' não existe".format(label))
+                        continue
+                    if param_text(p) == new:
+                        r["written"].append(f)      # já gravado pela tabela 1
+                        continue
+                    if p.IsReadOnly:
+                        errs.append(u"'{}' somente leitura".format(label))
+                        continue
+                    try:
+                        p.Set(new)
+                        r["written"].append(f)
+                        changes.append({"target": "model",
+                                        "action": "overwrite" if old else "fill",
+                                        "key": clean(r["key"]) or NO_KEY, "field": label,
+                                        "fieldKey": "inc_" + f, "category": r["category"],
+                                        "old": old, "new": new, "where": where,
+                                        "id": r["id"]})
+                    except Exception as ex:
+                        errs.append(to_unicode(ex))
+            if errs:
+                r["status"] = (u"Gravado em parte: " if r["written"] else u"Não gravado: ") + \
+                    u"; ".join(errs)
+                skipped.append({"key": clean(r["key"]) or NO_KEY, "where": where,
+                                "id": r["id"], "eid": tp.Id, "reason": u"; ".join(errs)})
+            else:
+                r["status"] = u"Gravado"
+        t.Commit()
+    except Exception as ex:
+        t.RollBack()
+        forms.alert(u"Gravação da tabela 2 desfeita (rollback):\n{}".format(to_unicode(ex)),
+                    exitscript=True)
+
+# relê o modelo para o relatório refletir o que ficou gravado
+if changes:
+    MODEL = collect_model(use_view, opts["materials"])
 
 # ---- TXT de Keynotes (opcional, confirma antes) ----
 txt_info = {"on": opts["txt_on"], "path": opts["txt_path"], "written": False,
@@ -2280,8 +2283,6 @@ def build_result():
     """Preenchidos / alterados / faltando, nos sentidos incluídos no modo.
     'target' = model | excel | both."""
     res = {"target": None, "filled": [], "changed": [], "missing": []}
-    if READONLY:
-        return res
     do_model, do_excel = "model" in DIRS, "excel" in DIRS
     res["target"] = "both" if (do_model and do_excel) else ("model" if do_model else "excel")
     if do_model:
@@ -2386,14 +2387,13 @@ def excel_table():
 
 # destaque recalculado depois das gravações (para o relatório)
 HL_FINAL = collect_highlight() if opts["highlight"] else []
-hl_red = sum(x["count"] for x in HL_FINAL if x["color"] == u"red")
-hl_orange = sum(x["count"] for x in HL_FINAL if x["color"] == u"orange")
+hl_orange = sum(x["count"] for x in HL_FINAL)
 
 
 # ------------------------------------------------------------------
 # 8. Janela de saída + relatório HTML (opcional nos modos que gravam)
 # ------------------------------------------------------------------
-output.print_md(u"## Keynotes × Excel - {}".format(MODES[MODE]))
+output.print_md(u"## {}".format(TOOL_TITLE))
 output.print_md(u"- **{}** keynote(s) no modelo ({} tipo(s)/material(is)) · **{}** no Excel "
                 u"(aba *{}*) · **{}** em ambos".format(
                     len(MODEL), sum(len(v) for v in MODEL.values()), len(XL["by_key"]),
@@ -2407,9 +2407,13 @@ if RESULT["target"]:
                         len(RESULT["filled"]), len(RESULT["changed"]),
                         len(RESULT["missing"])))
 if opts["highlight"]:
-    output.print_md(u"- Destaque temporário (vista ativa): **{}** elemento(s) em vermelho · "
-                    u"**{}** em laranja{}".format(hl_red, hl_orange,
-                                                 u" - " + hl_note if hl_note else u""))
+    output.print_md(u"- Destaque temporário (vista ativa): **{}** elemento(s) em laranja "
+                    u"(sem Keynote, Descrição ou {}){}".format(
+                        hl_orange, PARAM_IN_NAME, u" - " + hl_note if hl_note else u""))
+inc_written = [r for r in INC if r["status"].startswith(u"Gravado")]
+if INC:
+    output.print_md(u"- Tabela 2 (tipos sem Keynote / Descrição): **{}** de {} tipo(s) "
+                    u"completado(s)".format(len(inc_written), len(INC)))
 if txt_info["on"]:
     output.print_md(u"- TXT de Keynotes: {}{}".format(
         (u"gravado em `{}` ({}) e {}".format(txt_info["path"], txt_info["encoding"],
@@ -2435,15 +2439,12 @@ if missing_in_by_cat:
         PARAM_IN_NAME, u", ".join(u"{} ({})".format(c, n)
                                       for c, n in sorted(missing_in_by_cat.items()))))
 
-if MODE != "analyze":
-    make_html = forms.alert(
+if not forms.alert(
         u"Gerar o relatório HTML?\n\n"
-        u"{} preenchido(s) · {} alterado(s) · {} faltando / pendente(s)\n"
-        u"(agrupados por agrupamento de Keynotes)".format(
+        u"{} preenchido(s) · {} alterado(s) · {} faltando / pendente(s)".format(
             len(RESULT["filled"]), len(RESULT["changed"]), len(RESULT["missing"])),
-        yes=True, no=True)
-    if not make_html:
-        script.exit()
+        yes=True, no=True):
+    script.exit()
 
 data = {
     "project": to_unicode(doc.Title),
@@ -2464,7 +2465,14 @@ data = {
     "missingIn": [{"category": c, "count": n} for c, n in sorted(missing_in_by_cat.items())],
     "keynotes": keynotes_out,
     "catOrder": XL["cat_order"] + [NO_GROUP],
+    "title": TOOL_TITLE,
     "verify": [dict(r["view"], status=r["status"]) for r in VROWS],
+    "incomplete": [{"category": r["category"], "family": r["family"], "type": r["name"],
+                    "typeId": r["id"], "count": r["count"], "hasIn": r["hasIn"],
+                    "key0": r["key0"], "pt0": r["pt0"], "en0": r["en0"],
+                    "key": clean(r["key"]), "pt": clean(r["pt"]), "en": clean(r["en"]),
+                    "written": r.get("written", []), "check": r["check"],
+                    "status": r["status"]} for r in INC],
     "excelTable": excel_table(),
     "highlight": [dict((k, v) for k, v in x.items() if k != "ids") for x in HL_FINAL],
     "highlightNote": hl_note if opts["highlight"] else u"desligado",

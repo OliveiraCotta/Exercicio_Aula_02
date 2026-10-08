@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Keynotes × Excel</title>
+<title>Atualização das Descrições por Keynote</title>
 <!-- usado só no botão "Baixar Excel" (se não carregar, baixa CSV) -->
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <style>
@@ -110,7 +110,7 @@
 <body>
 <header>
   <div>
-    <div class="eyebrow">Keynotes · Revit × Excel</div>
+    <div class="eyebrow">Atualização das descrições do modelo por Keynote</div>
     <h1 id="proj"></h1>
     <span class="tbadge" id="tbadge"></span>
   </div>
@@ -119,38 +119,42 @@
 
 <div class="panel" id="actions"></div>
 
-<!-- 1. verificação nos dois sentidos -->
-<h2>Verificação Modelo × Excel <small>(agrupado por agrupamento de Keynotes)</small></h2>
+<!-- 1. Excel -> Modelo -->
+<h2>1 · Excel → Modelo <small>(tipos iguais agrupados numa linha)</small></h2>
 <div class="toolbar">
+  <select id="v_mode"><option value="key">Agrupar por Keynote</option><option value="cat">Agrupar por Categoria</option></select>
   <select id="v_cat"></select>
-  <select id="v_dir"><option value="">Todos os sentidos</option><option value="model">Excel → Modelo</option><option value="excel">Modelo → Excel</option></select>
   <select id="v_st"></select>
   <input id="v_q" type="search" placeholder="Buscar keynote, família, tipo, descrição...">
   <span class="count" id="v_n"></span>
 </div>
 <div class="scroll"><table><thead><tr>
-  <th>Agrupamento de Keynotes</th><th>Família</th><th>Tipo</th><th>Keynote</th>
+  <th>Agrupamento</th><th>Categoria</th><th>Família</th><th>Tipo</th><th>Keynote</th>
   <th>Descrição atual</th><th>Descrição nova</th><th>Descrição em IN atual</th><th>Descrição em IN nova</th>
   <th>Destino</th><th>Situação</th></tr></thead><tbody id="v_body"></tbody></table></div>
 
+<!-- 2. tipos sem keynote / sem descrição -->
+<h2>2 · Elementos sem Keynote ou sem Descrição <small>(valores digitados na tabela 2)</small></h2>
+<div class="toolbar">
+  <select id="i_mode"><option value="cat">Agrupar por Categoria</option><option value="key">Agrupar por Keynote</option></select>
+  <select id="i_st"></select>
+  <input id="i_q" type="search" placeholder="Buscar categoria, família, tipo, keynote...">
+  <span class="count" id="i_n"></span>
+</div>
+<div class="scroll"><table><thead><tr>
+  <th>Categoria</th><th>Família</th><th>Tipo</th><th>Qtd</th><th>Keynote</th><th>Descrição</th>
+  <th>Descrição em IN</th><th>Verificação</th><th>Situação</th></tr></thead><tbody id="i_body"></tbody></table></div>
+
 <!-- 2. tabela do Excel -->
-<h2>Tabela do Excel · resultado final <small id="x_sheet"></small></h2>
+<h2>Tabela do Excel <small id="x_sheet"></small></h2>
 <div class="chips" id="x_chips"></div>
 <div class="toolbar">
-  <select id="x_field">
-    <option value="">Todas as colunas</option><option value="pt">Só DESCRIÇÃO alterada</option>
-    <option value="en">Só DESCRIÇÃO IN alterada</option><option value="new">Só linhas novas</option>
-  </select>
-  <label><input type="checkbox" id="x_changed"> Somente alterados nesta execução</label>
   <label><input type="checkbox" id="x_model"> Somente keynotes usados no modelo</label>
   <input id="x_q" type="search" placeholder="Buscar na tabela...">
   <button class="btn solid" id="x_dl">Baixar Excel</button>
-  <a class="btn" id="x_open" target="_blank">Abrir planilha gravada</a>
+  <a class="btn" id="x_open" target="_blank">Abrir planilha</a>
   <span class="count" id="x_n"></span>
 </div>
-<div class="legend"><span><i style="background:rgba(80,214,130,.5)"></i>preenchido (estava vazio)</span>
-  <span><i style="background:rgba(255,180,84,.5)"></i>sobrescrito (valor anterior riscado)</span>
-  <span><i style="background:rgba(101,227,255,.4)"></i>linha nova</span></div>
 <div class="scroll"><table><thead><tr>
   <th>Linha</th><th>Categoria</th><th>Grupo</th><th>Keynote</th><th>Descrição</th>
   <th>Descrição IN</th><th>Observações</th><th>No modelo</th></tr></thead><tbody id="x_body"></tbody></table></div>
@@ -159,7 +163,7 @@
 <div id="resultWrap"></div>
 
 <!-- 4. destaques no modelo -->
-<h2>Destaque no modelo <small>(Keynote × Description dos tipos - vista ativa)</small></h2>
+<h2>Destaque no modelo <small>(laranja: sem Keynote, Descrição ou Descrição IN - vista ativa)</small></h2>
 <div class="cards" id="h_cards"></div>
 <div id="h_wrap"></div>
 
@@ -177,7 +181,7 @@
   <th>Tipos / Materiais</th></tr></thead><tbody id="k_body"></tbody></table></div>
 
 <footer>Atualização Descrição por Keynotes · Description (PT) e <span id="inparam"></span> em parâmetros de tipo / material<br>
-Excel → Modelo nunca apaga valores · TXT de Keynotes: DESCRIÇÃO | DESCRIÇÃO IN</footer>
+Fluxo Excel → Modelo · valor vazio no Excel nunca apaga o modelo · TXT de Keynotes: DESCRIÇÃO | DESCRIÇÃO IN</footer>
 
 <script>
 const DATA = __DATA__;
@@ -205,24 +209,22 @@ function groupRows(list, catKey, cols, rowFn){
   return html;
 }
 
-$("proj").innerHTML = esc(DATA.project.replace(/\.rvt$/i,"")) + ' <span>/ keynotes × excel</span>';
+$("proj").innerHTML = esc(DATA.project.replace(/\.rvt$/i,"")) + ' <span>/ descrições por keynote</span>';
 $("tbadge").textContent = DATA.modeLabel.toUpperCase();
 $("stamp").textContent = DATA.generated;
-$("scope").textContent = DATA.scope + (DATA.materials ? " + materiais" : "");
+$("scope").textContent = DATA.scope + " · Excel → Modelo";
 $("xlname").textContent = DATA.excel.name + " › " + DATA.excel.sheet;
 $("inparam").textContent = DATA.inParam;
 
 /* ---- painel da operação ---- */
 (function(){
   const ch = DATA.changes, sk = DATA.skipped, T = DATA.txt;
-  const xl = ch.filter(c=>c.target==="excel"), md = ch.filter(c=>c.target==="model");
-  let h = "";
-  if(DATA.mode==="analyze") h += `<p>Somente análise - <b>nada foi gravado</b> no modelo nem na planilha.</p>`;
-  else {
-    h += `<p><b>Modelo:</b> ${md.length ? `${md.filter(c=>c.action==="overwrite").length} sobrescrito(s) e ${md.filter(c=>c.action==="fill").length} preenchido(s) (Ctrl+Z desfaz)` : "nenhuma alteração gravada"}.
-      &nbsp; <b>Excel:</b> ${xl.length ? `${xl.filter(c=>c.action==="append").length} linha(s) nova(s), ${xl.filter(c=>c.action==="fill").length} preenchida(s), ${xl.filter(c=>c.action==="overwrite").length} sobrescrita(s)` : "nenhuma alteração gravada"}.</p>`;
-    if(DATA.excel.backup) h += `<p>Backup da planilha: <span class="path">${esc(DATA.excel.backup)}</span></p>`;
-  }
+  const md = ch.filter(c=>c.target==="model");
+  const t1 = md.filter(c=>!String(c.fieldKey||"").startsWith("inc_")), t2 = md.filter(c=>String(c.fieldKey||"").startsWith("inc_"));
+  const inc = DATA.incomplete || [];
+  let h = `<p><b>Tabela 1 · Excel → Modelo:</b> ${t1.length ? `${t1.filter(c=>c.action==="overwrite").length} valor(es) sobrescrito(s) e ${t1.filter(c=>c.action==="fill").length} preenchido(s)` : "nenhuma alteração gravada"}.</p>
+    <p><b>Tabela 2 · tipos sem Keynote / Descrição:</b> ${inc.filter(r=>r.status.startsWith("Gravado")).length} de ${inc.length} tipo(s) completado(s) (${t2.length} parâmetro(s) gravado(s)).
+    ${md.length?"&nbsp;Ctrl+Z no Revit desfaz.":""}</p>`;
   if(T && T.on){
     h += `<p><b>TXT de Keynotes:</b> ${T.written ? `gravado em <span class="path">${esc(T.path)}</span> (${esc(T.encoding)}, ${T.lines} linhas) · ${esc(T.msg)}` : esc(T.msg)}</p>`;
     if(T.backup) h += `<p>Backup do TXT anterior: <span class="path">${esc(T.backup)}</span></p>`;
@@ -235,25 +237,62 @@ $("inparam").textContent = DATA.inParam;
   $("actions").innerHTML = h;
 })();
 
-/* ---- 1. verificação ---- */
+/* ---- 1. Excel -> Modelo ---- */
 const ST_COLOR = {"Gravado":"var(--green)","Não marcado":"var(--dim)","Bloqueado":"var(--red)",
-  "Não gravado":"var(--red)","Somente análise":"var(--cy)"};
-fillSelect($("v_cat"), catsIn(DATA.verify,"cat"), "Todos os agrupamentos");
+  "Não gravado":"var(--red)","Sem alteração":"var(--dim)"};
+const keyLabel = r => r.key ? `${r.key} · ${r.grp} (${r.cat})` : "(sem keynote)";
+function groupSort(list, gk){
+  return list.sort((a,b)=>(a[gk]==="(sem keynote)")-(b[gk]==="(sem keynote)") ||
+    String(a[gk]).localeCompare(b[gk],"pt-BR",{numeric:true}) ||
+    String(a.key||"").localeCompare(b.key||"","pt-BR",{numeric:true}) ||
+    String(a.family).localeCompare(b.family,"pt-BR") || String(a.type).localeCompare(b.type,"pt-BR"));
+}
+function vGroups(){ return DATA.verify.map(r=>Object.assign({g: $("v_mode").value==="key" ? keyLabel(r) : r.category}, r)); }
+function refillVCat(){ fillSelect($("v_cat"), [...new Set(vGroups().map(r=>r.g))].sort((a,b)=>a.localeCompare(b,"pt-BR",{numeric:true})), "Todos os grupos"); }
+refillVCat();
 fillSelect($("v_st"), [...new Set(DATA.verify.map(r=>r.status))], "Todas as situações");
 function renderVerify(){
-  const c=$("v_cat").value, d=$("v_dir").value, st=$("v_st").value, q=$("v_q").value.trim().toLowerCase();
-  const list = DATA.verify.filter(r=>(!c||r.cat===c)&&(!d||r.dir===d)&&(!st||r.status===st)&&
-    (!q||[r.key,r.family,r.type,r.ptCur,r.ptNew,r.enCur,r.enNew,r.grp].join(" ").toLowerCase().includes(q)))
-    .map(r=>Object.assign({agCat:r.cat},r)).sort(byGroup);
-  $("v_n").textContent = list.length + " linha(s)";
-  const keep = v => /^\((mantém|vazio|sem parâmetro|não está no Excel|bloqueado)\)$/.test(v) ? `<span class="none">${esc(v)}</span>` : esc(v);
-  $("v_body").innerHTML = list.length ? groupRows(list,"agCat",10,r=>`<tr class="k-${r.kind}">
-      <td class="muted">${esc(r.grp)}</td><td>${esc(r.family)}</td><td>${esc(r.type)}</td><td class="key">${esc(r.key)}</td>
+  const c=$("v_cat").value, st=$("v_st").value, q=$("v_q").value.trim().toLowerCase();
+  const list = groupSort(vGroups().filter(r=>(!c||r.g===c)&&(!st||r.status===st)&&
+    (!q||[r.key,r.category,r.family,r.type,r.ptCur,r.ptNew,r.enCur,r.enNew,r.grp].join(" ").toLowerCase().includes(q))), "g");
+  $("v_n").textContent = list.length + " linha(s) · " + list.reduce((s,r)=>s+(r.nTypes||1),0) + " tipo(s)";
+  const keep = v => /^\((mantém|vazio|sem parâmetro|bloqueado)\)$/.test(v) ? `<span class="none">${esc(v)}</span>` : esc(v);
+  $("v_body").innerHTML = list.length ? groupRows(list,"g",11,r=>`<tr class="k-${r.kind}">
+      <td class="muted">${esc(r.grp)}</td><td>${esc(r.category)}</td><td>${esc(r.family)}</td>
+      <td>${esc(r.type)}${r.count?` <span class="muted mono">· ${r.count} un</span>`:""}</td><td class="key">${esc(r.key)}</td>
       <td>${keep(r.ptCur)}</td><td class="new">${keep(r.ptNew)}</td><td>${keep(r.enCur)}</td><td class="new">${keep(r.enNew)}</td>
       <td>${esc(r.dest)}</td><td><span class="tag" style="--fc:${ST_COLOR[r.status]||"var(--dim)"}">${esc(r.status)}</span></td></tr>`)
-    : `<tr><td colspan="10" class="empty">Nenhuma diferença${c||d||st||q?" para este filtro":""}</td></tr>`;
+    : `<tr><td colspan="11" class="empty">Nenhuma diferença${c||st||q?" para este filtro":""}</td></tr>`;
 }
-["v_cat","v_dir","v_st"].forEach(id=>$(id).onchange=renderVerify); $("v_q").oninput=renderVerify;
+$("v_mode").onchange = ()=>{ refillVCat(); renderVerify(); };
+["v_cat","v_st"].forEach(id=>$(id).onchange=renderVerify); $("v_q").oninput=renderVerify;
+
+/* ---- 2. tipos sem keynote / sem descrição ---- */
+const INC = DATA.incomplete || [];
+fillSelect($("i_st"), [...new Set(INC.map(r=>r.status.split(":")[0]))], "Todas as situações");
+function incCell(r, f, cls){
+  cls = cls || "";
+  const now = r[f], before = r[f+"0"], wrote = r.written.includes(f);
+  if(f==="en" && !r.hasIn) return `<td><span class="none">(sem parâmetro)</span></td>`;
+  if(!now) return `<td><span class="none">vazio</span></td>`;
+  if(now!==before) return `<td class="${cls} ${wrote?"c-fill":""}" title="antes: ${esc(before||"(vazio)")}">${esc(now)}${
+    before?`<span class="was">${esc(before)}</span>`:""}${wrote?"":` <span class="muted">(não gravado)</span>`}</td>`;
+  return `<td class="${cls}">${esc(now)}</td>`;
+}
+function renderInc(){
+  const st=$("i_st").value, q=$("i_q").value.trim().toLowerCase(), byKey=$("i_mode").value==="key";
+  const list = groupSort(INC.map(r=>Object.assign({g: byKey ? (r.key||"(sem keynote)") : r.category}, r))
+    .filter(r=>(!st||r.status.split(":")[0]===st)&&
+      (!q||[r.category,r.family,r.type,r.key,r.pt,r.en].join(" ").toLowerCase().includes(q))), "g");
+  $("i_n").textContent = list.length + " tipo(s) · " + list.filter(r=>r.status.startsWith("Gravado")).length + " gravado(s)";
+  $("i_body").innerHTML = list.length ? groupRows(list,"g",9,r=>`<tr>
+      <td>${esc(r.category)}</td><td>${esc(r.family)}</td><td>${esc(r.type)} <span class="muted mono">#${r.typeId}</span></td>
+      <td class="mono">${r.count}</td>${incCell(r,"key","key")}${incCell(r,"pt")}${incCell(r,"en")}
+      <td class="${/^Erro/.test(r.check)?"warn":"muted"}">${esc(r.check)}</td>
+      <td><span class="tag" style="--fc:${r.status.startsWith("Gravado")?"var(--green)":(/^Não gravado/.test(r.status)?"var(--red)":"var(--dim)")}">${esc(r.status)}</span></td></tr>`)
+    : `<tr><td colspan="9" class="empty">✓ Todos os tipos têm Keynote e Descrição</td></tr>`;
+}
+["i_mode","i_st"].forEach(id=>$(id).onchange=renderInc); $("i_q").oninput=renderInc;
 
 /* ---- 2. tabela do Excel ---- */
 const XT = DATA.excelTable;
@@ -263,15 +302,14 @@ $("x_open").href = "file:///" + DATA.excel.path.replace(/\\/g,"/");
 const xChanged = r => r.isNew || Object.keys(r.changed).length>0;
 function renderChips(){
   const cats = catsIn(XT,"agCat");
-  $("x_chips").innerHTML = [`<button class="chip ${xCat===""?"on":""}" data-c="">Todos<b>${XT.filter(xChanged).length||""}</b></button>`]
-    .concat(cats.map(c=>{ const n = XT.filter(r=>r.agCat===c&&xChanged(r)).length;
+  $("x_chips").innerHTML = [`<button class="chip ${xCat===""?"on":""}" data-c="">Todos<b>${XT.filter(r=>r.inModel).length||""}</b></button>`]
+    .concat(cats.map(c=>{ const n = XT.filter(r=>r.agCat===c&&r.inModel).length;
       return `<button class="chip ${xCat===c?"on":""}" data-c="${esc(c)}">${esc(c)}${n?`<b>${n}</b>`:""}</button>`; })).join("");
   $("x_chips").querySelectorAll(".chip").forEach(b=>b.onclick=()=>{ xCat=b.dataset.c; renderChips(); renderExcel(); });
 }
 function xFiltered(){
-  const f=$("x_field").value, onlyCh=$("x_changed").checked, onlyM=$("x_model").checked, q=$("x_q").value.trim().toLowerCase();
-  return XT.filter(r=>(!xCat||r.agCat===xCat)&&(!onlyCh||xChanged(r))&&(!onlyM||r.inModel)&&
-    (!f||(f==="new"?r.isNew:!!r.changed[f]))&&
+  const onlyM=$("x_model").checked, q=$("x_q").value.trim().toLowerCase();
+  return XT.filter(r=>(!xCat||r.agCat===xCat)&&(!onlyM||r.inModel)&&
     (!q||[r.key,r.pt,r.en,r.obs,r.categoria,r.grupo].join(" ").toLowerCase().includes(q))).sort(byGroup);
 }
 function xCell(r,f){
@@ -283,7 +321,7 @@ function xCell(r,f){
 }
 function renderExcel(){
   const list = xFiltered();
-  $("x_n").textContent = list.length + " linha(s) · " + list.filter(xChanged).length + " alterada(s)";
+  $("x_n").textContent = list.length + " linha(s) · " + list.filter(r=>r.inModel).length + " usada(s) no modelo";
   $("x_body").innerHTML = list.length ? groupRows(list,"agCat",8,r=>`<tr class="${r.isNew?"r-new":""}">
       <td class="mono muted">${r.row}${r.isNew?' <span class="tag" style="--fc:var(--cy)">NOVA</span>':""}</td>
       <td>${esc(r.categoria)}</td><td class="muted">${esc(r.grupo)}</td><td class="key">${esc(r.key)}</td>
@@ -291,19 +329,17 @@ function renderExcel(){
       <td>${r.inModel?'<span style="color:var(--green)">sim</span>':'<span class="muted">não</span>'}</td></tr>`)
     : `<tr><td colspan="8" class="empty">Nenhuma linha para este filtro</td></tr>`;
 }
-["x_field","x_changed","x_model"].forEach(id=>$(id).onchange=renderExcel); $("x_q").oninput=renderExcel;
+$("x_model").onchange=renderExcel; $("x_q").oninput=renderExcel;
 $("x_dl").onclick = ()=>{
   const list = xFiltered();
-  const st = r => r.isNew ? "linha nova" : Object.entries(r.changed).map(([f,c])=>
-    (f==="pt"?"DESCRIÇÃO":"DESCRIÇÃO IN")+" "+(c.action==="overwrite"?"sobrescrita":"preenchida")).join(" / ");
   const head = ["LINHA","AGRUPAMENTO","CATEGORIA","GRUPO","PREFIXO","SEQUENCIA","KEYNOTE","DESCRIÇÃO","DESCRIÇÃO IN",
-    "OBSERVAÇÕES","NO MODELO","ALTERADO NESTA EXECUÇÃO","DESCRIÇÃO ANTERIOR","DESCRIÇÃO IN ANTERIOR"];
+    "OBSERVAÇÕES","NO MODELO"];
   const rows = list.map(r=>[r.row,r.agCat,r.categoria,r.grupo,r.prefixo,r.seq,r.key,r.pt,r.en,r.obs,
-    r.inModel?"sim":"não", st(r), r.changed.pt?r.changed.pt.old:"", r.changed.en?r.changed.en.old:""]);
+    r.inModel?"sim":"não"]);
   const name = "Keynotes_" + DATA.project.replace(/\.rvt$/i,"").replace(/[^\w-]+/g,"_") + (xCat?"_"+xCat.replace(/[^\w-]+/g,"_"):"");
   if(window.XLSX){
     const ws = XLSX.utils.aoa_to_sheet([head].concat(rows));
-    ws["!cols"] = head.map((h,i)=>({wch: [7,18,18,22,9,10,11,45,45,30,10,28,30,30][i]}));
+    ws["!cols"] = head.map((h,i)=>({wch: [7,18,18,22,9,10,11,45,45,30,10][i]}));
     ws["!autofilter"] = {ref: XLSX.utils.encode_range({s:{r:0,c:0},e:{r:rows.length,c:head.length-1}})};
     const wb = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb, ws, "MATERIAIS");
     XLSX.writeFile(wb, name + ".xlsx");
@@ -345,25 +381,27 @@ function renderResult(){
   wrap.querySelectorAll(".rtabs button").forEach(b=>b.onclick=()=>{ rtab=b.dataset.t; renderResult(); });
 }
 
-/* ---- 4. destaques ---- */
+/* ---- 4. destaque laranja ---- */
 (function(){
-  const H = DATA.highlight;
-  const red = H.filter(x=>x.color==="red"), org = H.filter(x=>x.color==="orange");
-  const sum = l => l.reduce((s,x)=>s+x.count,0);
+  const H = DATA.highlight, sum = l => l.reduce((s,x)=>s+x.count,0);
+  const miss = f => H.filter(x=>x.missing.includes(f));
   $("h_cards").innerHTML = [
-    {v:sum(red.filter(x=>x.case===2)), l:"Vermelho · keynote sem description", c:"var(--red)"},
-    {v:sum(red.filter(x=>x.case===3)), l:"Vermelho · description sem keynote", c:"var(--red)"},
-    {v:sum(org), l:"Laranja · sem keynote e sem description", c:"var(--orange)"},
+    {v:sum(H), l:"Elementos em laranja", c:"var(--orange)"},
+    {v:H.length, l:"Tipos incompletos", c:"var(--orange)"},
+    {v:miss("Keynote").length, l:"Tipos sem Keynote", c:"var(--amber)"},
+    {v:miss("Descrição").length, l:"Tipos sem Descrição", c:"var(--amber)"},
+    {v:miss(DATA.inParam).length, l:"Tipos sem " + DATA.inParam, c:"var(--amber)"},
   ].map(m=>`<div class="card" style="--c:${m.c}"><div class="v">${fmt(m.v)}</div><div class="l">${esc(m.l)}</div></div>`).join("");
   if(DATA.highlightNote){ $("h_wrap").innerHTML = `<p class="muted">Destaque: ${esc(DATA.highlightNote)}</p>`; return; }
-  if(!H.length){ $("h_wrap").innerHTML = `<div class="empty">✓ Todos os tipos visíveis têm Keynote e Description</div>`; return; }
-  const list = H.map(x=>Object.assign({grpLabel:(x.color==="red"?"VERMELHO · ":"LARANJA · ")+x.label},x));
-  $("h_wrap").innerHTML = `<div class="scroll" style="max-height:50vh"><table><thead><tr><th></th><th>Categoria</th><th>Família</th>
-    <th>Tipo</th><th>Keynote</th><th>Description</th><th>Elementos</th></tr></thead><tbody>${
-    groupRows(list,"grpLabel",7,x=>`<tr><td><span class="dot" style="background:var(--${x.color==="red"?"red":"orange"})"></span></td>
-      <td>${esc(x.category)}</td><td>${esc(x.family)}</td><td>${esc(x.type)} <span class="muted mono">#${x.typeId}</span></td>
-      <td class="key">${x.key?esc(x.key):'<span class="none">vazio</span>'}</td>
-      <td>${x.desc?esc(x.desc):'<span class="none">vazio</span>'}</td><td class="mono">${x.count}</td></tr>`)}</tbody></table></div>`;
+  if(!H.length){ $("h_wrap").innerHTML = `<div class="empty">✓ Todos os tipos visíveis têm Keynote, Descrição e ${esc(DATA.inParam)}</div>`; return; }
+  const v = x => x ? esc(x) : '<span class="none">vazio</span>';
+  $("h_wrap").innerHTML = `<div class="scroll" style="max-height:50vh"><table><thead><tr><th></th><th>Família</th>
+    <th>Tipo</th><th>Falta</th><th>Keynote</th><th>Descrição</th><th>Descrição IN</th><th>Elementos</th></tr></thead><tbody>${
+    groupRows(H.slice().sort((a,b)=>a.category.localeCompare(b.category,"pt-BR")),"category",8,x=>`<tr>
+      <td><span class="dot" style="background:var(--orange)"></span></td><td>${esc(x.family)}</td>
+      <td>${esc(x.type)} <span class="muted mono">#${x.typeId}</span></td>
+      <td class="warn">${x.missing.map(esc).join(", ")}</td><td class="key">${v(x.key)}</td><td>${v(x.desc)}</td>
+      <td>${x.hasIn ? v(x.en) : '<span class="none">sem parâmetro</span>'}</td><td class="mono">${x.count}</td></tr>`)}</tbody></table></div>`;
 })();
 
 /* ---- 5. inconsistências + keynotes ---- */
@@ -422,7 +460,7 @@ $("csv").onclick = ()=>{
   document.body.appendChild(a); a.click(); a.remove();
 };
 
-renderVerify(); renderChips(); renderExcel(); renderResult(); renderIssueCards(); renderKeys();
+renderVerify(); renderInc(); renderChips(); renderExcel(); renderResult(); renderIssueCards(); renderKeys();
 </script>
 </body>
 </html>
