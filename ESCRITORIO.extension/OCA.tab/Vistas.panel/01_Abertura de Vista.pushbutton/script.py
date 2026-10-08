@@ -650,7 +650,7 @@ def name_options(target, room):
             prefix = room_prefix(room)
             opts.extend({"key": "room_" + key, "label": prefix + pt, "pt": pt, "en": en,
                          "suffix": suf, "room": True} for key, pt, en, suf in only)
-        opts.insert(0, {"key": MANUAL_KEY, "label": u"Sem nome (manual ou sequência)",
+        opts.insert(0, {"key": MANUAL_KEY, "label": u"Sem nome, manual ou sequência",
                         "pt": u"", "en": u"", "suffix": False, "room": False})
         return opts
     if target == "plan":
@@ -665,7 +665,7 @@ def name_options(target, room):
         opts.extend({"key": "room_" + key, "label": prefix + pt, "pt": pt, "en": en,
                      "suffix": suf, "room": True} for key, pt, en, suf in room_base)
     # "Sem nome" fica no topo da lista (só ordem: o padrão continua o 1º título)
-    opts.insert(0, {"key": MANUAL_KEY, "label": u"Sem nome (manual ou sequência)",
+    opts.insert(0, {"key": MANUAL_KEY, "label": u"Sem nome, manual ou sequência",
                     "pt": u"", "en": u"", "suffix": False, "room": False})
     return opts
 
