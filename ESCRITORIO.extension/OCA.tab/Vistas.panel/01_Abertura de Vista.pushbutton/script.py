@@ -23,8 +23,9 @@
 #      o Title on Sheet - English (cada um pode ficar vazio). Em elevação e
 #      corte o nome é só ELEVAÇÃO/CORTE (ou a versão por ambiente); com os
 #      dois complementos vazios entra uma letra sequencial livre (CORTE - A,
-#      CORTE - B...). "Manter nomenclatura atual da vista" não renomeia (na
-#      chamada fica o nome padrão do Revit). Em corte/elevação não há planta nova.
+#      CORTE - B...). "Manter nomenclatura atual da vista": a vista ativa não é
+#      renomeada; a chamada recebe os nomes da vista ativa + " - CHAMADA n"
+#      (EN: " - CALLOUT n", n = 1º livre). Em corte/elevação não há planta nova.
 #      Destino no Navegador de Projeto = parâmetro de projeto "Pasta" (pasta
 #      existente, nova ou nenhuma). View Template opcional, só os compatíveis;
 #      na vista ativa a 1ª opção mantém o template que ela já tem.
@@ -756,6 +757,26 @@ def seq_letters():
         yield out
 
 
+def view_names(view):
+    """(View Name, Title on Sheet, Title on Sheet - English) atuais da vista."""
+    def text(p):
+        return to_unicode(p.AsString()).strip() if p is not None and p.HasValue else u""
+    return (to_unicode(view.Name), text(view.get_Parameter(BIP.VIEW_DESCRIPTION)),
+            text(view.LookupParameter(EN_TITLE_PARAM)))
+
+
+def keep_callout_names(parent_names):
+    """Chamada com 'Manter nomenclatura atual': nomes da vista-mãe + ' - CHAMADA n'
+    (EN ' - CALLOUT n'); n = primeiro com View Name livre. Títulos vazios ficam vazios."""
+    vname, title, en = parent_names
+    n = 1
+    while clean_name(u"{} - CHAMADA {}".format(vname, n)) in VIEW_NAMES:
+        n += 1
+    return (clean_name(u"{} - CHAMADA {}".format(vname, n)),
+            u"{} - CHAMADA {}".format(title, n) if title else u"",
+            u"{} - CALLOUT {}".format(en, n) if en else u"")
+
+
 def letter_names(prefix, title, en, own=None):
     """Elevação/corte sem complemento: '<nome> - A', ou a próxima letra cujo
     View Name esteja livre ('own' = nome atual da vista ativa, aceito)."""
@@ -1370,6 +1391,7 @@ class CropWindow(forms.WPFWindow):
         enabled = [k for k in MODES if k not in reasons]
         for key, rb in self._radios.items():
             rb.IsEnabled = key in enabled
+            rb.Opacity = 1.0 if key in enabled else 0.4   # bloqueada: tom mais claro
             rb.Checked += self._on_mode
 
         f = ctx["folders"]
@@ -1519,7 +1541,11 @@ class CropWindow(forms.WPFWindow):
         return self.suffix_key == FREE_SUFFIX
 
     def names(self, folder):
-        """(View Name, Title on Sheet, English)."""
+        """(View Name, Title on Sheet, English) que serão gravados."""
+        if self.name_opt["key"] == KEEP_NAME_KEY:
+            if self.mode == "callout":
+                return keep_callout_names(self.ctx["active_names"])
+            return u"", u"", u""   # vista ativa: nada é renomeado
         on = self.manual_suffix_on()
         pt_txt = to_unicode(self.suffix_text.Text) if on else u""
         en_txt = to_unicode(self.suffix_text_en.Text) if on else u""
@@ -1573,10 +1599,11 @@ class CropWindow(forms.WPFWindow):
         template = self.effective_template()
         folder = self.p_folder.render(template)
         vname, title, en = self.names(folder)
+        if keep_name and self.mode == "current":
+            # nada muda: a prévia mostra os nomes que a vista já tem
+            vname, title, en = self.ctx["active_names"]
         keep = (u"(mantém o nome atual)" if self.mode == "current"
                 else u"(nome padrão do Revit)")
-        if keep_name:
-            title = en = u"(mantém o atual)" if self.mode == "current" else u""
         self.pv_name.Text = vname or keep
         self.pv_title.Text = title or u"—"
         self.pv_en.Text = en or u"—"
@@ -1699,6 +1726,7 @@ dialog_ctx = {
                    + ([KEEP_NAME_OPT] if m in ("callout", "current") else []))
                   for m in MODES),
     "kinds": dict((m, target_kind(m)) for m in MODES),
+    "active_names": view_names(active_view),
     "level": {"plans": plan_level, "callout": active_level, "current": active_level},
     "room": the_room,
     "hints": name_hints,
