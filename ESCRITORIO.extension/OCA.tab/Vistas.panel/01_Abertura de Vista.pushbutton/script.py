@@ -21,8 +21,10 @@
 #        Title on Sheet - English = nome em inglês (sem prefixo)
 #      Complemento manual: um campo para View Name/Title on Sheet e outro para
 #      o Title on Sheet - English (cada um pode ficar vazio). Em elevação e
-#      corte o nome é só ELEVAÇÃO/CORTE (ou a versão por ambiente) e o
-#      complemento entra apenas com "Adicionar complemento" marcado.
+#      corte o nome é só ELEVAÇÃO/CORTE (ou a versão por ambiente); com os
+#      dois complementos vazios entra uma letra sequencial livre (CORTE - A,
+#      CORTE - B...). "Manter nomenclatura atual da vista" não renomeia (na
+#      chamada fica o nome padrão do Revit). Em corte/elevação não há planta nova.
 #      Destino no Navegador de Projeto = parâmetro de projeto "Pasta" (pasta
 #      existente, nova ou nenhuma). View Template opcional, só os compatíveis;
 #      na vista ativa a 1ª opção mantém o template que ela já tem.
@@ -612,6 +614,9 @@ SUFFIXES = ((FREE_SUFFIX, u"", u""),
             ("pav", u"PAV.", u"LEVEL"),
             ("amp", u"AMPLIAÇÃO", u"ENLARGED"))
 MANUAL_KEY = "manual"
+KEEP_NAME_KEY = "keep"   # chamada / vista ativa: não renomeia
+KEEP_NAME_OPT = {"key": KEEP_NAME_KEY, "label": u"Manter nomenclatura atual da vista",
+                 "pt": u"", "en": u"", "suffix": False, "room": False}
 
 
 def room_info(room):
@@ -687,6 +692,8 @@ def compose_names(opt, suffix_key, level, room, manual, suffix_text=u"", suffix_
     suffix_text_en para o Title on Sheet - English (cada um pode ficar vazio)."""
     if opt["key"] == MANUAL_KEY:
         return manual.strip(), u""
+    if opt["key"] == KEEP_NAME_KEY:
+        return u"", u""   # nada a gravar: nomes ficam como estão
     pt, en = opt["pt"], opt["en"]
     if not opt["suffix"]:
         suffix_key = FREE_SUFFIX   # PAV./AMPLIAÇÃO só nas plantas 2..6
@@ -735,6 +742,28 @@ def resolve_names(prefix, title, en):
     num = u"{:02d}".format(n)
     title, en = title.replace(u"#", num), en.replace(u"#", num)
     return clean_name(with_prefix(prefix, title)), title, en
+
+
+def seq_letters():
+    """A, B, ..., Z, AA, AB, ..."""
+    n = 0
+    while True:
+        n += 1
+        k, out = n, u""
+        while k:
+            k, r = divmod(k - 1, 26)
+            out = unichr(65 + r) + out
+        yield out
+
+
+def letter_names(prefix, title, en, own=None):
+    """Elevação/corte sem complemento: '<nome> - A', ou a próxima letra cujo
+    View Name esteja livre ('own' = nome atual da vista ativa, aceito)."""
+    for letter in seq_letters():
+        t = u"{} - {}".format(title, letter)
+        vname = clean_name(with_prefix(prefix, t))
+        if vname not in VIEW_NAMES or vname == own:
+            return vname, t, (en + EN_SEP + letter) if en else en
 
 
 def unique_view_name(base):
@@ -976,10 +1005,25 @@ def target_kind(mode):
         active_view.ViewType, "vertical")
 
 
+def is_vertical_view(view):
+    """Corte, elevação ou detalhe gerado de um deles (direção de vista horizontal)."""
+    if view.ViewType in (VT.Section, VT.Elevation):
+        return True
+    if view.ViewType == VT.Detail:
+        try:
+            return abs(view.ViewDirection.Z) < 0.5
+        except Exception:
+            return True
+    return False
+
+
 def check_modes(plan_items, callout_items, plan_level):
     reasons = {}
     av_name = to_unicode(active_view.Name)
-    if not plan_items:
+    if is_vertical_view(active_view):
+        reasons["plans"] = (u"A vista ativa '{}' é corte/elevação: use a chamada ou o "
+                            u"recorte da vista ativa.".format(av_name))
+    elif not plan_items:
         reasons["plans"] = u"Nenhum tipo de vista de planta/área no modelo."
     elif plan_level is None:
         reasons["plans"] = u"Não foi possível identificar o nível dos elementos."
@@ -1042,7 +1086,7 @@ FOLDER_BLOCK = u"""
 CROP_XAML = u"""
 <Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="Abertura de Vistas" Height="Auto" Width="1240"
+        Title="Abertura de Vista" Height="Auto" Width="1240"
         SizeToContent="Height" WindowStartupLocation="CenterScreen"
         ResizeMode="NoResize" Background="#0E1526">
   <Window.Resources>
@@ -1166,7 +1210,6 @@ CROP_XAML = u"""
             <TextBox x:Name="manual"/>
             <TextBlock x:Name="suffix_lbl" Text="B - Complemento"/>
             <ComboBox x:Name="vsuffix"/>
-            <CheckBox x:Name="add_suffix" Content="Adicionar complemento" Margin="0,8,0,0"/>
             <TextBlock x:Name="suffix_text_lbl" TextWrapping="Wrap"
                        Text="Complemento manual - View Name e Title on Sheet (vazio = sem complemento;  # = sequência 01, 02...)"/>
             <TextBox x:Name="suffix_text"/>
@@ -1344,8 +1387,6 @@ class CropWindow(forms.WPFWindow):
         self.manual.TextChanged += self._on_name
         self.suffix_text.TextChanged += self._on_name
         self.suffix_text_en.TextChanged += self._on_name
-        self.add_suffix.Checked += self._on_name
-        self.add_suffix.Unchecked += self._on_name
 
         self._ready = True
         start = cfg["mode"] if cfg["mode"] in enabled else enabled[0]
@@ -1413,7 +1454,7 @@ class CropWindow(forms.WPFWindow):
 
     @property
     def simple_kind(self):
-        """Elevação ou corte: nome simples e complemento só se marcado."""
+        """Elevação ou corte: nome simples; complemento vazio = letra sequencial."""
         return self.ctx["kinds"][self.mode] in SIMPLE_KINDS
 
     def _default_name_index(self):
@@ -1441,12 +1482,6 @@ class CropWindow(forms.WPFWindow):
         # recortar a vista ativa: ela já está aberta
         self.open_views.IsEnabled = mode != "current"
         self.open_views.Opacity = 1.0 if mode != "current" else 0.4
-
-        # "Adicionar complemento" só existe em elevação/corte e abre desmarcado
-        from System.Windows import Visibility
-        self.add_suffix.Visibility = (Visibility.Visible if self.simple_kind
-                                      else Visibility.Collapsed)
-        self.add_suffix.IsChecked = False
 
         # nomes dependem do tipo da vista resultante (planta x corte/elevação)
         self._names = self.ctx["names"][mode]
@@ -1478,19 +1513,23 @@ class CropWindow(forms.WPFWindow):
         return SUFFIXES[idx if idx >= 0 else 0][0]
 
     def manual_suffix_on(self):
-        """Os campos de complemento manual valem? (combo em 'Sem nomenclatura';
-        em elevação/corte, só com 'Adicionar complemento' marcado)."""
-        if self.name_opt["key"] == MANUAL_KEY or self.suffix_key != FREE_SUFFIX:
+        """Os campos de complemento manual valem? (combo em 'Sem nomenclatura')."""
+        if self.name_opt["key"] in (MANUAL_KEY, KEEP_NAME_KEY):
             return False
-        return bool(self.add_suffix.IsChecked) if self.simple_kind else True
+        return self.suffix_key == FREE_SUFFIX
 
     def names(self, folder):
         """(View Name, Title on Sheet, English)."""
         on = self.manual_suffix_on()
+        pt_txt = to_unicode(self.suffix_text.Text) if on else u""
+        en_txt = to_unicode(self.suffix_text_en.Text) if on else u""
         title, en = compose_names(self.name_opt, self.suffix_key, self.ctx["level"][self.mode],
                                   self.ctx["room"], to_unicode(self.manual.Text),
-                                  to_unicode(self.suffix_text.Text) if on else u"",
-                                  to_unicode(self.suffix_text_en.Text) if on else u"")
+                                  pt_txt, en_txt)
+        if on and self.simple_kind and not free_suffix(pt_txt) and not free_suffix(en_txt):
+            # corte/elevação sem complemento: próxima letra livre (CORTE - A, B...)
+            own = to_unicode(active_view.Name) if self.mode == "current" else None
+            return letter_names(name_prefix(folder), title, en, own)
         return resolve_names(name_prefix(folder), title, en)
 
     def _sync_suffix(self, opt):
@@ -1519,11 +1558,10 @@ class CropWindow(forms.WPFWindow):
     def _render(self):
         opt = self.name_opt
         is_manual = opt["key"] == MANUAL_KEY
+        keep_name = opt["key"] == KEEP_NAME_KEY
         self._sync_suffix(opt)
-        free = self.suffix_key == FREE_SUFFIX
-        self.vsuffix.IsEnabled = opt["suffix"]
-        self.suffix_lbl.Opacity = 1.0 if not is_manual else 0.4
-        self.add_suffix.IsEnabled = free and not is_manual
+        self.vsuffix.IsEnabled = opt["suffix"] and not keep_name
+        self.suffix_lbl.Opacity = 1.0 if not (is_manual or keep_name) else 0.4
         on = self.manual_suffix_on()
         for ctl in (self.suffix_text, self.suffix_text_en):
             ctl.IsEnabled = on
@@ -1537,6 +1575,8 @@ class CropWindow(forms.WPFWindow):
         vname, title, en = self.names(folder)
         keep = (u"(mantém o nome atual)" if self.mode == "current"
                 else u"(nome padrão do Revit)")
+        if keep_name:
+            title = en = u"(mantém o atual)" if self.mode == "current" else u""
         self.pv_name.Text = vname or keep
         self.pv_title.Text = title or u"—"
         self.pv_en.Text = en or u"—"
@@ -1655,7 +1695,9 @@ active_level = getattr(active_view, "GenLevel", None)
 sel_preview = u", ".join(g.label for g in geoms[:6]) + (u"..." if len(geoms) > 6 else u"")
 dialog_ctx = {
     "types": {"plans": plan_items, "callout": callout_items, "current": []},
-    "names": dict((m, name_options(target_kind(m), the_room)) for m in MODES),
+    "names": dict((m, name_options(target_kind(m), the_room)
+                   + ([KEEP_NAME_OPT] if m in ("callout", "current") else []))
+                  for m in MODES),
     "kinds": dict((m, target_kind(m)) for m in MODES),
     "level": {"plans": plan_level, "callout": active_level, "current": active_level},
     "room": the_room,
