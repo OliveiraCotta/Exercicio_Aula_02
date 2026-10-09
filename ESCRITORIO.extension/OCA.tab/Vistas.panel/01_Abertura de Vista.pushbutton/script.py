@@ -51,6 +51,7 @@ import math
 from pyrevit import revit, DB, script, forms
 from Autodesk.Revit.DB.Architecture import Room
 from Autodesk.Revit.UI.Selection import ISelectionFilter, ObjectType
+from Autodesk.Revit.Exceptions import OperationCanceledException
 
 doc = revit.doc
 uidoc = revit.uidoc
@@ -123,20 +124,37 @@ class TargetFilter(ISelectionFilter):
         return False
 
 
+PICK_PROMPT = (u"Abertura de Vista: selecione os elementos (um ou vários) e clique em "
+               u"Concluir na Barra de opções  ·  Esc cancela")
+
+
 def get_target_elements():
-    """Seleção atual filtrada; se vazia, pede para o usuário selecionar."""
+    """Seleção atual filtrada; se vazia, pede para o usuário selecionar no modelo."""
     current = list(revit.get_selection().elements)
     picked = [el for el in current if is_target(el)]
     ignored = len(current) - len(picked)
-    if picked:
+    if picked:   # já havia seleção: segue exatamente como antes
         return picked, ignored
+
+    # sem seleção prévia: orientação clara e seleção múltipla direto no modelo
+    if not forms.alert(u"Nenhum elemento selecionado.",
+                       sub_msg=u"Clique em OK e selecione no modelo os elementos que "
+                               u"definem a vista (um ou vários). Depois clique em "
+                               u"Concluir na Barra de opções.\n\nEsc cancela sem "
+                               u"alterar nada.",
+                       title=u"Abertura de Vista", ok=True, cancel=True):
+        script.exit()   # Cancelar: nada foi alterado
     try:
-        refs = uidoc.Selection.PickObjects(
-            ObjectType.Element, TargetFilter(),
-            u"Selecione os elementos da vista e clique em Concluir")
-    except Exception:
-        script.exit()   # Esc
-    return [doc.GetElement(r) for r in refs], ignored
+        refs = uidoc.Selection.PickObjects(ObjectType.Element, TargetFilter(), PICK_PROMPT)
+    except OperationCanceledException:
+        script.exit()   # Esc: encerra sem criar vistas nem modificar o modelo
+    except Exception as exc:   # vista que não permite seleção (folha, tabela...)
+        forms.alert(u"Não foi possível selecionar elementos na vista ativa.",
+                    sub_msg=to_unicode(exc), title=u"Abertura de Vista", exitscript=True)
+    elements = [doc.GetElement(r) for r in refs]
+    if not elements:   # Concluir sem nada selecionado = cancelar
+        script.exit()
+    return elements, ignored
 
 
 def elem_label(el):
