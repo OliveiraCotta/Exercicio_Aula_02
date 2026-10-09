@@ -3,37 +3,36 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Acabamentos por Keynote</title>
+<title>Acabamentos de Ambiente</title>
 <style>
-  /* cores: padrão visual OCA (lib/oca_ui/theme.py), injetadas na geração do relatório */
-  :root{ /*__OCA_TOKENS__*/
-    --bg:var(--oca-Bg); --panel:var(--oca-Surface); --line:var(--oca-Line);
-    --ink:var(--oca-Ink); --dim:var(--oca-Ink2);
-    --cy:var(--oca-Accent); --teal:var(--oca-Ok); --amber:var(--oca-Warn); --mag:var(--oca-Err); --violet:var(--oca-Violet);
+  :root{
+    --bg:#070C16; --panel:rgba(255,255,255,.028); --line:rgba(101,227,255,.22);
+    --grid:rgba(101,227,255,.05); --ink:#D9E8F5; --dim:#7A8FA9;
+    --cy:#65E3FF; --teal:#3DDCB4; --amber:#FFB454; --mag:#FF4F9A; --violet:#9D8CFF;
   }
   *{box-sizing:border-box; margin:0; padding:0}
   body{
-    background:var(--bg);
-    color:var(--ink); font-family:"Segoe UI",system-ui,sans-serif;
+    background:
+      repeating-linear-gradient(0deg, var(--grid) 0 1px, transparent 1px 48px),
+      repeating-linear-gradient(90deg, var(--grid) 0 1px, transparent 1px 48px),
+      radial-gradient(1200px 600px at 15% -10%, #0D1B33 0%, var(--bg) 55%);
+    background-color:var(--bg);
+    color:var(--ink); font-family:"Bahnschrift","Segoe UI",system-ui,sans-serif;
     padding:36px clamp(16px,4vw,56px) 80px; min-height:100vh;
   }
   .mono{font-family:Consolas,"Cascadia Mono",monospace}
   header{display:flex; justify-content:space-between; align-items:flex-end; gap:16px; flex-wrap:wrap;
     border-bottom:1px solid var(--line); padding-bottom:18px; margin-bottom:28px}
-  .brand{display:flex; align-items:center; gap:18px}
-  .brand .oca-logo{height:46px; width:auto; flex:none}
-  header .stamp{flex:1 1 320px; min-width:0}
-  .oca-logo[src=""]{display:none}
-  .eyebrow{font-size:11px; letter-spacing:.12em; color:var(--cy); text-transform:uppercase}
+  .eyebrow{font-size:11px; letter-spacing:.45em; color:var(--cy); text-transform:uppercase}
   h1{font-size:clamp(22px,3vw,36px); font-weight:600; letter-spacing:.04em; margin-top:6px}
   h1 span{color:var(--dim); font-weight:300}
   .stamp{text-align:right; font-size:11px; color:var(--dim); letter-spacing:.12em; line-height:1.8}
   .stamp b{color:var(--teal); font-weight:600}
-  h2{font-size:12px; letter-spacing:.1em; text-transform:uppercase; color:var(--dim);
+  h2{font-size:12px; letter-spacing:.4em; text-transform:uppercase; color:var(--dim);
     margin:0 0 16px; display:flex; align-items:center; gap:12px}
   h2::after{content:""; flex:1; height:1px; background:var(--line)}
 
-  .banner{border:1px solid color-mix(in srgb,var(--mag) 50%,transparent); background:color-mix(in srgb,var(--mag) 7%,transparent); color:var(--mag);
+  .banner{border:1px solid rgba(255,79,154,.5); background:rgba(255,79,154,.07); color:var(--mag);
     border-radius:4px; padding:12px 16px; margin-bottom:22px; font-size:13px; line-height:1.7}
 
   /* stat cards - click to filter the table */
@@ -44,14 +43,14 @@
   .card::before{content:""; position:absolute; top:0; left:0; width:100%; height:2px;
     background:linear-gradient(90deg, var(--c,var(--cy)), transparent 70%)}
   .card:hover{border-color:var(--cy)}
-  .card.on{border-color:var(--c,var(--cy)); background:color-mix(in srgb,var(--cy) 7%,transparent)}
+  .card.on{border-color:var(--c,var(--cy)); background:rgba(101,227,255,.07)}
   .card .v{font-size:30px; font-weight:600; color:var(--c,var(--cy)); font-variant-numeric:tabular-nums}
-  .card .l{font-size:10px; letter-spacing:.06em; text-transform:uppercase; color:var(--dim); margin-top:6px; line-height:1.5}
+  .card .l{font-size:10px; letter-spacing:.2em; text-transform:uppercase; color:var(--dim); margin-top:6px; line-height:1.5}
 
   /* filters */
   .filters{display:grid; grid-template-columns:repeat(auto-fill,minmax(160px,1fr)); gap:10px 12px; margin-bottom:12px}
-  .f label{display:block; font-size:10px; letter-spacing:.06em; text-transform:uppercase; color:var(--dim); margin-bottom:5px}
-  .f input, .f select{width:100%; background:var(--oca-Field); border:1px solid var(--line); border-radius:3px;
+  .f label{display:block; font-size:10px; letter-spacing:.2em; text-transform:uppercase; color:var(--dim); margin-bottom:5px}
+  .f input, .f select{width:100%; background:#0C1424; border:1px solid var(--line); border-radius:3px;
     color:var(--ink); padding:7px 9px; font-size:12px; font-family:inherit; outline:none}
   .f input:focus, .f select:focus{border-color:var(--cy)}
   .f.wide{grid-column:span 2}
@@ -59,24 +58,24 @@
   .btn{background:transparent; border:1px solid var(--line); border-radius:3px; color:var(--cy);
     font-family:inherit; font-size:11px; letter-spacing:.15em; text-transform:uppercase;
     padding:8px 14px; cursor:pointer}
-  .btn:hover{border-color:var(--cy); background:color-mix(in srgb,var(--cy) 12%,transparent)}
+  .btn:hover{border-color:var(--cy); background:rgba(101,227,255,.12)}
   .count{font-size:11px; color:var(--dim); letter-spacing:.15em; margin-left:auto}
 
   /* table */
   .tablewrap{overflow-x:auto}
   table{width:100%; border-collapse:collapse; font-size:13px; min-width:900px}
-  th{font-size:10px; letter-spacing:.06em; text-transform:uppercase; color:var(--cy);
+  th{font-size:10px; letter-spacing:.22em; text-transform:uppercase; color:var(--cy);
     text-align:left; padding:10px 10px; border-bottom:1px solid var(--line);
     cursor:pointer; user-select:none; white-space:nowrap}
   th .dir{color:var(--amber)}
   td{padding:9px 10px; border-bottom:1px solid rgba(255,255,255,.05); vertical-align:top}
   tbody tr.room{cursor:pointer}
-  tbody tr.room:hover td{background:color-mix(in srgb,var(--cy) 5%,transparent)}
-  tbody tr.room.open td{background:color-mix(in srgb,var(--cy) 7%,transparent)}
+  tbody tr.room:hover td{background:rgba(101,227,255,.05)}
+  tbody tr.room.open td{background:rgba(101,227,255,.07)}
   .tag{display:inline-block; padding:2px 8px; border:1px solid var(--line); border-radius:2px;
     font-size:11px; color:var(--dim)}
   .kn{display:inline-block; margin:1px 4px 1px 0; padding:1px 7px; border-radius:2px;
-    border:1px solid color-mix(in srgb,var(--cy) 35%,transparent); background:color-mix(in srgb,var(--cy) 7%,transparent);
+    border:1px solid rgba(101,227,255,.35); background:rgba(101,227,255,.07);
     font-family:Consolas,monospace; font-size:12px; color:var(--cy)}
   .st{font-size:11px; letter-spacing:.05em}
   .st.missing{color:var(--mag)}
@@ -92,7 +91,7 @@
   /* detail row */
   tr.detail td{background:rgba(0,0,0,.25); padding:16px 18px 18px}
   .dgrid{display:grid; grid-template-columns:repeat(auto-fit,minmax(260px,1fr)); gap:16px}
-  .dbox h4{font-size:10px; letter-spacing:.08em; text-transform:uppercase; color:var(--cy); margin-bottom:8px; font-weight:600}
+  .dbox h4{font-size:10px; letter-spacing:.3em; text-transform:uppercase; color:var(--cy); margin-bottom:8px; font-weight:600}
   .dbox ul{list-style:none; font-size:12px; line-height:1.7}
   .dbox li{color:var(--ink)}
   .dbox li .id{font-family:Consolas,monospace; color:var(--dim)}
@@ -102,21 +101,18 @@
   .dbox li.note{color:var(--dim)}
   .dmsg{color:var(--mag); font-size:12px; margin-bottom:10px}
 
-  .empty{text-align:center; padding:50px 0; color:var(--dim); letter-spacing:.06em}
+  .empty{text-align:center; padding:50px 0; color:var(--dim); letter-spacing:.2em}
   .meta{margin-top:40px; font-size:11px; color:var(--dim); line-height:1.9}
   .meta b{color:var(--ink); font-weight:600}
-  footer{margin-top:40px; font-size:10px; letter-spacing:.08em; color:var(--dim);
+  footer{margin-top:40px; font-size:10px; letter-spacing:.3em; color:var(--dim);
     text-transform:uppercase; text-align:center}
 </style>
 </head>
 <body>
 <header>
-  <div class="brand">
-    <img class="oca-logo" src="__OCA_LOGO__" alt="">
-    <div>
-      <div class="eyebrow">Acabamentos dos ambientes // Automação por Keynote</div>
-      <h1 id="proj"></h1>
-    </div>
+  <div>
+    <div class="eyebrow">Acabamentos dos ambientes // Automação por Keynote</div>
+    <h1 id="proj"></h1>
   </div>
   <div class="stamp mono">GERADO EM <b id="stamp"></b><br>ORIGEM <b>REVIT · PYREVIT</b></div>
 </header>
@@ -133,13 +129,14 @@
 </div>
 <div class="toolrow">
   <button class="btn" id="resetBtn">Limpar filtros</button>
+  <button class="btn" id="xlsxBtn" title="Baixa uma planilha Excel com os ambientes que estão na tabela (respeita os filtros): aba Ambientes com Número, Nome, Pavimento, Parede, Piso, Rodapé, Soleira, Teto e Rodateto.">&#x2913; Baixar Excel</button>
   <span class="count" id="count"></span>
 </div>
 <div class="tablewrap" id="tableWrap"></div>
 
 <div id="unassigned"></div>
 <div class="meta" id="meta"></div>
-<footer>Acabamentos por Keynote · gerado localmente · nenhum dado sai deste computador</footer>
+<footer>Acabamentos de Ambiente · gerado localmente · nenhum dado sai deste computador</footer>
 
 <script>
 const DATA = __DATA__;
@@ -174,6 +171,7 @@ const STATS = [
   {k:"nobound", l:"Ambientes sem contorno",            c:"var(--mag)",    f: r => !hasBounds(r)},
   ...GROUPS.map(g=>({k:g.key, l:`Sem ${g.label.toLowerCase()} (${g.prefixes.join("/")})`, c:"var(--amber)", f: missing(g.key)})),
   {k:"overflow",l:"Keynotes sem campo livre",          c:"var(--mag)",    f: r => hasBounds(r) && FIN.some(k=>(r.finishes[k].overflow||[]).length)},
+  {k:"tagmiss", l:"Identificador sem o tipo necessário", c:"var(--mag)",  f: r => (r.tags||[]).some(t=>t.missing)},
   {k:"nokn",    l:"Ambientes com elementos sem Keynote", c:"var(--mag)",  f: r => hasBounds(r) && (r.issues||[]).length > 0},
   {k:"mismatch",l:"Inconsistências prefixo / categoria", c:"var(--mag)",  f: r => hasBounds(r) && FIN.some(k=>(r.finishes[k].mismatches||[]).length)},
   {k:"complete",l:"Ambientes com informação completa", c:"var(--teal)",   f: r => r.status === "OK"},
@@ -261,6 +259,7 @@ function renderTable(){
     list = list.slice().sort((a,b)=>{
       let x, y;
       if(sortK === "status"){ x = STATUS_RANK[a.status]; y = STATUS_RANK[b.status]; return (x-y)*sortDir; }
+      if(sortK === "rows"){ return ((a.rows||0)-(b.rows||0))*sortDir; }
       if(FIN.includes(sortK)){ x = a.finishes[sortK].value; y = b.finishes[sortK].value; }
       else { x = a[sortK]; y = b[sortK]; }
       return natural(x||"", y||"") * sortDir;
@@ -271,7 +270,7 @@ function renderTable(){
   if(!list.length){ wrap.innerHTML = `<div class="empty">Nenhum ambiente corresponde aos filtros.</div>`; return; }
   const arrow = k => sortK===k ? ` <span class="dir">${sortDir>0?"▲":"▼"}</span>` : "";
   const cols = [["number","Número"],["name","Nome do ambiente"],["level","Pavimento"],
-    ...FIN.map(k=>[k, FIN_LABEL[k]]),["status","Situação"]];
+    ...FIN.map(k=>[k, FIN_LABEL[k]]),["rows","Linhas"],["status","Situação"]];
   const head = `<tr>${cols.map(([k,l])=>`<th data-k="${k}"${FIN_FIELDS[k]?` title="${esc(FIN_FIELDS[k].join(", "))}"`:""}>${l}${arrow(k)}</th>`).join("")}</tr>`;
   const body = list.map(r=>{
     const open = openRows.has(r.id);
@@ -280,6 +279,7 @@ function renderTable(){
       <td>${esc(r.name)||"-"}</td>
       <td><span class="tag">${esc(r.level)}</span></td>
       ${FIN.map(k=>`<td>${finishCell(r,k)}</td>`).join("")}
+      <td class="mono" title="Linhas do identificador com valor">${r.rows||"-"}${(r.tags||[]).some(t=>t.missing)?` <span class="st missing" title="Tipo de identificador ausente">!</span>`:""}</td>
       <td><span class="badge ${r.status}">${STATUS_PT[r.status]||r.status}</span>${r.updated?`<span class="upd">ATUALIZADO</span>`:""}</td></tr>`;
     return open ? row + detailRow(r, cols.length) : row;
   }).join("");
@@ -319,9 +319,14 @@ function detailRow(r, span){
   }).join("") : "";
   const iss = (r.issues||[]).map(i=>`<li class="iss">${elLine(i, "- " + esc(i.msg))}</li>`);
   const oth = (r.others||[]).map(o=>`<li class="note">${elLine(o, (o.kn||[]).map(x=>`<span class="kn">${esc(x)}</span>`).join("") + " " + esc(o.msg))}</li>`);
+  const tagLines = (r.tags||[]).map(t=> t.missing
+      ? `<li class="iss">Vista ${esc(t.view)}: ${esc(t.current)} → <b>${esc(t.new)}</b> - ${esc(t.msg)}</li>`
+      : `<li>Vista ${esc(t.view)}: ${esc(t.current)} → <span class="kn">${esc(t.new)}</span>${t.msg?` <span class="src">${esc(t.msg)}</span>`:""}</li>`);
+  const tagBox = hasBounds(r) ? `<div class="dbox"><h4>Identificador <span class="src">(${r.rows||0} linha(s) com valor)</span></h4><ul>${
+      tagLines.join("") || `<li class="note">${r.rows ? "Nenhum identificador para trocar (já está no tipo certo ou o ambiente não tem identificador REVESTIMENTOS)." : "Ambiente sem acabamento: o identificador não é alterado."}</li>`}</ul></div>` : "";
   const otherBox = (iss.length || oth.length)
     ? `<div class="dbox"><h4>Outros elementos</h4><ul>${[...iss,...oth].join("")}</ul></div>` : "";
-  return `<tr class="detail"><td colspan="${span}">${msgs}<div class="dgrid">${boxes}${otherBox}</div>
+  return `<tr class="detail"><td colspan="${span}">${msgs}<div class="dgrid">${boxes}${tagBox}${otherBox}</div>
     <div class="cur">Id do ambiente ${r.id}${r.phase?" · fase "+esc(r.phase):""}</div></td></tr>`;
 }
 
@@ -356,7 +361,115 @@ document.getElementById("meta").innerHTML =
   `<b>Campos:</b> ` + GROUPS.map(g=>{ const miss = g.slots.filter(x=>!x.found).map(x=>x.name);
     return `${esc(g.label)}: ${g.slots.length - miss.length}/${g.slots.length}` + (miss.length ? ` <span style="color:var(--mag)">(faltando: ${esc(miss.join(", "))})</span>` : ""); }).join(" · ") +
   `<br><b>Ambiente por ponto:</b> ${fmt(CS.tested||0)} elementos testados · molduras de parede: ${fmt(CS.sweeps||0)} no modelo, ${fmt(CS.sweeps_in_rooms||0)} dentro de um ambiente · ${fmt(UN.length)} fora de qualquer ambiente` +
+  `<br><b>Identificador:</b> ` + ((DATA.tagFamilies||[]).length ? (DATA.tagFamilies.map(esc).join(", ") +
+      ((DATA.tagMissing||[]).length ? ` <span style="color:var(--mag)">(faltando: ${DATA.tagMissing.map(m=>esc(m.family)+": "+m.types.map(esc).join(", ")).join(" · ")})</span>` : ` (tipos REVESTIMENTOS 01 a 05 encontrados)`))
+      : `nenhuma família com tipos REVESTIMENTOS - os identificadores não são trocados`) +
+  ` · linhas vazias recebem "${esc(DATA.placeholder||"-")}" quando o ambiente tem pelo menos uma linha preenchida` +
   `<br><b>Arquivo de Keynotes:</b> ${Object.keys(KN).length ? fmt(Object.keys(KN).length)+" chaves carregadas" : "não carregado - as chaves não são validadas"}`;
+
+/* ---- Excel export: .xlsx built in the browser, no library, works offline ----
+   Exports the rooms currently shown in the table (filters are respected). */
+const XLSX_WRITER = (()=>{
+  const CRC = (()=>{ const t = new Uint32Array(256);
+    for(let n=0;n<256;n++){ let c=n; for(let k=0;k<8;k++) c=(c&1)?(0xEDB88320^(c>>>1)):(c>>>1); t[n]=c>>>0; }
+    return t; })();
+  const crc32 = b=>{ let c=0xFFFFFFFF; for(let i=0;i<b.length;i++) c=CRC[(c^b[i])&0xFF]^(c>>>8); return (c^0xFFFFFFFF)>>>0; };
+  const enc = s=>new TextEncoder().encode(s);
+  const xml = s=>String(s).replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F]/g,"")
+    .replace(/[<>&"']/g, m=>({"<":"&lt;",">":"&gt;","&":"&amp;",'"':"&quot;","'":"&apos;"}[m]));
+  const colRef = i=>{ let s=""; i++; while(i>0){ const m=(i-1)%26; s=String.fromCharCode(65+m)+s; i=(i-m-1)/26|0; } return s; };
+  const sheetName = n=>String(n).replace(/[\[\]:*?\/\\]/g," ").slice(0,31);
+
+  // sheets: [[name, rows]]; filter only on tables with data rows
+  const hasFilter = sh=>sh[1].length > 1;
+
+  function sheetXml(rows, filtered){
+    const ncol = Math.max(1, ...rows.map(r=>r.length));
+    const widths = Array.from({length:ncol}, (_,c)=>Math.min(60, Math.max(8,
+      ...rows.map(r=>String(r[c]==null?"":r[c]).length + 2))));
+    const cols = `<cols>${widths.map((w,i)=>`<col min="${i+1}" max="${i+1}" width="${w}" customWidth="1"/>`).join("")}</cols>`;
+    const data = rows.map((r,ri)=>`<row r="${ri+1}">${r.map((v,ci)=>{
+      if(v==null || v==="") return "";
+      const ref = colRef(ci)+(ri+1), st = ri===0 ? ' s="1"' : "";
+      if(typeof v==="number" && isFinite(v)) return `<c r="${ref}"${st}><v>${v}</v></c>`;
+      return `<c r="${ref}"${st} t="inlineStr"><is><t xml:space="preserve">${xml(v)}</t></is></c>`;
+    }).join("")}</row>`).join("");
+    const filter = filtered ? `<autoFilter ref="A1:${colRef(ncol-1)}${rows.length}"/>` : "";
+    return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetViews><sheetView workbookViewId="0"><pane ySplit="1" topLeftCell="A2" activePane="bottomLeft" state="frozen"/></sheetView></sheetViews>${cols}<sheetData>${data}</sheetData>${filter}</worksheet>`;
+  }
+
+  const STYLES = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><fonts count="2"><font><sz val="11"/><name val="Calibri"/></font><font><b/><sz val="11"/><color rgb="FFFFFFFF"/><name val="Calibri"/></font></fonts><fills count="3"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill><fill><patternFill patternType="solid"><fgColor rgb="FF0E1526"/><bgColor indexed="64"/></patternFill></fill></fills><borders count="1"><border><left/><right/><top/><bottom/><diagonal/></border></borders><cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs><cellXfs count="2"><xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/><xf numFmtId="0" fontId="1" fillId="2" borderId="0" xfId="0" applyFont="1" applyFill="1"/></cellXfs><cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles></styleSheet>`;
+
+  function zip(parts){
+    const chunks = [], central = []; let offset = 0;
+    const u16 = n=>[n&0xFF,(n>>8)&0xFF], u32 = n=>[n&0xFF,(n>>8)&0xFF,(n>>16)&0xFF,(n>>>24)&0xFF];
+    parts.forEach(([name, content])=>{
+      const nameB = enc(name), dataB = enc(content), crc = crc32(dataB);
+      const local = [].concat(u32(0x04034b50),u16(20),u16(0x0800),u16(0),u16(0),u16(0x21),
+        u32(crc),u32(dataB.length),u32(dataB.length),u16(nameB.length),u16(0));
+      chunks.push(new Uint8Array(local), nameB, dataB);
+      central.push({nameB, crc, size:dataB.length, offset});
+      offset += local.length + nameB.length + dataB.length;
+    });
+    const cdStart = offset, cd = [];
+    central.forEach(e=>{ cd.push(new Uint8Array([].concat(u32(0x02014b50),u16(20),u16(20),u16(0x0800),u16(0),u16(0),u16(0x21),
+      u32(e.crc),u32(e.size),u32(e.size),u16(e.nameB.length),u16(0),u16(0),u16(0),u16(0),u32(0),u32(e.offset))), e.nameB); });
+    const cdBytes = cd.reduce((a,b)=>a+b.length, 0);
+    const end = new Uint8Array([].concat(u32(0x06054b50),u16(0),u16(0),u16(central.length),u16(central.length),
+      u32(cdBytes),u32(cdStart),u16(0)));
+    return new Blob([...chunks, ...cd, end], {type:"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"});
+  }
+
+  // sheets: [[name, rows]]
+  return function build(sheets){
+    const names = sheets.map(([n])=>sheetName(n));
+    const defined = sheets.map((sh, i)=> hasFilter(sh)
+      ? `<definedName name="_xlnm._FilterDatabase" localSheetId="${i}" hidden="1">'${xml(names[i]).replace(/'/g,"''")}'!$A$1:$${colRef(Math.max(1,...sh[1].map(r=>r.length))-1)}$${sh[1].length}</definedName>` : "").join("");
+    const parts = [
+      ["[Content_Types].xml", `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/><Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/>${
+        names.map((_,i)=>`<Override PartName="/xl/worksheets/sheet${i+1}.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>`).join("")}</Types>`],
+      ["_rels/.rels", `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/></Relationships>`],
+      ["xl/workbook.xml", `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets>${
+        names.map((n,i)=>`<sheet name="${xml(n)}" sheetId="${i+1}" r:id="rId${i+1}"/>`).join("")}</sheets>${defined ? `<definedNames>${defined}</definedNames>` : ""}</workbook>`],
+      ["xl/_rels/workbook.xml.rels", `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">${
+        names.map((_,i)=>`<Relationship Id="rId${i+1}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet${i+1}.xml"/>`).join("")}<Relationship Id="rId${names.length+1}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/></Relationships>`],
+      ["xl/styles.xml", STYLES],
+      ...sheets.map((sh, i)=>[`xl/worksheets/sheet${i+1}.xml`, sheetXml(sh[1], hasFilter(sh))]),
+    ];
+    return zip(parts);
+  };
+})();
+
+/* Ambientes: one column per finish with its values joined by " / " (the
+   "-" placeholder is left out). */
+const EXCEL_FINISHES = ["wall", "floor", "base", "sill", "ceiling", "crown"];
+function exportSheets(){
+  const list = ROOMS.filter(matches);
+  const fins = EXCEL_FINISHES.filter(k=>FIN.includes(k));
+  const isReal = v=>v && v !== (DATA.placeholder||"-");
+  const ambientes = [["Número","Nome do ambiente","Pavimento", ...fins.map(k=>FIN_LABEL[k])]];
+  for(const r of list){
+    ambientes.push([r.number, r.name, r.level,
+      ...fins.map(k=>(r.finishes[k].slots||[]).map(s=>s.new).filter(isReal).join(DATA.separator||" / "))]);
+  }
+  return [["Ambientes", ambientes]];
+}
+
+document.getElementById("xlsxBtn").onclick = ()=>{
+  const blob = XLSX_WRITER(exportSheets());
+  const proj = String(DATA.project||"projeto").replace(/\.rvt$/i,"").replace(/[\\/:*?"<>|]+/g,"_");
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = `${proj}_acabamentos.xlsx`;
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(()=>URL.revokeObjectURL(a.href), 2000);
+};
 
 renderCards();
 renderTable();
