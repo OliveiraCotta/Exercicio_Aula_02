@@ -27,7 +27,12 @@ por Keynote ou por Categoria):
      planilha para os campos vazios.
   Cada tabela agrupa por Keynote ou por Categoria. Clicar numa linha seleciona
   e mostra os elementos na vista ativa.
-  "Gravar marcados" grava no modelo só as linhas marcadas das duas tabelas.
+  Tabela 3: tipos com Keynote que não existe no Excel (só consulta).
+
+Fluxo: ANALISA Excel x modelo > TABELAS (o que vai mudar, o que falta, o que
+não está no Excel) > "Gravar marcados" grava e ATUALIZA as tabelas (a janela
+continua aberta, pode gravar várias vezes) > "Finalizar" devolve as cores,
+gera/carrega o TXT de Keynote e faz o relatório. Fechar no X só devolve as cores.
 
 Destaque temporário na vista ativa SÓ enquanto o comando está aberto (janela
 NÃO modal - dá para navegar no modelo). Só o fundo é colorido, em tom claro:
@@ -1192,14 +1197,75 @@ def _ok_ogs():
     return o
 
 
+def _colors_log_path():
+    try:
+        return script.get_document_data_file("keynotes_cores", "json")
+    except Exception:
+        return None
+
+
+def recover_leftover_colors():
+    """Se uma execução anterior terminou sem devolver as cores (Revit fechou
+    ou travou com a janela aberta), limpa essas sobreposições agora."""
+    path = _colors_log_path()
+    if not path or not os.path.isfile(path):
+        return 0
+    try:
+        with codecs.open(path, "r", encoding="utf-8") as f:
+            views = json.load(f).get("views", {})
+    except Exception:
+        views = {}
+    n = 0
+    if views:
+        t = DB.Transaction(doc, u"Limpar cores de execução anterior - Keynotes")
+        t.Start()
+        try:
+            for vid, eids in views.items():
+                view = doc.GetElement(DB.ElementId(int(vid)))
+                if view is None:
+                    continue
+                for e in eids:
+                    try:
+                        view.SetElementOverrides(DB.ElementId(int(e)),
+                                                 DB.OverrideGraphicSettings())
+                        n += 1
+                    except Exception:
+                        pass
+            t.Commit()
+        except Exception:
+            if t.HasStarted() and not t.HasEnded():
+                t.RollBack()
+    try:
+        os.remove(path)
+    except Exception:
+        pass
+    return n
+
+
 class Painter(object):
-    """Colore as vistas enquanto a tabela está aberta e devolve depois as
+    """Colore as vistas SÓ enquanto o comando está aberto e devolve depois as
     sobreposições ORIGINAIS de cada elemento (o modelo volta ao que era).
+    Os elementos pintados ficam anotados num arquivo até as cores saírem; se o
+    Revit fechar no meio, a próxima execução limpa o que sobrou.
     Precisa rodar no contexto da API (script ou ExternalEvent)."""
 
     def __init__(self):
         self.saved = OrderedDict()    # id da vista -> {elem id: (ElementId, ogs anterior)}
         self.last = []                # destaque da última vista pintada
+
+    def _log(self):
+        path = _colors_log_path()
+        if not path:
+            return
+        try:
+            if self.saved:
+                with codecs.open(path, "w", encoding="utf-8") as f:
+                    json.dump({"views": dict((str(v), list(p.keys()))
+                                             for v, p in self.saved.items())}, f)
+            elif os.path.isfile(path):
+                os.remove(path)
+        except Exception:
+            pass
 
     def paint(self, view):
         """-> (lista de tipos destacados, nº de elementos corretos em meio-tom)"""
@@ -1236,6 +1302,7 @@ class Painter(object):
         except Exception:
             if t.HasStarted() and not t.HasEnded():
                 t.RollBack()
+        self._log()
         self.last = hl
         try:
             revit.uidoc.RefreshActiveView()
@@ -1264,6 +1331,7 @@ class Painter(object):
             if t.HasStarted() and not t.HasEnded():
                 t.RollBack()
         self.saved.clear()
+        self._log()
         try:
             revit.uidoc.RefreshActiveView()
         except Exception:
@@ -1319,10 +1387,13 @@ def show_in_view(ids):
         return u""
     uidoc = revit.uidoc
     view = doc.ActiveView
-    try:
-        uidoc.Selection.SetElementIds(List[DB.ElementId](ids))
-    except Exception:
-        pass
+
+    def select():
+        try:
+            uidoc.Selection.SetElementIds(List[DB.ElementId](ids))
+        except Exception:
+            pass
+    select()
     try:
         visible = set(eid_int(i) for i in DB.FilteredElementCollector(doc, view.Id)
                       .WhereElementIsNotElementType().ToElementIds())
@@ -1337,7 +1408,12 @@ def show_in_view(ids):
         uidoc.ShowElements(List[DB.ElementId](vis))
     except Exception:
         pass
-    return u"{} de {} elemento(s) mostrado(s) na vista '{}'.".format(
+    select()                              # continua selecionado depois do zoom
+    try:
+        uidoc.RefreshActiveView()
+    except Exception:
+        pass
+    return u"{} de {} elemento(s) selecionado(s) e mostrado(s) na vista '{}'.".format(
         len(vis), len(ids), to_unicode(view.Name))
 
 
@@ -1667,12 +1743,12 @@ VERIFY_XAML = u"""
       <RowDefinition Height="Auto"/>
       <RowDefinition Height="Auto"/>
       <RowDefinition Height="3*"/>
-      <RowDefinition Height="6"/>
+      <RowDefinition Height="10"/>
       <RowDefinition Height="Auto"/>
       <RowDefinition Height="2*"/>
-      <RowDefinition Height="6"/>
+      <RowDefinition Height="10"/>
       <RowDefinition Height="Auto"/>
-      <RowDefinition Height="1.4*"/>
+      <RowDefinition Height="1.5*"/>
       <RowDefinition Height="Auto"/>
     </Grid.RowDefinitions>
     <StackPanel Grid.Row="0">
@@ -1698,7 +1774,7 @@ VERIFY_XAML = u"""
       <Button x:Name="b_show" Content="Mostrar na vista ativa"/>
       <Button x:Name="b_paint" Content="Colorir vista ativa"/>
       <TextBlock Style="{StaticResource small}" FontSize="11" Foreground="#7A8FA9"
-                 Text="Clique numa linha para selecionar o elemento no Revit. A janela pode ficar aberta enquanto você navega no modelo."/>
+                 Text="Clique numa linha: o elemento fica selecionado no Revit. A janela pode ficar aberta enquanto você navega no modelo."/>
     </WrapPanel>
     <DockPanel Grid.Row="2" Margin="0,6,0,6" LastChildFill="False">
       <TextBlock Style="{StaticResource lbl}"
@@ -1726,7 +1802,6 @@ VERIFY_XAML = u"""
         """ + _col(u"Destino", u"Destino", 150) + u"""
       </DataGrid.Columns>""" + _GROUP_STYLE + u"""
     </DataGrid>
-    <GridSplitter Grid.Row="4" Height="6" HorizontalAlignment="Stretch" Background="#1C2B44"/>
     <DockPanel Grid.Row="5" Margin="0,8,0,6" LastChildFill="False">
       <TextBlock Style="{StaticResource lbl}"
                  Text="2 · ELEMENTOS SEM KEYNOTE OU SEM DESCRIÇÃO  (clique duas vezes no Keynote para digitar)"/>
@@ -1751,7 +1826,6 @@ VERIFY_XAML = u"""
         """ + _col(u"Verificação", u"Verificacao", 300) + u"""
       </DataGrid.Columns>""" + _GROUP_STYLE + u"""
     </DataGrid>
-    <GridSplitter Grid.Row="7" Height="6" HorizontalAlignment="Stretch" Background="#1C2B44"/>
     <DockPanel Grid.Row="8" Margin="0,8,0,6" LastChildFill="False">
       <TextBlock Style="{StaticResource lbl}"
                  Text="3 · ELEMENTOS COM KEYNOTE QUE NÃO ESTÁ NO EXCEL  (só consulta - inclua o código na planilha)"/>
@@ -1773,10 +1847,10 @@ VERIFY_XAML = u"""
     <DockPanel Grid.Row="10" Margin="0,12,0,0" LastChildFill="False">
       <TextBlock x:Name="counter" DockPanel.Dock="Left" VerticalAlignment="Center"
                  Foreground="#CFE3FF" FontFamily="Segoe UI" TextWrapping="Wrap" MaxWidth="900"/>
+      <Button x:Name="b_finish" DockPanel.Dock="Right" Content="Finalizar"
+              Width="130" Margin="0" FontWeight="SemiBold"/>
       <Button x:Name="b_apply" DockPanel.Dock="Right" Content="Gravar marcados"
-              Width="160" Margin="0"/>
-      <Button x:Name="b_cancel" DockPanel.Dock="Right" Content="Cancelar" Width="100"
-              Margin="0,0,10,0"/>
+              Width="160" Margin="0,0,10,0"/>
     </DockPanel>
   </Grid>
 </Window>
@@ -1814,7 +1888,7 @@ class VerifyWindow(forms.WPFWindow):
 
     def __init__(self, rows, inc, notx, info_text, hl_text):
         forms.WPFWindow.__init__(self, VERIFY_XAML, literal_string=True)
-        self.applied, self._busy = False, False
+        self.finalized, self._busy = False, False
         self.rows, self.inc, self.notx = rows, inc, notx
         self.by_rid = dict((r["rid"], r) for r in rows)
         self.by_rid2 = dict((r["rid"], r) for r in inc)
@@ -1866,7 +1940,7 @@ class VerifyWindow(forms.WPFWindow):
         self.b2_none.Click += lambda s, a: self._set_visible2(False)
         self.b2_check.Click += self._verify_all
         self.b_apply.Click += self._apply
-        self.b_cancel.Click += self._cancel
+        self.b_finish.Click += self._finish
         self.Closed += self._on_closed
 
     # ---- montagem das tabelas (agrupadas pela coluna Grp) ----
@@ -2181,18 +2255,37 @@ class VerifyWindow(forms.WPFWindow):
     def selected_inc(self):
         return [r for r in self.inc if r["sel"]]
 
-    def _apply(self, sender, args):
-        self._commit()
-        self.applied = True
-        sel1, sel2 = self.selected(), self.selected_inc()
-        run_in_revit(lambda: finish_run(sel1, sel2))
-        self.Close()
+    def reload(self, rows, inc, notx, info_text, hl_text, msg):
+        """Depois de gravar: novas linhas (o que ainda falta) nas 3 tabelas."""
+        self.rows, self.inc, self.notx = rows, inc, notx
+        self.by_rid = dict((r["rid"], r) for r in rows)
+        self.by_rid2 = dict((r["rid"], r) for r in inc)
+        self.by_rid3 = dict((r["rid"], r) for r in notx)
+        self.info.Text = info_text
+        self.hlinfo.Text = hl_text
+        self.viewinfo.Text = msg
+        self._rebuild()
+        self.b_apply.IsEnabled = True
 
-    def _cancel(self, sender, args):
+    def _apply(self, sender, args):
+        """Grava as linhas marcadas e atualiza as tabelas (a janela continua)."""
+        self._commit()
+        sel1, sel2 = self.selected(), self.selected_inc()
+        if not sel1 and not [r for r in sel2 if inc_changed(r)]:
+            self.viewinfo.Text = u"Nada marcado para gravar."
+            return
+        self.b_apply.IsEnabled = False
+        self.viewinfo.Text = u"Gravando no modelo..."
+        run_in_revit(lambda: save_run(sel1, sel2))
+
+    def _finish(self, sender, args):
+        """Devolve as cores, gera/carrega o TXT de Keynote e faz o relatório."""
+        self.finalized = True
+        run_in_revit(finalize_run)
         self.Close()
 
     def _on_closed(self, sender, args):
-        if not self.applied:              # fechou sem gravar: só devolve as cores
+        if not self.finalized:            # fechou no X: só devolve as cores
             run_in_revit(cancel_run)
 
 
@@ -2308,63 +2401,80 @@ if "model" in MODE_DIRS[MODE] and MODE != "analyze":
 
 
 
-m_rows, m_plan, m_blocked = model_rows()
-for it in m_blocked:
-    h = it["h"]
-    not_written[(h["id"], it["field"])] = it["reason"]
-    skipped.append({"key": h["key"], "where": where_label(h), "id": h["id"],
-                    "eid": h["elem"].Id, "reason": it["reason"]})
+VERIFY_LOG = []          # linhas da tabela 1 já gravadas (todas as rodadas)
+INC_LOG = []             # linhas da tabela 2 já gravadas (todas as rodadas)
 
-VROWS = m_rows
-for r in VROWS:
-    r["view"] = row_view(r)
-    r["sel"] = r["enabled"]           # Excel -> Modelo começa marcado
-VROWS.sort(key=lambda r: (r["key"], r["category"], r["view"]["family"], r["view"]["type"]))
-for i, r in enumerate(VROWS):
-    r["rid"] = i
 
-INC, NOTX = collect_incomplete(set(r["key"] for r in VROWS))
-for i, r in enumerate(INC):
-    r["rid"] = i
-    verify_incomplete(r, autofill=False)
-for i, r in enumerate(NOTX):
-    r["rid"] = i
+def analyze_model():
+    """(Re)analisa Excel x modelo e monta as 3 tabelas. Roda no início e
+    depois de cada 'Gravar marcados'."""
+    global m_rows, m_plan, m_blocked, VROWS, INC, NOTX
+    m_rows, m_plan, m_blocked = model_rows()
+    VROWS = m_rows
+    for r in VROWS:
+        r["view"] = row_view(r)
+        r["sel"] = r["enabled"]           # Excel -> Modelo começa marcado
+    VROWS.sort(key=lambda r: (r["key"], r["category"], r["view"]["family"],
+                              r["view"]["type"]))
+    for i, r in enumerate(VROWS):
+        r["rid"] = i
+    INC, NOTX = collect_incomplete(set(r["key"] for r in VROWS))
+    for i, r in enumerate(INC):
+        r["rid"] = i
+        verify_incomplete(r, autofill=False)
+    for i, r in enumerate(NOTX):
+        r["rid"] = i
+    for info in scan_types():             # instâncias de cada tipo (mostrar na vista)
+        TYPE_INST[eid_int(info["t"].Id)] = list(info["ids"])
 
-# instâncias de cada tipo (para "mostrar na vista ativa")
-for _info in scan_types():
-    TYPE_INST[eid_int(_info["t"].Id)] = list(_info["ids"])
 
+def make_info_text():
+    keys_with_info = [k for k in MODEL if XL["by_key"].get(k) and
+                      (XL["by_key"][k]["pt"] or XL["by_key"][k]["en"])]
+    return (u"{} keynote(s) no modelo · {} com descrição no Excel · {} fora do Excel  ·  "
+            u"Tabela 1: {} linha(s) ({} tipo(s))  ·  Tabela 2: {} tipo(s) sem Keynote ou "
+            u"sem Descrição  ·  Tabela 3: {} tipo(s) com Keynote fora do Excel".format(
+                len(MODEL), len(keys_with_info),
+                len([k for k in MODEL if not XL["by_key"].get(k)]),
+                len(VROWS), sum(len(r["hs"]) for r in VROWS), len(INC), len(NOTX)))
+
+
+analyze_model()
 PAINTER = Painter()
-
-keys_with_info = [k for k in MODEL if XL["by_key"].get(k) and
-                  (XL["by_key"][k]["pt"] or XL["by_key"][k]["en"])]
-info_text = (u"{} keynote(s) no modelo · {} com descrição no Excel · {} fora do Excel  ·  "
-             u"Tabela 1: {} linha(s) ({} tipo(s))  ·  Tabela 2: {} tipo(s) sem Keynote ou "
-             u"sem Descrição  ·  Tabela 3: {} tipo(s) com Keynote fora do Excel".format(
-                 len(MODEL), len(keys_with_info),
-                 len([k for k in MODEL if not XL["by_key"].get(k)]),
-                 len(VROWS), sum(len(r["hs"]) for r in VROWS), len(INC), len(NOTX)))
+info_text = make_info_text()
 
 
 def cancel_run():
-    """Janela fechada sem gravar: devolve as cores originais do modelo."""
+    """Janela fechada no X (sem Finalizar): devolve as cores originais do modelo.
+    O que já foi gravado com 'Gravar marcados' continua gravado."""
     PAINTER.clear()
-    output.print_md(u"**Cancelado - nada foi gravado.** As cores da vista foram restauradas.")
+    output.print_md(u"**Janela fechada sem Finalizar.** As cores da vista foram restauradas; "
+                    u"{} parâmetro(s) gravado(s) antes continuam no modelo (Ctrl+Z desfaz). "
+                    u"TXT de Keynote e relatório não foram gerados.".format(len(changes)))
 
 
 # ------------------------------------------------------------------
-# 5i. Gravação (chamada pelo botão "Gravar marcados", via ExternalEvent)
+# 5i. "Gravar marcados": grava, reanalisa e ATUALIZA as tabelas (janela
+#     continua aberta). "Finalizar": TXT de Keynote + relatório + fecha.
+#     Os dois rodam via ExternalEvent.
 # ------------------------------------------------------------------
-def finish_run(chosen_rows, chosen_inc):
-    global FIELD_LABEL, HL_FINAL, INC_FIELDS, ISSUES, MODEL, RESULT, XL_FIELD_LABEL, _ag
-    global _name, agcat, aggrp, all_keys, build_result, c, cat_summary, cats, chosen_ids
-    global chosen_inc_ids, chosen_item_ids, chosen_items, data, eff_en, eff_pt, errs
-    global excel_table, f, failed_rows, field, flags, getp, h, holders, html
-    global in_excel, in_model, inc_written, issue_count, it, k, key, keynotes_out, label
-    global m_en, m_pt, missing_in_by_cat, msg, n_keys, new, ok, old, out_path, p, r, rec
-    global t, template_path, to_write, tp, txt_info, txt_text, txt_warns, v, where
-    global with_in, xl_en, xl_pt
-    PAINTER.clear()                # devolve as cores originais antes de gravar
+VW = None
+
+
+def inc_view(r):
+    return {"category": r["category"], "family": r["family"], "type": r["name"],
+            "typeId": r["id"], "count": r["count"], "hasIn": r["hasIn"],
+            "key0": r["key0"], "pt0": r["pt0"], "en0": r["en0"],
+            "key": clean(r["key"]), "pt": clean(r["pt"]), "en": clean(r["en"]),
+            "written": list(r.get("written", [])), "check": r["check"],
+            "status": r["status"]}
+
+
+def save_run(chosen_rows, chosen_inc):
+    global INC_FIELDS, MODEL, chosen_ids, chosen_inc_ids, chosen_item_ids, chosen_items
+    global errs, f, failed_rows, field, getp, h, hl, it, label, n_before, n_ok, n_saved
+    global new, old, p, r, t, to_write, tp, where
+    n_before = len(changes)
     chosen_ids = set(r["rid"] for r in chosen_rows)
     for r in VROWS:
         r["status"] = (u"Bloqueado" if not r["enabled"] else
@@ -2481,9 +2591,48 @@ def finish_run(chosen_rows, chosen_inc):
             forms.alert(u"Gravação da tabela 2 desfeita (rollback):\n{}".format(to_unicode(ex)),
                         exitscript=True)
 
-    # relê o modelo para o relatório refletir o que ficou gravado
-    if changes:
-        MODEL = collect_model(use_view, opts["materials"])
+    # guarda o que foi gravado nesta rodada (para o relatório final)
+    for r in chosen_rows:
+        VERIFY_LOG.append(dict(r["view"], status=r["status"]))
+    for r in chosen_inc:
+        INC_LOG.append(inc_view(r))
+    n_saved = len(changes) - n_before
+
+    # relê o modelo, refaz as tabelas e as cores da vista ativa
+    MODEL = collect_model(use_view, opts["materials"])
+    analyze_model()
+    PAINTER.clear()
+    hl, n_ok = PAINTER.paint(doc.ActiveView)
+    if VW is not None:
+        VW.reload(VROWS, INC, NOTX, make_info_text(),
+                  (u"Destaque: " + hl_note) if hl_note else
+                  u"Vista '{}'  ·  {}".format(to_unicode(doc.ActiveView.Name), hl_summary(hl)),
+                  u"{} parâmetro(s) gravado(s) no modelo. Tabelas atualizadas - "
+                  u"grave mais ou clique em Finalizar.".format(n_saved))
+
+
+def finalize_run():
+    global FIELD_LABEL, HL_FINAL, ISSUES, RESULT, XL_FIELD_LABEL, _ag, _name, agcat, aggrp
+    global all_keys, build_result, c, cat_summary, cats, data, eff_en, eff_pt, excel_table
+    global f, flags, h, holders, html, in_excel, in_model, inc_written, issue_count, it, k
+    global key, keynotes_out, m_en, m_pt, missing_in_by_cat, msg, n, ok, out_path, r, rec
+    global s, template_path, txt_info, txt_text, txt_warns, v, with_in, x, xl_en, xl_pt
+    PAINTER.clear()                    # devolve as cores originais do modelo
+    # o que ficou nas tabelas sem gravar entra como pendente no relatório
+    for it in m_blocked:
+        h = it["h"]
+        not_written[(h["id"], it["field"])] = it["reason"]
+        skipped.append({"key": h["key"], "where": where_label(h), "id": h["id"],
+                        "eid": h["elem"].Id, "reason": it["reason"]})
+    for it in m_plan:
+        not_written[(it["h"]["id"], it["field"])] = (
+            u"não gravado (ficou pendente na tabela 1)" +
+            (u" - modelo diferente do Excel" if it["old"] else u""))
+    for r in VROWS:
+        r["status"] = u"Bloqueado" if not r["enabled"] else u"Pendente"
+    for r in INC:
+        r["status"] = u"Pendente"
+        r["written"] = []
 
     # ---- TXT de Keynote: sempre gerado do Excel e carregado no projeto ----
     txt_info = {"on": opts["txt_on"], "path": opts["txt_path"], "written": False,
@@ -2752,10 +2901,10 @@ def finish_run(chosen_rows, chosen_inc):
     if opts["highlight"]:
         output.print_md(u"- Situação após gravar (vista ativa): {}".format(
             hl_note or hl_summary(HL_FINAL)))
-    inc_written = [r for r in INC if r["status"].startswith(u"Gravado")]
-    if INC:
-        output.print_md(u"- Tabela 2 (tipos sem Keynote / Descrição): **{}** de {} tipo(s) "
-                        u"completado(s)".format(len(inc_written), len(INC)))
+    inc_written = [r for r in INC_LOG if r["status"].startswith(u"Gravado")]
+    if INC_LOG or INC:
+        output.print_md(u"- Tabela 2 (tipos sem Keynote / Descrição): **{}** tipo(s) "
+                        u"completado(s) · {} ainda pendente(s)".format(len(inc_written), len(INC)))
     if txt_info["on"]:
         output.print_md(u"- TXT de Keynotes: {}{}".format(
             (u"gravado em `{}` ({}) e {}".format(txt_info["path"], txt_info["encoding"],
@@ -2808,13 +2957,8 @@ def finish_run(chosen_rows, chosen_inc):
         "keynotes": keynotes_out,
         "catOrder": XL["cat_order"] + [NO_GROUP],
         "title": TOOL_TITLE,
-        "verify": [dict(r["view"], status=r["status"]) for r in VROWS],
-        "incomplete": [{"category": r["category"], "family": r["family"], "type": r["name"],
-                        "typeId": r["id"], "count": r["count"], "hasIn": r["hasIn"],
-                        "key0": r["key0"], "pt0": r["pt0"], "en0": r["en0"],
-                        "key": clean(r["key"]), "pt": clean(r["pt"]), "en": clean(r["en"]),
-                        "written": r.get("written", []), "check": r["check"],
-                        "status": r["status"]} for r in INC],
+        "verify": VERIFY_LOG + [dict(r["view"], status=r["status"]) for r in VROWS],
+        "incomplete": INC_LOG + [inc_view(r) for r in INC],
         "notInExcel": [{"category": r["category"], "family": r["family"], "type": r["name"],
                         "typeId": r["id"], "count": r["count"], "key": r["key"],
                         "pt": r["pt"], "en": r["en"], "hasIn": r["hasIn"]} for r in NOTX],
@@ -2851,6 +2995,10 @@ def finish_run(chosen_rows, chosen_inc):
 # ------------------------------------------------------------------
 # 9. Abre a tabela de verificação (NÃO modal) com o modelo colorido
 # ------------------------------------------------------------------
+_n_left = recover_leftover_colors()
+if _n_left:
+    output.print_md(u"- Cores que tinham ficado de uma execução anterior foram limpas "
+                    u"({} elemento(s)).".format(_n_left))
 _hl, _n_ok = PAINTER.paint(active_view)
 if hl_note:
     _hl_text = u"Destaque indisponível: {}. Abra uma planta, corte ou 3D e clique em " \

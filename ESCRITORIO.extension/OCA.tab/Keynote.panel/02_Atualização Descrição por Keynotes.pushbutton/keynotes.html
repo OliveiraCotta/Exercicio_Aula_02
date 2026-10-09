@@ -245,7 +245,7 @@ $("inparam").textContent = DATA.inParam;
 
 /* ---- 1. Excel -> Modelo ---- */
 const ST_COLOR = {"Gravado":"var(--green)","Não marcado":"var(--dim)","Bloqueado":"var(--red)",
-  "Não gravado":"var(--red)","Sem alteração":"var(--dim)"};
+  "Não gravado":"var(--red)","Sem alteração":"var(--dim)","Pendente":"var(--amber)"};
 const keyLabel = r => r.key ? `${r.key} · ${r.grp} (${r.cat})` : "(sem keynote)";
 function groupSort(list, gk){
   return list.sort((a,b)=>(a[gk]==="(sem keynote)")-(b[gk]==="(sem keynote)") ||
