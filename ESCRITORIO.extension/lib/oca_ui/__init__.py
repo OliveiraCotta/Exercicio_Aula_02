@@ -22,6 +22,7 @@ e o rodapé são o XAML do próprio comando, com os mesmos x:Name de antes.
 Engine: IronPython 2.7 (pyRevit). Sintaxe neutra py2/py3.
 """
 
+import base64
 import os
 import re
 
@@ -81,6 +82,42 @@ def logo_uri():
         return unicode(uri.AbsoluteUri)
     except Exception:
         return None
+
+
+def logo_data_uri():
+    """Logo em base64 (data URI) para HTML gravado fora da extensão
+    (relatórios e janela de saída). Vazio se o arquivo não existir."""
+    try:
+        with open(LOGO_PATH, "rb") as f:
+            data = f.read()
+    except (IOError, OSError):
+        return u""
+    return u"data:image/png;base64," + base64.b64encode(data).decode("ascii")
+
+
+def brand_report(html):
+    """Aplica a marca a um modelo de relatório HTML.
+
+    No modelo: /*__OCA_TOKENS__*/ dentro do :root recebe as cores do tema
+    (--oca-Bg, --oca-Ink, --oca-Accent...) e __OCA_LOGO__ recebe o logo.
+    """
+    tokens = u"".join(u"--oca-{}:{};".format(k, v) for k, v in sorted(theme.DARK.items()))
+    return html.replace(u"/*__OCA_TOKENS__*/", tokens).replace(u"__OCA_LOGO__", logo_data_uri())
+
+
+def output_header(output, title, subtitle=u""):
+    """Cabeçalho com logo, nome do comando e descrição na janela de saída do pyRevit."""
+    c = theme.LIGHT          # a janela de saída do pyRevit tem fundo claro
+    logo = logo_data_uri()
+    img = (u'<img src="{}" style="height:28px;width:auto;margin-right:12px;vertical-align:middle">'.format(logo)
+           if logo else u"")
+    sub = (u'<div style="font-size:11px;color:{}">{}</div>'.format(c["Ink2"], _xml(subtitle))
+           if subtitle else u"")
+    output.print_html(
+        u'<div style="display:flex;align-items:center;padding:0 0 10px;margin:0 0 10px;'
+        u'border-bottom:2px solid {brand};font-family:Segoe UI,sans-serif">{img}<div>'
+        u'<div style="font-size:15px;font-weight:600;color:{ink}">{title}</div>{sub}</div></div>'.format(
+            brand=c["Brand"], img=img, ink=c["Ink"], title=_xml(command_name(title)), sub=sub))
 
 
 _LOGO_XAML = u"""

@@ -6,7 +6,7 @@ extensão, então qualquer comando pode usar `from oca_ui import ...`.
 
 ```
 lib/oca_ui/
-├─ __init__.py          build_xaml(), alert_title(), command_name()
+├─ __init__.py          build_xaml(), alert_title(), brand_report(), output_header()
 ├─ theme.py             paleta escura (e clara, não usada), larguras e estilos WPF (único lugar com cores)
 └─ assets/logo/logo.png logo original da empresa (não editar; substituir pelo novo arquivo, mesmo nome)
 ```
@@ -14,7 +14,7 @@ lib/oca_ui/
 ## O que o padrão faz
 
 - **Tema:** sempre escuro, independente do tema do Revit (decisão de padrão).
-  A paleta clara existe em `theme.LIGHT` mas não é usada pelos comandos.
+  A paleta clara (`theme.LIGHT`) só é usada no cabeçalho da janela de saída do pyRevit, que tem fundo claro.
 - **Cabeçalho:** logo, nome do comando (`__title__`) e descrição (`__doc__`).
   O logo também vira o ícone da janela.
 - **Rodapé:** botão principal primeiro, depois Cancelar; ações auxiliares à esquerda.
@@ -76,3 +76,11 @@ XAML = build_xaml(title=__title__, subtitle=__doc__, body=BODY,
 | `oca.Msg.Info` / `.Ok` / `.Warn` / `.Err` + `oca.MsgText` | faixa de mensagem; some sozinha quando o texto está vazio |
 | `oca.Primary` / `oca.Ghost` | botão principal / botão sem borda ("Voltar") |
 | `oca.Bg`, `oca.Surface`, `oca.Ink`, `oca.Ink2`, `oca.Line`, `oca.Accent`, `oca.Brand`, `oca.Warn`, `oca.Err`, `oca.Ok`... | pincéis, quando um elemento precisar de cor explícita |
+
+## Relatórios HTML e janela de saída
+
+- **Relatório:** no modelo `.html`, use `/*__OCA_TOKENS__*/` dentro do `:root` e
+  `var(--oca-Bg)`, `var(--oca-Accent)`... nas cores; use `__OCA_LOGO__` como `src` do logo.
+  Na geração: `html = brand_report(html)`. O logo vai embutido (base64), porque o
+  relatório é gravado fora da extensão.
+- **Janela de saída:** `output_header(output, __title__, u"Log de execução")` no início do script.

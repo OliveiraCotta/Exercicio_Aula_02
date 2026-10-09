@@ -32,6 +32,7 @@ LIGHT = {
     "WarnSoft": "#FCF0DB",
     "Err": "#AE251D",
     "ErrSoft": "#FCE4E2",
+    "Violet": "#6A55C2",
 }
 
 DARK = {
@@ -53,6 +54,7 @@ DARK = {
     "WarnSoft": "#3D3020",
     "Err": "#F28C84",
     "ErrSoft": "#432726",
+    "Violet": "#B7A9F0",    # categoria extra dos relatórios (ex.: "atualizado")
 }
 
 # Larguras padrão das janelas (px): P = formulários, M = formulários longos,
@@ -312,6 +314,180 @@ STYLES = u"""
           </ControlTemplate>
         </Setter.Value>
       </Setter>
+    </Style>
+
+    <!-- dicas -->
+    <Style TargetType="ToolTip">
+      <Setter Property="Background" Value="{StaticResource oca.Surface}"/>
+      <Setter Property="Foreground" Value="{StaticResource oca.Ink}"/>
+      <Setter Property="BorderBrush" Value="{StaticResource oca.Line}"/>
+      <Setter Property="Padding" Value="8,5"/>
+      <Setter Property="MaxWidth" Value="420"/>
+      <Setter Property="ContentTemplate">
+        <Setter.Value>
+          <DataTemplate>
+            <TextBlock Text="{Binding}" TextWrapping="Wrap"/>
+          </DataTemplate>
+        </Setter.Value>
+      </Setter>
+    </Style>
+
+    <!-- barras de rolagem -->
+    <Style x:Key="oca.ScrollThumb" TargetType="Thumb">
+      <Setter Property="Template">
+        <Setter.Value>
+          <ControlTemplate TargetType="Thumb">
+            <Border x:Name="bd" CornerRadius="3" Background="{StaticResource oca.FieldLine}"/>
+            <ControlTemplate.Triggers>
+              <Trigger Property="IsMouseOver" Value="True">
+                <Setter TargetName="bd" Property="Background" Value="{StaticResource oca.Ink2}"/>
+              </Trigger>
+              <Trigger Property="IsDragging" Value="True">
+                <Setter TargetName="bd" Property="Background" Value="{StaticResource oca.Accent}"/>
+              </Trigger>
+            </ControlTemplate.Triggers>
+          </ControlTemplate>
+        </Setter.Value>
+      </Setter>
+    </Style>
+    <Style x:Key="oca.ScrollPage" TargetType="RepeatButton">
+      <Setter Property="Focusable" Value="False"/>
+      <Setter Property="IsTabStop" Value="False"/>
+      <Setter Property="Template">
+        <Setter.Value>
+          <ControlTemplate TargetType="RepeatButton">
+            <Border Background="Transparent"/>
+          </ControlTemplate>
+        </Setter.Value>
+      </Setter>
+    </Style>
+    <Style TargetType="ScrollBar">
+      <Setter Property="Background" Value="{StaticResource oca.Bg}"/>
+      <Setter Property="Width" Value="11"/>
+      <Setter Property="MinWidth" Value="11"/>
+      <Setter Property="Template">
+        <Setter.Value>
+          <ControlTemplate TargetType="ScrollBar">
+            <Border Background="{TemplateBinding Background}">
+              <Track x:Name="PART_Track" IsDirectionReversed="True" Margin="2">
+                <Track.DecreaseRepeatButton>
+                  <RepeatButton Style="{StaticResource oca.ScrollPage}" Command="ScrollBar.PageUpCommand"/>
+                </Track.DecreaseRepeatButton>
+                <Track.IncreaseRepeatButton>
+                  <RepeatButton Style="{StaticResource oca.ScrollPage}" Command="ScrollBar.PageDownCommand"/>
+                </Track.IncreaseRepeatButton>
+                <Track.Thumb>
+                  <Thumb Style="{StaticResource oca.ScrollThumb}"/>
+                </Track.Thumb>
+              </Track>
+            </Border>
+          </ControlTemplate>
+        </Setter.Value>
+      </Setter>
+      <Style.Triggers>
+        <Trigger Property="Orientation" Value="Horizontal">
+          <Setter Property="Width" Value="Auto"/>
+          <Setter Property="MinWidth" Value="0"/>
+          <Setter Property="Height" Value="11"/>
+          <Setter Property="MinHeight" Value="11"/>
+          <Setter Property="Template">
+            <Setter.Value>
+              <ControlTemplate TargetType="ScrollBar">
+                <Border Background="{TemplateBinding Background}">
+                  <Track x:Name="PART_Track" IsDirectionReversed="False" Margin="2">
+                    <Track.DecreaseRepeatButton>
+                      <RepeatButton Style="{StaticResource oca.ScrollPage}" Command="ScrollBar.PageLeftCommand"/>
+                    </Track.DecreaseRepeatButton>
+                    <Track.IncreaseRepeatButton>
+                      <RepeatButton Style="{StaticResource oca.ScrollPage}" Command="ScrollBar.PageRightCommand"/>
+                    </Track.IncreaseRepeatButton>
+                    <Track.Thumb>
+                      <Thumb Style="{StaticResource oca.ScrollThumb}"/>
+                    </Track.Thumb>
+                  </Track>
+                </Border>
+              </ControlTemplate>
+            </Setter.Value>
+          </Setter>
+        </Trigger>
+      </Style.Triggers>
+    </Style>
+
+    <!-- abas -->
+    <Style TargetType="TabControl">
+      <Setter Property="Background" Value="Transparent"/>
+      <Setter Property="BorderBrush" Value="{StaticResource oca.Line}"/>
+      <Setter Property="BorderThickness" Value="0,1,0,0"/>
+      <Setter Property="Padding" Value="0,12,0,0"/>
+    </Style>
+    <Style TargetType="TabItem">
+      <Setter Property="Foreground" Value="{StaticResource oca.Ink2}"/>
+      <Setter Property="Cursor" Value="Hand"/>
+      <Setter Property="Template">
+        <Setter.Value>
+          <ControlTemplate TargetType="TabItem">
+            <Border x:Name="bd" Background="Transparent" BorderBrush="Transparent" BorderThickness="0,0,0,2"
+                    Padding="14,7" Margin="0,0,2,-1">
+              <ContentPresenter ContentSource="Header" TextElement.Foreground="{TemplateBinding Foreground}"/>
+            </Border>
+            <ControlTemplate.Triggers>
+              <Trigger Property="IsMouseOver" Value="True">
+                <Setter Property="Foreground" Value="{StaticResource oca.Ink}"/>
+              </Trigger>
+              <Trigger Property="IsSelected" Value="True">
+                <Setter TargetName="bd" Property="BorderBrush" Value="{StaticResource oca.Accent}"/>
+                <Setter Property="Foreground" Value="{StaticResource oca.Ink}"/>
+                <Setter Property="FontWeight" Value="SemiBold"/>
+              </Trigger>
+            </ControlTemplate.Triggers>
+          </ControlTemplate>
+        </Setter.Value>
+      </Setter>
+    </Style>
+
+    <!-- grades -->
+    <Style TargetType="DataGrid">
+      <Setter Property="Background" Value="{StaticResource oca.Field}"/>
+      <Setter Property="Foreground" Value="{StaticResource oca.Ink}"/>
+      <Setter Property="BorderBrush" Value="{StaticResource oca.Line}"/>
+      <Setter Property="BorderThickness" Value="1"/>
+      <Setter Property="RowBackground" Value="{StaticResource oca.Field}"/>
+      <Setter Property="AlternatingRowBackground" Value="{StaticResource oca.Field}"/>
+      <Setter Property="HorizontalGridLinesBrush" Value="{StaticResource oca.Line}"/>
+      <Setter Property="VerticalGridLinesBrush" Value="{StaticResource oca.Line}"/>
+      <Setter Property="GridLinesVisibility" Value="Horizontal"/>
+      <Setter Property="HeadersVisibility" Value="Column"/>
+      <Setter Property="RowHeaderWidth" Value="0"/>
+    </Style>
+    <Style TargetType="DataGridColumnHeader">
+      <Setter Property="Background" Value="{StaticResource oca.Surface}"/>
+      <Setter Property="Foreground" Value="{StaticResource oca.Ink2}"/>
+      <Setter Property="FontWeight" Value="SemiBold"/>
+      <Setter Property="Padding" Value="8,6"/>
+      <Setter Property="BorderBrush" Value="{StaticResource oca.Line}"/>
+      <Setter Property="BorderThickness" Value="0,0,1,1"/>
+    </Style>
+    <Style TargetType="DataGridRow">
+      <Setter Property="Background" Value="{StaticResource oca.Field}"/>
+      <Setter Property="Foreground" Value="{StaticResource oca.Ink}"/>
+    </Style>
+    <Style TargetType="DataGridCell">
+      <Setter Property="BorderThickness" Value="0"/>
+      <Setter Property="Padding" Value="6,4"/>
+      <Setter Property="Template">
+        <Setter.Value>
+          <ControlTemplate TargetType="DataGridCell">
+            <Border Background="{TemplateBinding Background}" Padding="{TemplateBinding Padding}">
+              <ContentPresenter VerticalAlignment="Center"/>
+            </Border>
+          </ControlTemplate>
+        </Setter.Value>
+      </Setter>
+      <Style.Triggers>
+        <Trigger Property="IsSelected" Value="True">
+          <Setter Property="Background" Value="{StaticResource oca.AccentSoft}"/>
+        </Trigger>
+      </Style.Triggers>
     </Style>
 
     <!-- opções -->
