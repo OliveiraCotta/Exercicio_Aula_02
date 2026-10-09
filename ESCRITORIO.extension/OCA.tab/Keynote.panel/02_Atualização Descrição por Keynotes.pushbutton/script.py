@@ -29,10 +29,14 @@ por Keynote ou por Categoria):
   e mostra os elementos na vista ativa.
   "Gravar marcados" grava no modelo só as linhas marcadas das duas tabelas.
 
-Destaque temporário na vista ativa enquanto a tabela está aberta (janela NÃO
-modal - dá para navegar no modelo): VERMELHO falta tudo, LARANJA falta Keynote,
-LILÁS falta Descrição, ROSA CLARO falta Descrição IN; corretos em meio-tom 70%.
-As sobreposições originais voltam ao gravar ou fechar a janela.
+Destaque temporário na vista ativa SÓ enquanto o comando está aberto (janela
+NÃO modal - dá para navegar no modelo). Só o fundo é colorido, em tom claro:
+Vermelho = falta keynote, descrição e descrição em IN · Laranja = falta keynote
+· Roxo = falta descrição · Rosa = falta descrição em IN · Azul = tem apenas
+keynote; corretos em meio-tom. As sobreposições originais voltam ao gravar ou
+fechar a janela.
+
+Tabela 3: tipos com Keynote que não existe no Excel (só consulta).
 
 TXT de Keynote do Revit (sempre, ao gravar): gerado do Excel com a
 mesma estrutura do arquivo do escritório - CATEGORIA/prefixos, PREFIXO/GRUPO/
@@ -1023,27 +1027,37 @@ def cat_rank(cat):
 #   cores são sobreposições de vista gravadas e DEVOLVIDAS ao estado anterior
 #   quando a janela fecha ou ao gravar.
 # ------------------------------------------------------------------
-# cor por situação do TIPO (prioridade: tudo faltando > Keynote > Descrição > IN)
+# cor por situação do TIPO. Só o FUNDO da superfície é colorido (tom claro),
+# para as linhas, padrões e limites do elemento continuarem visíveis.
 HL_CLASSES = OrderedDict([
-    ("red",    {"rgb": (232, 74, 74),   "label": u"Vermelho",   "what": u"falta Keynote, Descrição e Descrição IN"}),
-    ("orange", {"rgb": (255, 140, 0),   "label": u"Laranja",    "what": u"falta Keynote"}),
-    ("lilac",  {"rgb": (200, 162, 200), "label": u"Lilás",      "what": u"falta Descrição"}),
-    ("pink",   {"rgb": (255, 182, 193), "label": u"Rosa claro", "what": u"falta Descrição IN"}),
+    ("red",    {"rgb": (232, 74, 74),   "label": u"Vermelho", "what": u"Falta keynote, descrição e descrição em IN"}),
+    ("orange", {"rgb": (255, 140, 0),   "label": u"Laranja",  "what": u"Falta keynote"}),
+    ("purple", {"rgb": (142, 68, 173),  "label": u"Roxo",     "what": u"Falta descrição"}),
+    ("pink",   {"rgb": (255, 105, 180), "label": u"Rosa",     "what": u"Falta descrição em IN"}),
+    ("blue",   {"rgb": (52, 152, 219),  "label": u"Azul",     "what": u"Tem apenas keynote"}),
 ])
+HL_TINT = 0.45                # mistura com branco: cor clara, "meio-tom" da cor
 OK_TRANSPARENCY = 70          # elementos corretos: meio-tom + 70% de transparência
 hl_note = u""
 
 
 def hl_class(missing):
-    if len(missing) >= 3:
+    m = set(missing)
+    if len(m) >= 3:
         return "red"
-    if u"Keynote" in missing:
+    if u"Keynote" in m:
         return "orange"
-    if u"Descrição" in missing:
-        return "lilac"
-    if missing:
+    if u"Descrição" in m and PARAM_IN_NAME in m:
+        return "blue"             # tem apenas o keynote
+    if u"Descrição" in m:
+        return "purple"
+    if m:
         return "pink"
     return "ok"
+
+
+def hl_tint(rgb):
+    return tuple(int(round(c + (255 - c) * HL_TINT)) for c in rgb)
 
 
 def view_allows_overrides(view):
@@ -1151,15 +1165,20 @@ def solid_fill_id():
 
 
 def _color_ogs(rgb, fill):
-    c = DB.Color(*rgb)
+    """Só o fundo (background) da superfície e do corte, em tom claro: linhas,
+    padrões de piso/forro e limites do elemento continuam aparecendo."""
+    c = DB.Color(*hl_tint(rgb))
     o = DB.OverrideGraphicSettings()
-    o.SetProjectionLineColor(c)
-    o.SetCutLineColor(c)
-    if fill != INVALID_ID:
-        o.SetSurfaceForegroundPatternId(fill)
-        o.SetSurfaceForegroundPatternColor(c)
-        o.SetCutForegroundPatternId(fill)
-        o.SetCutForegroundPatternColor(c)
+    if fill == INVALID_ID:
+        return o
+    try:                                        # Revit 2019+
+        o.SetSurfaceBackgroundPatternId(fill)
+        o.SetSurfaceBackgroundPatternColor(c)
+        o.SetCutBackgroundPatternId(fill)
+        o.SetCutBackgroundPatternColor(c)
+    except AttributeError:                      # Revit <= 2018
+        o.SetProjectionFillPatternId(fill)
+        o.SetProjectionFillColor(c)
     return o
 
 
@@ -1251,14 +1270,13 @@ class Painter(object):
             pass
 
 
-def hl_summary(hl, n_ok):
-    parts = []
-    for k, v in HL_CLASSES.items():
-        n = sum(x["count"] for x in hl if x["color"] == k)
-        if n:
-            parts.append(u"{} em {} ({})".format(n, v["label"].upper(), v["what"]))
-    txt = u" · ".join(parts) if parts else u"nenhum elemento incompleto"
-    return u"{} · {} correto(s) em meio-tom 70%".format(txt, n_ok)
+def hl_summary(hl, n_ok=0):
+    """Contagem de elementos por cor (o meio-tom dos corretos não é listado)."""
+    parts = [u"{}: {}".format(v["label"], sum(x["count"] for x in hl if x["color"] == k))
+             for k, v in HL_CLASSES.items()]
+    if not hl:
+        return u"Nenhum elemento incompleto na vista."
+    return u"Elementos na vista  -  " + u"   ·   ".join(parts)
 
 
 # ---- ações no Revit com a janela aberta (janela não modal) ----
@@ -1414,21 +1432,35 @@ def row_view(r):
 # ------------------------------------------------------------------
 # 5e'. Tabela 2 - tipos do modelo SEM Keynote ou SEM Descrição (editável)
 # ------------------------------------------------------------------
-def collect_incomplete():
-    rows = []
+def collect_incomplete(t1_keys):
+    """-> (tabela 2, tabela 3)
+    Tabela 2: tipos sem Keynote, ou sem Descrição cujo Keynote está no Excel
+              mas NÃO aparece na tabela 1 (o que está na tabela 1 já será
+              atualizado por ela).
+    Tabela 3: tipos com Keynote preenchido que NÃO existe no Excel (só
+              informativo - o código precisa ser incluído na planilha)."""
+    inc, notx = [], []
     for info in scan_types():
         t = info["t"]
         key, desc, en, has_in, missing = type_status(t)
+        row = {"t": t, "id": eid_int(t.Id), "category": info["category"],
+               "family": family_name(t), "name": elem_name(t),
+               "count": len(info["ids"]), "hasIn": has_in,
+               "key0": key, "pt0": desc, "en0": en,
+               "key": key, "pt": desc, "en": en,
+               "sel": False, "check": u"", "status": u""}
+        if key and key not in XL["by_key"]:
+            row["check"] = u"Keynote {} não está no Excel".format(key)
+            notx.append(row)
+            continue
         if key and desc:
             continue
-        rows.append({"t": t, "id": eid_int(t.Id), "category": info["category"],
-                     "family": family_name(t), "name": elem_name(t),
-                     "count": len(info["ids"]), "hasIn": has_in,
-                     "key0": key, "pt0": desc, "en0": en,
-                     "key": key, "pt": desc, "en": en,
-                     "sel": False, "check": u"", "status": u""})
-    rows.sort(key=lambda r: (r["category"], r["family"], r["name"]))
-    return rows
+        if key and key in t1_keys:
+            continue                         # a tabela 1 já atualiza este keynote
+        inc.append(row)
+    for lst in (inc, notx):
+        lst.sort(key=lambda r: (r["category"], r["family"], r["name"]))
+    return inc, notx
 
 
 def inc_changed(r):
@@ -1527,6 +1559,32 @@ _GROUP_STYLE = u"""
         </GroupStyle>
       </DataGrid.GroupStyle>"""
 
+# grupo da tabela 3 (só leitura, sem botões de marcar)
+_GROUP_STYLE_RO = _GROUP_STYLE.replace(u"""
+                  <Button DockPanel.Dock="Right" Content="Desmarcar grupo" Tag="{Binding Name}"
+                          Height="22" Padding="8,0,8,0" Margin="6,0,0,0" FontSize="11"/>
+                  <Button DockPanel.Dock="Right" Content="Marcar grupo" Tag="{Binding Name}"
+                          Height="22" Padding="8,0,8,0" Margin="6,0,0,0" FontSize="11"/>""", u"")
+
+# cor da CÉLULA que vai mudar (coluna "<campo>Mark" da linha):
+#   fill = preenche vazio · over = sobrescreve · edit = digitado · blocked = não grava
+MARK_COLORS = (("fill", "#1E5A3A", "#E8FFF0"), ("over", "#6B4A12", "#FFF3DD"),
+               ("edit", "#1F4E8C", "#EAF3FF"), ("excel", "#1E5A3A", "#E8FFF0"))
+
+
+def _mark_style(key, mark_col):
+    trig = u"".join(
+        u'<DataTrigger Binding="{{Binding {0}}}" Value="{1}">'
+        u'<Setter Property="Background" Value="{2}"/><Setter Property="Foreground" Value="{3}"/>'
+        u'<Setter Property="FontWeight" Value="SemiBold"/></DataTrigger>'.format(mark_col, v, bg, fg)
+        for v, bg, fg in MARK_COLORS)
+    trig += (u'<DataTrigger Binding="{{Binding {0}}}" Value="blocked">'
+             u'<Setter Property="Foreground" Value="#7A8FA9"/></DataTrigger>'.format(mark_col))
+    return (u'<Style x:Key="{0}" TargetType="DataGridCell" '
+            u'BasedOn="{{StaticResource {{x:Type DataGridCell}}}}">'
+            u'<Style.Triggers>{1}</Style.Triggers></Style>'.format(key, trig))
+
+
 _CHECK_COL = u"""
         <DataGridTemplateColumn Header="✓" Width="36">
           <DataGridTemplateColumn.CellTemplate>
@@ -1539,17 +1597,18 @@ _CHECK_COL = u"""
         </DataGridTemplateColumn>"""
 
 
-def _col(header, binding, width, style=u"wrap", readonly=True):
+def _col(header, binding, width, style=u"wrap", readonly=True, cell=None):
     return (u'<DataGridTextColumn Header="{}" Binding="{{Binding {}}}" Width="{}" '
-            u'IsReadOnly="{}" ElementStyle="{{StaticResource {}}}"/>'.format(
-                header, binding, width, u"True" if readonly else u"False", style))
+            u'IsReadOnly="{}" ElementStyle="{{StaticResource {}}}"{}/>'.format(
+                header, binding, width, u"True" if readonly else u"False", style,
+                u' CellStyle="{{StaticResource {}}}"'.format(cell) if cell else u""))
 
 
 VERIFY_XAML = u"""
 <Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         Title="Atualização das Descrições do Modelo por Keynote · Verificação"
-        Width="1450" Height="900" MinWidth="900" MinHeight="560"
+        Width="1450" Height="980" MinWidth="900" MinHeight="620"
         WindowStartupLocation="CenterScreen" Background="#0E1526">
   <Window.Resources>
     <Style TargetType="Button">
@@ -1593,20 +1652,14 @@ VERIFY_XAML = u"""
     </Style>
     <Style x:Key="row" TargetType="DataGridRow">
       <Style.Triggers>
-        <DataTrigger Binding="{Binding Kind}" Value="fill">
-          <Setter Property="Foreground" Value="#7BE3A0"/>
-        </DataTrigger>
-        <DataTrigger Binding="{Binding Kind}" Value="over">
-          <Setter Property="Foreground" Value="#FFB454"/>
-        </DataTrigger>
         <DataTrigger Binding="{Binding Kind}" Value="blocked">
           <Setter Property="Foreground" Value="#7A8FA9"/>
         </DataTrigger>
-        <DataTrigger Binding="{Binding Kind}" Value="changed">
-          <Setter Property="Foreground" Value="#7BE3A0"/>
-        </DataTrigger>
       </Style.Triggers>
     </Style>
+    """ + _mark_style(u"mPt", u"PtMark") + u"""
+    """ + _mark_style(u"mEn", u"EnMark") + u"""
+    """ + _mark_style(u"mKey", u"KeyMark") + u"""
   </Window.Resources>
   <Grid Margin="16">
     <Grid.RowDefinitions>
@@ -1617,6 +1670,9 @@ VERIFY_XAML = u"""
       <RowDefinition Height="6"/>
       <RowDefinition Height="Auto"/>
       <RowDefinition Height="2*"/>
+      <RowDefinition Height="6"/>
+      <RowDefinition Height="Auto"/>
+      <RowDefinition Height="1.4*"/>
       <RowDefinition Height="Auto"/>
     </Grid.RowDefinitions>
     <StackPanel Grid.Row="0">
@@ -1624,17 +1680,12 @@ VERIFY_XAML = u"""
                  FontSize="15" FontWeight="SemiBold" Foreground="#65E3FF" FontFamily="Segoe UI"/>
       <TextBlock x:Name="info" TextWrapping="Wrap" FontSize="12" Foreground="#CFE3FF"
                  FontFamily="Segoe UI" Margin="0,6,0,0"/>
-      <WrapPanel Margin="0,6,0,0">
-        <Border Width="12" Height="12" Background="#E84A4A" Margin="0,0,5,0"/>
-        <TextBlock Style="{StaticResource small}" FontSize="11" Margin="0,0,14,0" Text="falta tudo"/>
-        <Border Width="12" Height="12" Background="#FF8C00" Margin="0,0,5,0"/>
-        <TextBlock Style="{StaticResource small}" FontSize="11" Margin="0,0,14,0" Text="falta Keynote"/>
-        <Border Width="12" Height="12" Background="#C8A2C8" Margin="0,0,5,0"/>
-        <TextBlock Style="{StaticResource small}" FontSize="11" Margin="0,0,14,0" Text="falta Descrição"/>
-        <Border Width="12" Height="12" Background="#FFB6C1" Margin="0,0,5,0"/>
-        <TextBlock Style="{StaticResource small}" FontSize="11" Margin="0,0,14,0" Text="falta Descrição IN"/>
-        <Border Width="12" Height="12" Background="#6B7380" Margin="0,0,5,0"/>
-        <TextBlock Style="{StaticResource small}" FontSize="11" Margin="0,0,14,0" Text="correto (meio-tom 70%)"/>
+      <WrapPanel Margin="0,6,0,0">""" + u"".join(
+          u'<Border Width="14" Height="14" Background="#{0:02X}{1:02X}{2:02X}" BorderBrush="#9FB3CC" '
+          u'BorderThickness="1" Margin="0,0,6,0"/><TextBlock Style="{{StaticResource small}}" '
+          u'FontSize="12" Margin="0,0,18,0" Text="{3}: {4}"/>'.format(
+              *(hl_tint(v["rgb"]) + (v["label"], v["what"])))
+          for v in HL_CLASSES.values()) + u"""
       </WrapPanel>
       <TextBlock x:Name="hlinfo" TextWrapping="Wrap" FontSize="12" Foreground="#FFB454"
                  FontFamily="Segoe UI" Margin="0,4,0,0"/>
@@ -1659,7 +1710,7 @@ VERIFY_XAML = u"""
       <Button x:Name="b_fill" Content="Somente preencher vazios"/>
       <TextBlock DockPanel.Dock="Right" VerticalAlignment="Center" FontSize="11"
                  Foreground="#7A8FA9" FontFamily="Segoe UI"
-                 Text="Verde = preenche vazio · Âmbar = sobrescreve · Cinza = não pode ser gravado"/>
+                 Text="Célula verde = preenche vazio · Âmbar = substitui o valor atual · Cinza = não pode ser gravado"/>
     </DockPanel>
     <DataGrid x:Name="grid" Grid.Row="3" """ + _GRID_STYLE + u""">
       <DataGrid.Columns>""" + _CHECK_COL + u"""
@@ -1669,9 +1720,9 @@ VERIFY_XAML = u"""
         """ + _col(u"Tipo", u"Tipo", 170) + u"""
         """ + _col(u"Keynote", u"Keynote", 75, u"mono") + u"""
         """ + _col(u"Descrição atual", u"PtAtual", 180) + u"""
-        """ + _col(u"Descrição nova", u"PtNova", 180) + u"""
+        """ + _col(u"Descrição nova", u"PtNova", 180, cell=u"mPt") + u"""
         """ + _col(u"Descrição em IN atual", u"EnAtual", 160) + u"""
-        """ + _col(u"Descrição em IN nova", u"EnNova", 160) + u"""
+        """ + _col(u"Descrição em IN nova", u"EnNova", 160, cell=u"mEn") + u"""
         """ + _col(u"Destino", u"Destino", 150) + u"""
       </DataGrid.Columns>""" + _GROUP_STYLE + u"""
     </DataGrid>
@@ -1684,6 +1735,9 @@ VERIFY_XAML = u"""
       <Button x:Name="b2_all" Content="Marcar visíveis"/>
       <Button x:Name="b2_none" Content="Desmarcar visíveis"/>
       <Button x:Name="b2_check" Content="Verificar no Excel"/>
+      <TextBlock DockPanel.Dock="Right" VerticalAlignment="Center" FontSize="11"
+                 Foreground="#7A8FA9" FontFamily="Segoe UI"
+                 Text="Célula azul = keynote digitado · Verde = trazido do Excel"/>
     </DockPanel>
     <DataGrid x:Name="grid2" Grid.Row="6" """ + _GRID_STYLE + u""">
       <DataGrid.Columns>""" + _CHECK_COL + u"""
@@ -1691,13 +1745,32 @@ VERIFY_XAML = u"""
         """ + _col(u"Família", u"Familia", 140) + u"""
         """ + _col(u"Tipo", u"Tipo", 190) + u"""
         """ + _col(u"Qtd", u"Qtd", 45, u"mono") + u"""
-        """ + _col(u"Keynote ✎", u"Keynote", 100, u"edit", False) + u"""
-        """ + _col(u"Descrição (Excel)", u"Descricao", 230) + u"""
-        """ + _col(u"Descrição em IN (Excel)", u"DescricaoIN", 210) + u"""
+        """ + _col(u"Keynote ✎", u"Keynote", 100, u"edit", False, u"mKey") + u"""
+        """ + _col(u"Descrição (Excel)", u"Descricao", 230, cell=u"mPt") + u"""
+        """ + _col(u"Descrição em IN (Excel)", u"DescricaoIN", 210, cell=u"mEn") + u"""
         """ + _col(u"Verificação", u"Verificacao", 300) + u"""
       </DataGrid.Columns>""" + _GROUP_STYLE + u"""
     </DataGrid>
-    <DockPanel Grid.Row="7" Margin="0,12,0,0" LastChildFill="False">
+    <GridSplitter Grid.Row="7" Height="6" HorizontalAlignment="Stretch" Background="#1C2B44"/>
+    <DockPanel Grid.Row="8" Margin="0,8,0,6" LastChildFill="False">
+      <TextBlock Style="{StaticResource lbl}"
+                 Text="3 · ELEMENTOS COM KEYNOTE QUE NÃO ESTÁ NO EXCEL  (só consulta - inclua o código na planilha)"/>
+      <TextBlock Text="Agrupar por " Style="{StaticResource small}"/>
+      <ComboBox x:Name="f_mode3" Width="120" Height="26" Margin="0,0,14,0"/>
+    </DockPanel>
+    <DataGrid x:Name="grid3" Grid.Row="9" """ + _GRID_STYLE + u""" IsReadOnly="True">
+      <DataGrid.Columns>
+        """ + _col(u"Categoria", u"Categoria", 120) + u"""
+        """ + _col(u"Família", u"Familia", 150) + u"""
+        """ + _col(u"Tipo", u"Tipo", 220) + u"""
+        """ + _col(u"Qtd", u"Qtd", 45, u"mono") + u"""
+        """ + _col(u"Keynote", u"Keynote", 100, u"mono") + u"""
+        """ + _col(u"Descrição atual", u"Descricao", 240) + u"""
+        """ + _col(u"Descrição em IN atual", u"DescricaoIN", 220) + u"""
+        """ + _col(u"Situação", u"Verificacao", 260) + u"""
+      </DataGrid.Columns>""" + _GROUP_STYLE_RO + u"""
+    </DataGrid>
+    <DockPanel Grid.Row="10" Margin="0,12,0,0" LastChildFill="False">
       <TextBlock x:Name="counter" DockPanel.Dock="Left" VerticalAlignment="Center"
                  Foreground="#CFE3FF" FontFamily="Segoe UI" TextWrapping="Wrap" MaxWidth="900"/>
       <Button x:Name="b_apply" DockPanel.Dock="Right" Content="Gravar marcados"
@@ -1714,6 +1787,8 @@ COLS1 = ("Grupo", "Categoria", "Familia", "Tipo", "Keynote", "PtAtual", "PtNova"
          "EnAtual", "EnNova", "Destino")
 COLS2 = ("Categoria", "Familia", "Tipo", "Qtd", "Keynote", "Descricao", "DescricaoIN",
          "Verificacao")
+COLS3 = COLS2
+MARKS = ("PtMark", "EnMark", "KeyMark")
 NO_KEY = u"(sem keynote)"
 TYPE_INST = {}        # id do tipo -> [ElementId das instâncias] (modelo inteiro)
 
@@ -1737,12 +1812,13 @@ class VerifyWindow(forms.WPFWindow):
     """Janela NÃO modal: o Revit continua utilizável. Tudo que mexe no modelo
     (mostrar, colorir, gravar) passa por run_in_revit (ExternalEvent)."""
 
-    def __init__(self, rows, inc, info_text, hl_text):
+    def __init__(self, rows, inc, notx, info_text, hl_text):
         forms.WPFWindow.__init__(self, VERIFY_XAML, literal_string=True)
         self.applied, self._busy = False, False
-        self.rows, self.inc = rows, inc
+        self.rows, self.inc, self.notx = rows, inc, notx
         self.by_rid = dict((r["rid"], r) for r in rows)
         self.by_rid2 = dict((r["rid"], r) for r in inc)
+        self.by_rid3 = dict((r["rid"], r) for r in notx)
         self.info.Text = info_text
         self.hlinfo.Text = hl_text
         self.viewinfo.Text = u""
@@ -1750,13 +1826,15 @@ class VerifyWindow(forms.WPFWindow):
 
         self.t1 = self._new_table(COLS1)
         self.t2 = self._new_table(COLS2)
-        self.d1, self.d2 = {}, {}
+        self.t3 = self._new_table(COLS3)
+        self.d1, self.d2, self.d3 = {}, {}, {}
         self.grid.ItemsSource = self.t1.DefaultView
         self.grid2.ItemsSource = self.t2.DefaultView
+        self.grid3.ItemsSource = self.t3.DefaultView
         from System.Windows.Data import PropertyGroupDescription
         from System.Windows import RoutedEventHandler
         from System.Windows.Controls.Primitives import ButtonBase
-        for g in (self.grid, self.grid2):
+        for g in (self.grid, self.grid2, self.grid3):
             g.Items.GroupDescriptions.Add(PropertyGroupDescription("Grp"))
         # botões "Marcar grupo / Desmarcar grupo" dos cabeçalhos de grupo
         self.grid.AddHandler(ButtonBase.ClickEvent, RoutedEventHandler(self._grp_click1))
@@ -1766,15 +1844,19 @@ class VerifyWindow(forms.WPFWindow):
         self.f_mode1.SelectedIndex = 0
         self.f_mode2.ItemsSource = GROUP_MODES
         self.f_mode2.SelectedIndex = 1          # tabela 2: por Categoria (quase tudo sem keynote)
+        self.f_mode3.ItemsSource = GROUP_MODES
+        self.f_mode3.SelectedIndex = 0
         self._rebuild()
 
         self.f_mode1.SelectionChanged += self._on_mode
         self.f_mode2.SelectionChanged += self._on_mode
+        self.f_mode3.SelectionChanged += self._on_mode
         self.f_text.TextChanged += self._filter
         self.t1.ColumnChanged += self._on_changed1
         self.t2.ColumnChanged += self._on_changed2
         self.grid.SelectionChanged += self._on_select1
         self.grid2.SelectionChanged += self._on_select2
+        self.grid3.SelectionChanged += self._on_select3
         self.b_show.Click += lambda s, a: self._show(self._last_ids)
         self.b_paint.Click += self._paint
         self.b_all.Click += lambda s, a: self._set_visible1(lambda r: True)
@@ -1793,7 +1875,8 @@ class VerifyWindow(forms.WPFWindow):
         tb = DataTable("t")
         for name, typ in (("RowId", System.Int32), ("Sel", System.Boolean),
                           ("Enabled", System.Boolean), ("Kind", System.String),
-                          ("Grp", System.String)) + tuple((c, System.String) for c in cols):
+                          ("Grp", System.String)) + tuple((c, System.String)
+                                                         for c in cols + MARKS):
             tb.Columns.Add(name, clr.GetClrType(typ))
         return tb
 
@@ -1806,6 +1889,9 @@ class VerifyWindow(forms.WPFWindow):
 
     def _grp2(self, r):
         return _key_label(clean(r["key"])) if self._mode(self.f_mode2) == u"Keynote" else r["category"]
+
+    def _grp3(self, r):
+        return (r["key"] or NO_KEY) if self._mode(self.f_mode3) == u"Keynote" else r["category"]
 
     def _fill(self, tb, store, items, grp_of, values_of, sort_extra):
         tb.Rows.Clear()
@@ -1823,16 +1909,40 @@ class VerifyWindow(forms.WPFWindow):
             tb.Rows.Add(row)
             store[r["rid"]] = row
 
+    @staticmethod
+    def _mark1(r, f):
+        if r[f + "_new"] is not None:
+            return u"over" if f in r["over"] else u"fill"
+        return u"blocked" if f in r["blocked"] else u""
+
+    @staticmethod
+    def _marks2(r):
+        return {"KeyMark": u"edit" if r["key"] and r["key"] != r["key0"] else u"",
+                "PtMark": u"excel" if r["pt"] and r["pt"] != r["pt0"] else u"",
+                "EnMark": u"excel" if r["en"] and r["en"] != r["en0"] else u""}
+
     def _vals1(self, r):
         v = r["view"]
-        return dict(zip(COLS1, (v["grp"], v["category"], v["family"], v["type"], v["key"],
-                                v["ptCur"], v["ptNew"], v["enCur"], v["enNew"], v["dest"])),
-                    _kind=v["kind"])
+        d = dict(zip(COLS1, (v["grp"], v["category"], v["family"], v["type"], v["key"],
+                             v["ptCur"], v["ptNew"], v["enCur"], v["enNew"], v["dest"])),
+                 _kind=v["kind"])
+        d.update(PtMark=self._mark1(r, "pt"), EnMark=self._mark1(r, "en"), KeyMark=u"")
+        return d
 
     def _vals2(self, r):
-        return dict(zip(COLS2, (r["category"], r["family"], r["name"], to_unicode(r["count"]),
-                                r["key"], r["pt"], r["en"], r["check"])),
-                    _kind=u"changed" if inc_changed(r) else u"inc")
+        d = dict(zip(COLS2, (r["category"], r["family"], r["name"], to_unicode(r["count"]),
+                             r["key"], r["pt"], r["en"], r["check"])),
+                 _kind=u"changed" if inc_changed(r) else u"inc")
+        d.update(self._marks2(r))
+        return d
+
+    def _vals3(self, r):
+        d = dict(zip(COLS3, (r["category"], r["family"], r["name"], to_unicode(r["count"]),
+                             r["key"], r["pt"] or u"(vazio)",
+                             (r["en"] or u"(vazio)") if r["hasIn"] else u"(sem parâmetro)",
+                             r["check"])), _kind=u"info")
+        d.update(PtMark=u"", EnMark=u"", KeyMark=u"")
+        return d
 
     def _rebuild(self):
         self._busy = True
@@ -1842,6 +1952,8 @@ class VerifyWindow(forms.WPFWindow):
                                   r["view"]["type"]))
             self._fill(self.t2, self.d2, self.inc, self._grp2, self._vals2,
                        lambda r: (r["category"], r["family"], r["name"]))
+            self._fill(self.t3, self.d3, self.notx, self._grp3, self._vals3,
+                       lambda r: (r["key"], r["category"], r["family"], r["name"]))
         finally:
             self._busy = False
         self._filter(None, None)
@@ -1855,7 +1967,7 @@ class VerifyWindow(forms.WPFWindow):
         if self._busy:
             return
         t = _flt(self.f_text.Text).strip()
-        for tb, cols in ((self.t1, COLS1), (self.t2, COLS2)):
+        for tb, cols in ((self.t1, COLS1), (self.t2, COLS2), (self.t3, COLS3)):
             flt = u""
             if t:
                 flt = u"({})".format(u" OR ".join(
@@ -1906,6 +2018,11 @@ class VerifyWindow(forms.WPFWindow):
         if rid is not None:
             self._show(self._ids_of_types([self.by_rid2[rid]["id"]]))
 
+    def _on_select3(self, sender, args):
+        rid = self._selected_rid(self.grid3)
+        if rid is not None:
+            self._show(self._ids_of_types([self.by_rid3[rid]["id"]]))
+
     def _show(self, ids):
         self._last_ids = list(ids)
         if not ids:
@@ -1922,7 +2039,7 @@ class VerifyWindow(forms.WPFWindow):
         def act():
             hl, n_ok = PAINTER.paint(doc.ActiveView)
             win.hlinfo.Text = (u"Destaque: " + hl_note) if hl_note else (
-                u"Vista '{}': ".format(to_unicode(doc.ActiveView.Name)) + hl_summary(hl, n_ok))
+                u"Vista '{}'  ·  ".format(to_unicode(doc.ActiveView.Name)) + hl_summary(hl))
         run_in_revit(act)
 
     # ---- tabela 1 ----
@@ -1961,6 +2078,8 @@ class VerifyWindow(forms.WPFWindow):
         row["Keynote"], row["Descricao"], row["DescricaoIN"] = r["key"], r["pt"], r["en"]
         row["Verificacao"] = r["check"]
         row["Kind"] = u"changed" if inc_changed(r) else u"inc"
+        for k, v in self._marks2(r).items():
+            row[k] = v
 
     def _on_changed2(self, sender, e):
         name = e.Column.ColumnName
@@ -2051,8 +2170,10 @@ class VerifyWindow(forms.WPFWindow):
         n_edit = len([r for r in s2 if inc_changed(r)])
         self.counter.Text = (
             u"Tabela 1: {} de {} linha(s) marcada(s) ({} tipo(s), {} sobrescreve(m))   ·   "
-            u"Tabela 2: {} de {} marcada(s), {} com Keynote digitado".format(
-                len(s1), tot1, n_types, n_over, len(s2), len(self.inc), n_edit))
+            u"Tabela 2: {} de {} marcada(s), {} com Keynote digitado   ·   "
+            u"Tabela 3: {} tipo(s) com Keynote fora do Excel".format(
+                len(s1), tot1, n_types, n_over, len(s2), len(self.inc), n_edit,
+                len(self.notx)))
 
     def selected(self):
         return [r for r in self.rows if r["sel"] and r["enabled"]]
@@ -2202,10 +2323,12 @@ VROWS.sort(key=lambda r: (r["key"], r["category"], r["view"]["family"], r["view"
 for i, r in enumerate(VROWS):
     r["rid"] = i
 
-INC = collect_incomplete()
+INC, NOTX = collect_incomplete(set(r["key"] for r in VROWS))
 for i, r in enumerate(INC):
     r["rid"] = i
     verify_incomplete(r, autofill=False)
+for i, r in enumerate(NOTX):
+    r["rid"] = i
 
 # instâncias de cada tipo (para "mostrar na vista ativa")
 for _info in scan_types():
@@ -2217,10 +2340,10 @@ keys_with_info = [k for k in MODEL if XL["by_key"].get(k) and
                   (XL["by_key"][k]["pt"] or XL["by_key"][k]["en"])]
 info_text = (u"{} keynote(s) no modelo · {} com descrição no Excel · {} fora do Excel  ·  "
              u"Tabela 1: {} linha(s) ({} tipo(s))  ·  Tabela 2: {} tipo(s) sem Keynote ou "
-             u"sem Descrição".format(
+             u"sem Descrição  ·  Tabela 3: {} tipo(s) com Keynote fora do Excel".format(
                  len(MODEL), len(keys_with_info),
                  len([k for k in MODEL if not XL["by_key"].get(k)]),
-                 len(VROWS), sum(len(r["hs"]) for r in VROWS), len(INC)))
+                 len(VROWS), sum(len(r["hs"]) for r in VROWS), len(INC), len(NOTX)))
 
 
 def cancel_run():
@@ -2628,7 +2751,7 @@ def finish_run(chosen_rows, chosen_inc):
                             len(RESULT["missing"])))
     if opts["highlight"]:
         output.print_md(u"- Situação após gravar (vista ativa): {}".format(
-            hl_note or hl_summary(HL_FINAL, 0).rsplit(u" · ", 1)[0]))
+            hl_note or hl_summary(HL_FINAL)))
     inc_written = [r for r in INC if r["status"].startswith(u"Gravado")]
     if INC:
         output.print_md(u"- Tabela 2 (tipos sem Keynote / Descrição): **{}** de {} tipo(s) "
@@ -2692,6 +2815,9 @@ def finish_run(chosen_rows, chosen_inc):
                         "key": clean(r["key"]), "pt": clean(r["pt"]), "en": clean(r["en"]),
                         "written": r.get("written", []), "check": r["check"],
                         "status": r["status"]} for r in INC],
+        "notInExcel": [{"category": r["category"], "family": r["family"], "type": r["name"],
+                        "typeId": r["id"], "count": r["count"], "key": r["key"],
+                        "pt": r["pt"], "en": r["en"], "hasIn": r["hasIn"]} for r in NOTX],
         "excelTable": excel_table(),
         "highlight": [dict((k, v) for k, v in x.items() if k != "ids") for x in HL_FINAL],
         "highlightNote": hl_note if opts["highlight"] else u"desligado",
@@ -2730,8 +2856,8 @@ if hl_note:
     _hl_text = u"Destaque indisponível: {}. Abra uma planta, corte ou 3D e clique em " \
                u"'Colorir vista ativa'.".format(hl_note)
 else:
-    _hl_text = u"Vista '{}': {}".format(to_unicode(active_view.Name), hl_summary(_hl, _n_ok))
+    _hl_text = u"Vista '{}'  ·  {}".format(to_unicode(active_view.Name), hl_summary(_hl))
 if not VROWS and not INC:
     info_text += u"  ·  Nada a atualizar: o modelo já coincide com o Excel."
-VW = VerifyWindow(VROWS, INC, info_text, _hl_text)
+VW = VerifyWindow(VROWS, INC, NOTX, info_text, _hl_text)
 VW.Show()

@@ -11,7 +11,7 @@
     --bg:#070C16; --panel:rgba(255,255,255,.028); --line:rgba(101,227,255,.22);
     --grid:rgba(101,227,255,.05); --ink:#D9E8F5; --dim:#7A8FA9;
     --cy:#65E3FF; --teal:#3DDCB4; --amber:#FFB454; --mag:#FF4F9A; --violet:#9D8CFF;
-    --green:#50D682; --red:#E84A4A; --orange:#FF8C00; --lilac:#C8A2C8; --pink:#FFB6C1;
+    --green:#50D682; --red:#E84A4A; --orange:#FF8C00; --purple:#B07CC6; --pink:#FF8DC8; --blue:#6DB6E8;
   }
   *{box-sizing:border-box; margin:0; padding:0}
   body{
@@ -144,6 +144,12 @@
 <div class="scroll"><table><thead><tr>
   <th>Categoria</th><th>Família</th><th>Tipo</th><th>Qtd</th><th>Keynote</th><th>Descrição</th>
   <th>Descrição em IN</th><th>Verificação</th><th>Situação</th></tr></thead><tbody id="i_body"></tbody></table></div>
+
+<h2>3 · Elementos com Keynote que não está no Excel <small>(inclua o código na planilha)</small></h2>
+<div class="toolbar"><input id="n_q" type="search" placeholder="Buscar..."><span class="count" id="n_n"></span></div>
+<div class="scroll"><table><thead><tr>
+  <th>Keynote</th><th>Categoria</th><th>Família</th><th>Tipo</th><th>Qtd</th><th>Descrição atual</th>
+  <th>Descrição em IN atual</th></tr></thead><tbody id="n_body"></tbody></table></div>
 
 <!-- 2. tabela do Excel -->
 <h2>Tabela do Excel <small id="x_sheet"></small></h2>
@@ -294,6 +300,19 @@ function renderInc(){
 }
 ["i_mode","i_st"].forEach(id=>$(id).onchange=renderInc); $("i_q").oninput=renderInc;
 
+/* ---- 3. keynote fora do Excel ---- */
+function renderNotx(){
+  const q = $("n_q").value.trim().toLowerCase(), N = (DATA.notInExcel||[]);
+  const list = groupSort(N.map(r=>Object.assign({g:r.key},r)).filter(r=>!q||[r.key,r.category,r.family,r.type,r.pt,r.en].join(" ").toLowerCase().includes(q)),"g");
+  $("n_n").textContent = list.length + " tipo(s)";
+  const v = x => x ? esc(x) : '<span class="none">vazio</span>';
+  $("n_body").innerHTML = list.length ? groupRows(list,"g",7,r=>`<tr><td class="key">${esc(r.key)}</td>
+      <td>${esc(r.category)}</td><td>${esc(r.family)}</td><td>${esc(r.type)} <span class="muted mono">#${r.typeId}</span></td>
+      <td class="mono">${r.count}</td><td>${v(r.pt)}</td><td>${r.hasIn?v(r.en):'<span class="none">sem parâmetro</span>'}</td></tr>`)
+    : `<tr><td colspan="7" class="empty">✓ Todos os keynotes do modelo existem no Excel</td></tr>`;
+}
+$("n_q").oninput = renderNotx;
+
 /* ---- 2. tabela do Excel ---- */
 const XT = DATA.excelTable;
 let xCat = "";
@@ -385,14 +404,15 @@ function renderResult(){
 (function(){
   const H = DATA.highlight, sum = l => l.reduce((s,x)=>s+x.count,0);
   const CLS = [
-    {k:"red",    c:"var(--red)",    l:"Vermelho · falta tudo"},
-    {k:"orange", c:"var(--orange)", l:"Laranja · falta Keynote"},
-    {k:"lilac",  c:"var(--lilac)",  l:"Lilás · falta Descrição"},
-    {k:"pink",   c:"var(--pink)",   l:"Rosa claro · falta Descrição IN"},
+    {k:"red",    c:"var(--red)",    l:"Vermelho: Falta keynote, descrição e descrição em IN"},
+    {k:"orange", c:"var(--orange)", l:"Laranja: Falta keynote"},
+    {k:"purple", c:"var(--purple)", l:"Roxo: Falta descrição"},
+    {k:"pink",   c:"var(--pink)",   l:"Rosa: Falta descrição em IN"},
+    {k:"blue",   c:"var(--blue)",   l:"Azul: Tem apenas keynote"},
   ];
   $("h_cards").innerHTML = CLS.map(m=>{ const l = H.filter(x=>x.color===m.k);
     return `<div class="card" style="--c:${m.c}"><div class="v">${fmt(sum(l))}</div>
-      <div class="l">${esc(m.l)}</div><div class="h">${l.length} tipo(s)</div></div>`; }).join("");
+      <div class="l" style="text-transform:none;letter-spacing:.03em;font-size:12px">${esc(m.l)}</div><div class="h">${l.length} tipo(s)</div></div>`; }).join("");
   if(DATA.highlightNote){ $("h_wrap").innerHTML = `<p class="muted">${esc(DATA.highlightNote)}</p>`; return; }
   if(!H.length){ $("h_wrap").innerHTML = `<div class="empty">✓ Todos os tipos visíveis têm Keynote, Descrição e ${esc(DATA.inParam)}</div>`; return; }
   const v = x => x ? esc(x) : '<span class="none">vazio</span>';
@@ -462,7 +482,7 @@ $("csv").onclick = ()=>{
   document.body.appendChild(a); a.click(); a.remove();
 };
 
-renderVerify(); renderInc(); renderChips(); renderExcel(); renderResult(); renderIssueCards(); renderKeys();
+renderVerify(); renderInc(); renderNotx(); renderChips(); renderExcel(); renderResult(); renderIssueCards(); renderKeys();
 </script>
 </body>
 </html>
