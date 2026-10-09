@@ -173,7 +173,7 @@ def _fill(template, values):
 
 
 def build_xaml(title, body, footer_right, subtitle=u"", footer_left=u"",
-               size="S", height=None, width=None, dark=True):
+               size="S", height=None, width=None, resources=u"", dark=True):
     """XAML completo de uma janela no padrão OCA.
 
     title         nome do comando (aceita o __title__ com quebras de linha).
@@ -184,6 +184,8 @@ def build_xaml(title, body, footer_right, subtitle=u"", footer_left=u"",
     size          "S" 460 px, "M" 580 px (altura pelo conteúdo, tamanho fixo)
                   ou "L" 1160 px (redimensionável; informe height).
     width         largura em px, só quando a janela original era maior que o padrão.
+    resources     XAML extra para <Window.Resources> (estilos que o código busca com
+                  FindResource ou que precisam valer na janela inteira).
     dark          True (padrão OCA: sempre escuro); False só para testes.
     """
     name = command_name(title)
@@ -200,7 +202,7 @@ def build_xaml(title, body, footer_right, subtitle=u"", footer_left=u"",
         "logo": _LOGO_XAML.replace(u"@uri@", _xml(uri)) if uri else u"",
         "subtitle": _SUBTITLE_XAML.replace(u"@subtitle@", _xml(u" ".join(unicode(subtitle).split())))
                     if subtitle else u"",
-        "resources": theme.resources(dark),
+        "resources": theme.resources(dark) + (resources or u""),
         "footer_left": footer_left,
         "footer_right": footer_right,
         "body": body,

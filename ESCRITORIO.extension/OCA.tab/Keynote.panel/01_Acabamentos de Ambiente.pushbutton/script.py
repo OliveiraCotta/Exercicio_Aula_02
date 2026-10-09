@@ -88,6 +88,7 @@ from System.Data import DataTable
 from System.Collections.Generic import List
 
 from pyrevit import revit, DB, script, forms
+from oca_ui import build_xaml, alert_title, brand_report, output_header
 
 try:
     unicode
@@ -97,6 +98,7 @@ except NameError:          # IronPython 3 / CPython
 doc = revit.doc
 BIP = DB.BuiltInParameter
 output = script.get_output()
+ALERT_TITLE = alert_title(__title__)
 
 
 def _shift_click():
@@ -122,6 +124,7 @@ def log(text, error=False):
         _log_started[0] = True
         try:
             output.set_title(u"Acabamentos de Ambiente - log")
+            output_header(output, __title__, u"Log de execução")
         except Exception:
             pass
     output.print_md(text)
@@ -1838,7 +1841,7 @@ def write_report(data):
     payload = to_unicode(json.dumps(data, ensure_ascii=False))
     # keep the JSON from closing the <script> tag or breaking JS string rules
     payload = payload.replace(u"</", u"<\\/").replace(u"\u2028", u"\\u2028").replace(u"\u2029", u"\\u2029")
-    html = html.replace(u"__DATA__", payload)
+    html = brand_report(html.replace(u"__DATA__", payload))
     with codecs.open(REPORT_PATH, "w", encoding="utf-8") as f:
         f.write(html)
     return REPORT_PATH
@@ -1912,139 +1915,10 @@ def help_rules_text():
 
 
 # ==================================================================
-# WPF window
+# WPF window (padrão visual OCA - lib/oca_ui)
 # ==================================================================
-XAML = u"""
-<Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
-        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="Acabamentos de Ambiente" Width="1160" Height="800"
-        MinWidth="900" MinHeight="600" WindowStartupLocation="CenterScreen"
-        Background="#0E1526">
-  <Window.Resources>
-    <Style TargetType="TextBlock">
-      <Setter Property="Foreground" Value="#CFE3FF"/>
-      <Setter Property="FontFamily" Value="Segoe UI"/>
-    </Style>
-    <Style x:Key="Label" TargetType="TextBlock">
-      <Setter Property="Foreground" Value="#CFE3FF"/>
-      <Setter Property="FontFamily" Value="Segoe UI"/>
-      <Setter Property="Margin" Value="0,0,0,4"/>
-    </Style>
-    <Style x:Key="Hint" TargetType="TextBlock">
-      <Setter Property="Foreground" Value="#7A8FA9"/>
-      <Setter Property="FontFamily" Value="Segoe UI"/>
-      <Setter Property="FontSize" Value="11"/>
-      <Setter Property="TextWrapping" Value="Wrap"/>
-    </Style>
-    <Style x:Key="HelpTitle" TargetType="TextBlock">
-      <Setter Property="Foreground" Value="#65E3FF"/>
-      <Setter Property="FontFamily" Value="Segoe UI"/>
-      <Setter Property="FontWeight" Value="SemiBold"/>
-      <Setter Property="FontSize" Value="13"/>
-      <Setter Property="Margin" Value="0,16,0,6"/>
-    </Style>
-    <Style x:Key="HelpBody" TargetType="TextBlock">
-      <Setter Property="Foreground" Value="#CFE3FF"/>
-      <Setter Property="FontFamily" Value="Segoe UI"/>
-      <Setter Property="FontSize" Value="12"/>
-      <Setter Property="TextWrapping" Value="Wrap"/>
-      <Setter Property="LineHeight" Value="19"/>
-    </Style>
-    <Style TargetType="CheckBox">
-      <Setter Property="Foreground" Value="#CFE3FF"/>
-      <Setter Property="FontFamily" Value="Segoe UI"/>
-    </Style>
-    <Style TargetType="ComboBox">
-      <Setter Property="Height" Value="26"/>
-      <Setter Property="Padding" Value="4,2,4,2"/>
-    </Style>
-    <Style TargetType="TextBox">
-      <Setter Property="Height" Value="26"/>
-      <Setter Property="Padding" Value="6,3,6,3"/>
-      <Setter Property="Background" Value="#0B1120"/>
-      <Setter Property="Foreground" Value="#CFE3FF"/>
-      <Setter Property="BorderBrush" Value="#2A4A6E"/>
-      <Setter Property="CaretBrush" Value="#65E3FF"/>
-      <Setter Property="FontFamily" Value="Segoe UI"/>
-    </Style>
-    <Style TargetType="Button">
-      <Setter Property="Height" Value="32"/>
-      <Setter Property="MinWidth" Value="140"/>
-      <Setter Property="Margin" Value="0,0,10,0"/>
-      <Setter Property="Foreground" Value="#65E3FF"/>
-      <Setter Property="Background" Value="#101B30"/>
-      <Setter Property="BorderBrush" Value="#2A4A6E"/>
-      <Setter Property="FontFamily" Value="Segoe UI"/>
-      <Setter Property="Cursor" Value="Hand"/>
-      <Setter Property="Template">
-        <Setter.Value>
-          <ControlTemplate TargetType="Button">
-            <Border x:Name="bd" Background="{TemplateBinding Background}" BorderBrush="{TemplateBinding BorderBrush}"
-                    BorderThickness="1" CornerRadius="3" Padding="14,0">
-              <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
-            </Border>
-            <ControlTemplate.Triggers>
-              <Trigger Property="IsMouseOver" Value="True">
-                <Setter TargetName="bd" Property="BorderBrush" Value="#65E3FF"/>
-                <Setter TargetName="bd" Property="Background" Value="#16304A"/>
-              </Trigger>
-              <Trigger Property="IsEnabled" Value="False">
-                <Setter TargetName="bd" Property="Opacity" Value="0.4"/>
-              </Trigger>
-            </ControlTemplate.Triggers>
-          </ControlTemplate>
-        </Setter.Value>
-      </Setter>
-    </Style>
-    <Style TargetType="TabItem">
-      <Setter Property="Foreground" Value="#7A8FA9"/>
-      <Setter Property="FontFamily" Value="Segoe UI"/>
-      <Setter Property="FontSize" Value="12"/>
-      <Setter Property="Template">
-        <Setter.Value>
-          <ControlTemplate TargetType="TabItem">
-            <Border x:Name="bd" Background="Transparent" BorderBrush="#23324F" BorderThickness="1,1,1,0"
-                    Padding="16,7" Margin="0,0,4,0" CornerRadius="3,3,0,0">
-              <ContentPresenter ContentSource="Header" TextElement.Foreground="{TemplateBinding Foreground}"/>
-            </Border>
-            <ControlTemplate.Triggers>
-              <Trigger Property="IsSelected" Value="True">
-                <Setter TargetName="bd" Property="Background" Value="#16233B"/>
-                <Setter Property="Foreground" Value="#65E3FF"/>
-              </Trigger>
-            </ControlTemplate.Triggers>
-          </ControlTemplate>
-        </Setter.Value>
-      </Setter>
-    </Style>
-    <Style TargetType="DataGridColumnHeader">
-      <Setter Property="Background" Value="#141E33"/>
-      <Setter Property="Foreground" Value="#65E3FF"/>
-      <Setter Property="Padding" Value="8,5,8,5"/>
-      <Setter Property="BorderBrush" Value="#23324F"/>
-      <Setter Property="BorderThickness" Value="0,0,1,1"/>
-    </Style>
-    <Style TargetType="DataGridRow">
-      <Setter Property="Background" Value="#0E1526"/>
-      <Setter Property="Foreground" Value="#D9E8F5"/>
-      <Style.Triggers>
-        <DataTrigger Binding="{Binding Kind}" Value="Overwrite">
-          <Setter Property="Foreground" Value="#FFB454"/>
-        </DataTrigger>
-        <DataTrigger Binding="{Binding Kind}" Value="Clear">
-          <Setter Property="Foreground" Value="#FF8FB5"/>
-        </DataTrigger>
-        <DataTrigger Binding="{Binding Kind}" Value="Tag">
-          <Setter Property="Foreground" Value="#9D8CFF"/>
-        </DataTrigger>
-        <DataTrigger Binding="{Binding Kind}" Value="TagMissing">
-          <Setter Property="Foreground" Value="#FF4F9A"/>
-        </DataTrigger>
-        <DataTrigger Binding="{Binding Editable}" Value="False">
-          <Setter Property="Foreground" Value="#7A8FA9"/>
-        </DataTrigger>
-      </Style.Triggers>
-    </Style>
+# estilos que o código busca na janela (FindResource) ficam em Window.Resources
+RESOURCES = u"""
     <Style x:Key="RoomGroup" TargetType="Expander">
       <Setter Property="Template">
         <Setter.Value>
@@ -2054,10 +1928,11 @@ XAML = u"""
                             IsChecked="{Binding IsExpanded, Mode=TwoWay, RelativeSource={RelativeSource TemplatedParent}}">
                 <ToggleButton.Template>
                   <ControlTemplate TargetType="ToggleButton">
-                    <Border x:Name="bd" Background="#141E33" BorderBrush="#23324F" BorderThickness="0,0,0,1" Padding="8,6">
+                    <Border x:Name="bd" Background="{StaticResource oca.Surface}" BorderBrush="{StaticResource oca.Line}"
+                            BorderThickness="0,0,0,1" Padding="8,6">
                       <DockPanel>
-                        <TextBlock x:Name="arrow" Text="&#x25B6;" Foreground="#65E3FF" Width="20" FontSize="10"
-                                   VerticalAlignment="Center"/>
+                        <TextBlock x:Name="arrow" Text="&#x25B6;" Foreground="{StaticResource oca.Accent}" Width="20"
+                                   FontSize="10" VerticalAlignment="Center"/>
                         <ContentPresenter VerticalAlignment="Center"/>
                       </DockPanel>
                     </Border>
@@ -2066,7 +1941,7 @@ XAML = u"""
                         <Setter TargetName="arrow" Property="Text" Value="&#x25BC;"/>
                       </Trigger>
                       <Trigger Property="IsMouseOver" Value="True">
-                        <Setter TargetName="bd" Property="Background" Value="#16304A"/>
+                        <Setter TargetName="bd" Property="Background" Value="{StaticResource oca.AccentSoft}"/>
                       </Trigger>
                     </ControlTemplate.Triggers>
                   </ControlTemplate>
@@ -2091,145 +1966,212 @@ XAML = u"""
           <ControlTemplate TargetType="GroupItem">
             <Expander Style="{StaticResource RoomGroup}" IsExpanded="False">
               <Expander.Header>
-                <TextBlock Text="{Binding Name}" Foreground="#D9E8F5" FontWeight="SemiBold"/>
+                <TextBlock Text="{Binding Name}" Foreground="{StaticResource oca.Ink}" FontWeight="SemiBold"/>
               </Expander.Header>
               <ItemsPresenter/>
             </Expander>
           </ControlTemplate>
         </Setter.Value>
       </Setter>
-    </Style>
-  </Window.Resources>
+    </Style>"""
 
-  <Grid Margin="18">
-    <Grid.RowDefinitions>
-      <RowDefinition Height="Auto"/>
-      <RowDefinition Height="Auto"/>
-      <RowDefinition Height="*"/>
-      <RowDefinition Height="Auto"/>
-    </Grid.RowDefinitions>
+BODY = u"""
+  <TabControl>
 
-    <TextBlock Grid.Row="0" Text="AUTOMAÇÃO DE ACABAMENTOS POR KEYNOTE" FontSize="16"
-               FontWeight="SemiBold" Foreground="#65E3FF"/>
-    <TextBlock Grid.Row="1" Style="{StaticResource Hint}" Margin="0,4,0,12"
-               Text="Lê automaticamente as Keynotes dos elementos ao redor de cada ambiente e grava nos parâmetros de acabamento do ambiente."/>
+    <!-- ============ TAB 1: update ============ -->
+    <TabItem Header="Atualizar ambientes">
+      <Grid>
+        <Grid.RowDefinitions>
+          <RowDefinition Height="Auto"/>
+          <RowDefinition Height="Auto"/>
+          <RowDefinition Height="*"/>
+        </Grid.RowDefinitions>
 
-    <TabControl Grid.Row="2" Background="Transparent" BorderBrush="#23324F" BorderThickness="1" Padding="14">
-
-      <!-- ============ TAB 1: update ============ -->
-      <TabItem Header="Atualizar ambientes">
-        <Grid>
-          <Grid.RowDefinitions>
-            <RowDefinition Height="Auto"/>
-            <RowDefinition Height="Auto"/>
-            <RowDefinition Height="*"/>
-          </Grid.RowDefinitions>
-
-          <Grid Grid.Row="0" Margin="0,0,0,10">
-            <Grid.ColumnDefinitions>
-              <ColumnDefinition Width="*"/>
-              <ColumnDefinition Width="22"/>
-              <ColumnDefinition Width="*"/>
-            </Grid.ColumnDefinitions>
-            <StackPanel Grid.Column="0">
-              <TextBlock Style="{StaticResource Label}" Text="Margem de busca do forro acima do ambiente (m)"/>
-              <StackPanel Orientation="Horizontal">
-                <TextBox x:Name="tb_margin" Width="80" ToolTipService.ShowDuration="20000"
-                         ToolTip="Até quantos metros acima do topo do ambiente a ferramenta procura o forro. Aumente se o forro estiver acima do Limit Offset do ambiente. Depois de alterar, clique em Analisar Modelo de novo."/>
-              </StackPanel>
+        <Grid Grid.Row="0">
+          <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="*"/>
+            <ColumnDefinition Width="24"/>
+            <ColumnDefinition Width="1.4*"/>
+          </Grid.ColumnDefinitions>
+          <HeaderedContentControl Grid.Column="0" Header="MARGEM DE BUSCA DO FORRO" Style="{StaticResource oca.Section}">
+            <StackPanel Orientation="Horizontal">
+              <TextBox x:Name="tb_margin" Width="72" ToolTipService.ShowDuration="20000"
+                       ToolTip="Até quantos metros acima do topo do ambiente a ferramenta procura o forro. Aumente se o forro estiver acima do Limit Offset do ambiente. Depois de alterar, clique em Analisar Modelo de novo."/>
+              <TextBlock Text="m acima do ambiente" Style="{StaticResource oca.Hint}" VerticalAlignment="Center" Margin="8,0,0,0"/>
             </StackPanel>
-
-            <StackPanel Grid.Column="2">
-              <TextBlock Style="{StaticResource Label}" Text="Parâmetros do ambiente"/>
-              <TextBlock x:Name="tb_params" Style="{StaticResource Hint}" LineHeight="18"/>
-            </StackPanel>
-          </Grid>
-
-          <DockPanel Grid.Row="1" Margin="0,4,0,8">
-            <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Bottom" Margin="12,0,0,0">
-              <Button x:Name="btn_expand" Content="Expandir todos" MinWidth="0" Height="26" Margin="0,0,6,0" FontSize="11"
-                      IsEnabled="False" ToolTip="Mostra os campos de todos os ambientes."/>
-              <Button x:Name="btn_collapse" Content="Recolher todos" MinWidth="0" Height="26" Margin="0" FontSize="11"
-                      IsEnabled="False" ToolTip="Mostra só uma linha por ambiente."/>
-            </StackPanel>
-            <TextBlock x:Name="tb_status" TextWrapping="Wrap" FontSize="12" Foreground="#3DDCB4" VerticalAlignment="Bottom"
-                       Text="Clique em Analisar Modelo para começar. Nada é gravado até você clicar em Atualizar Ambientes."/>
-          </DockPanel>
-
-          <DataGrid Grid.Row="2" x:Name="grid" AutoGenerateColumns="False" CanUserAddRows="False"
-                    CanUserDeleteRows="False" HeadersVisibility="Column" GridLinesVisibility="Horizontal"
-                    HorizontalGridLinesBrush="#1B2740" Background="#0B1120" BorderBrush="#23324F"
-                    RowHeaderWidth="0" SelectionMode="Extended" ToolTipService.ShowDuration="20000"
-                    ToolTip="Pré-visualização agrupada por ambiente: clique no ambiente para ver o que muda nele. Todas as linhas vêm marcadas; desmarque uma linha para não gravar aquele valor. Âmbar = substitui um valor existente; rosa = limpa um campo que sobrou; lilás = troca o tipo do identificador do ambiente.">
-            <DataGrid.Columns>
-              <DataGridTemplateColumn Header="Aplicar" Width="60" MinWidth="60">
-                <DataGridTemplateColumn.CellTemplate>
-                  <DataTemplate>
-                    <CheckBox HorizontalAlignment="Center" VerticalAlignment="Center"
-                              IsChecked="{Binding Apply, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
-                              IsEnabled="{Binding Editable}"/>
-                  </DataTemplate>
-                </DataGridTemplateColumn.CellTemplate>
-              </DataGridTemplateColumn>
-              <DataGridTextColumn Header="Ambiente" Binding="{Binding Room}" IsReadOnly="True" Width="75" MinWidth="70"/>
-              <DataGridTextColumn Header="Nome" Binding="{Binding Name}" IsReadOnly="True" Width="140" MinWidth="90"/>
-              <DataGridTextColumn Header="Pavimento" Binding="{Binding Level}" IsReadOnly="True" Width="100" MinWidth="80"/>
-              <DataGridTextColumn Header="Parâmetro" Binding="{Binding Parameter}" IsReadOnly="True" Width="190" MinWidth="160"/>
-              <DataGridTextColumn Header="Valor atual" Binding="{Binding Current}" IsReadOnly="True" Width="*" MinWidth="80"/>
-              <DataGridTextColumn Header="Novo valor" Binding="{Binding New}" IsReadOnly="True" Width="*" MinWidth="80"/>
-              <DataGridTextColumn Header="Alteração" Binding="{Binding Change}" IsReadOnly="True" Width="95" MinWidth="85"/>
-              <DataGridTextColumn Header="Observação" Binding="{Binding Note}" IsReadOnly="True" Width="170" MinWidth="110"/>
-            </DataGrid.Columns>
-          </DataGrid>
+          </HeaderedContentControl>
+          <HeaderedContentControl Grid.Column="2" Header="PARÂMETROS DO AMBIENTE" Style="{StaticResource oca.Section}">
+            <TextBlock x:Name="tb_params" Style="{StaticResource oca.Hint}" LineHeight="17"/>
+          </HeaderedContentControl>
         </Grid>
-      </TabItem>
 
-      <!-- ============ TAB 2: help ============ -->
-      <TabItem Header="Como funciona">
-        <ScrollViewer VerticalScrollBarVisibility="Auto">
-          <StackPanel Margin="4,0,12,12" MaxWidth="900" HorizontalAlignment="Left">
-            <TextBlock Style="{StaticResource HelpTitle}" Margin="0,0,0,6" Text="O QUE A FERRAMENTA FAZ"/>
-            <TextBlock Style="{StaticResource HelpBody}" Text="Para cada ambiente do modelo, encontra os elementos construtivos ao redor (paredes, pisos, forros, rodapés e molduras), lê a Keynote de cada um e grava os códigos nos quatro parâmetros de acabamento do ambiente. A Keynote dos elementos só é lida, nunca alterada."/>
-
-            <TextBlock Style="{StaticResource HelpTitle}" Text="REGRA DE CLASSIFICAÇÃO (PELO PREFIXO DA KEYNOTE)"/>
-            <TextBlock x:Name="tb_help_rules" Style="{StaticResource HelpBody}"/>
-
-            <TextBlock Style="{StaticResource HelpTitle}" Text="ONDE OS ELEMENTOS SÃO PROCURADOS"/>
-            <TextBlock x:Name="tb_help_search" Style="{StaticResource HelpBody}"/>
-
-            <TextBlock Style="{StaticResource HelpTitle}" Text="LINHAS COM &quot;-&quot; E IDENTIFICADOR DO AMBIENTE"/>
-            <TextBlock Style="{StaticResource HelpBody}" Text="• Cada número de campo é uma linha do identificador: linha 01 = Parede 01, Piso 01, Teto 01, Rodapé 01, Rodateto 01 e Soleira 01; linha 02 = os campos 02; e assim por diante.&#10;• Se pelo menos uma linha tiver valor, os campos vazios das linhas preenchidas recebem &quot;-&quot;. Linhas sem nenhum valor continuam vazias. Ambiente sem nenhum acabamento: nada muda.&#10;• O número de linhas com valor escolhe o tipo do identificador: 1 linha = REVESTIMENTOS 01, 2 linhas = REVESTIMENTOS 02 ... até 05. Vale para nomes como &quot;REVESTIMENTOS 3X&quot; ou com outros textos antes e depois.&#10;• Só os identificadores já colocados no projeto são trocados, sempre dentro da mesma família. Nada é criado.&#10;• Se o tipo necessário não existir na família, a ferramenta avisa qual tipo está faltando e não troca aquele identificador."/>
-
-            <TextBlock Style="{StaticResource HelpTitle}" Text="EXCEL"/>
-            <TextBlock Style="{StaticResource HelpBody}" Text="• No relatório HTML, Baixar Excel gera a aba Ambientes (Número, Nome do ambiente, Pavimento, Parede, Piso, Rodapé, Soleira, Teto e Rodateto). Só os ambientes visíveis na tabela entram.&#10;• Cada célula de acabamento traz os valores separados por &quot; / &quot; (ex.: RE01 / RE02), na ordem dos campos 01, 02, 03...&#10;• A planilha é só para consulta: ela não é lida de volta pelo Revit."/>
-
-            <TextBlock Style="{StaticResource HelpTitle}" Text="PROTEÇÕES"/>
-            <TextBlock Style="{StaticResource HelpBody}" Text="• Piso, rodapé e parede do pavimento de cima ou de baixo não entram no ambiente.&#10;• Nada é gravado até você clicar em Atualizar Ambientes.&#10;• Valores diferentes dos atuais aparecem em âmbar na pré-visualização e na confirmação antes de gravar; desmarque a linha para manter o valor atual.&#10;• Cada acabamento é regravado por inteiro: se sobrar um campo com valor antigo (ex.: Parede 04 quando agora só há 3 revestimentos), ele aparece em rosa como Limpar.&#10;• Se houver mais Keynotes do que campos, as que sobrarem aparecem como aviso - nada é descartado sem aviso.&#10;• Se nada for encontrado para um parâmetro, o valor atual é mantido - nunca é apagado.&#10;• Tudo é gravado em uma única transação: Ctrl+Z no Revit desfaz a atualização inteira.&#10;• Ambientes em uso por outro usuário (workset) aparecem bloqueados na pré-visualização."/>
-
-            <TextBlock Style="{StaticResource HelpTitle}" Text="PASSO A PASSO"/>
-            <TextBlock Style="{StaticResource HelpBody}" Text="1. Analisar Modelo - lê todos os ambientes e já mostra a pré-visualização: valor atual e novo valor de cada parâmetro. Não altera nada.&#10;2. Confira a lista. Todas as linhas vêm marcadas; desmarque as que não quer gravar. Linhas em âmbar substituem um valor existente.&#10;3. Atualizar Ambientes - grava as linhas marcadas.&#10;4. Abrir Relatório HTML - resumo, filtros e o detalhe de onde veio cada Keynote."/>
-
-            <TextBlock Style="{StaticResource HelpTitle}" Text="QUANDO ALGO NÃO APARECE"/>
-            <TextBlock Style="{StaticResource HelpBody}" Text="• Forro não encontrado: aumente a margem de busca do forro ou o Limit Offset do ambiente e analise de novo.&#10;• Elemento sem Keynote: aparece no relatório como &quot;Keynote ausente&quot;.&#10;• Elemento com Keynote de acabamento fora de qualquer ambiente: seção &quot;Não atribuídos a nenhum ambiente&quot; no relatório.&#10;• Prefixo que não combina com a categoria (ex.: RE01 num piso): aparece como inconsistência, mas o valor é gravado pela regra do prefixo.&#10;• No relatório, clique num ambiente para ver cada elemento encontrado, a Keynote e o motivo de cada valor ignorado.&#10;• Shift + clique no botão do comando abre também o log passo a passo do pyRevit (no clique normal ele só aparece se houver erro)."/>
+        <DockPanel Grid.Row="1" Margin="0,0,0,10">
+          <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Center" Margin="12,0,0,0">
+            <Button x:Name="btn_expand" Content="Expandir todos" MinWidth="0" Margin="0,0,6,0"
+                    IsEnabled="False" ToolTip="Mostra os campos de todos os ambientes."/>
+            <Button x:Name="btn_collapse" Content="Recolher todos" MinWidth="0"
+                    IsEnabled="False" ToolTip="Mostra só uma linha por ambiente."/>
           </StackPanel>
-        </ScrollViewer>
-      </TabItem>
-    </TabControl>
+          <Border Style="{StaticResource oca.Msg.Info}" Margin="0">
+            <TextBlock x:Name="tb_status" Style="{StaticResource oca.MsgText}"
+                       Text="Clique em Analisar Modelo para começar. Nada é gravado até você clicar em Atualizar Ambientes."/>
+          </Border>
+        </DockPanel>
 
-    <StackPanel Grid.Row="3" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,14,0,0">
-      <Button x:Name="btn_scan" Content="Analisar Modelo" ToolTipService.ShowDuration="20000"
-              ToolTip="Lê o modelo, analisa todos os ambientes e mostra a pré-visualização com o valor atual e o novo valor de cada parâmetro. Não altera nada."/>
-      <Button x:Name="btn_update" Content="Atualizar Ambientes" IsEnabled="False" Foreground="#3DDCB4" BorderBrush="#2F7F6B"
-              ToolTipService.ShowDuration="20000"
-              ToolTip="Grava as linhas marcadas na pré-visualização, em uma única transação (Ctrl+Z desfaz)."/>
-      <Button x:Name="btn_report" Content="Abrir Relatório HTML" IsEnabled="False" ToolTipService.ShowDuration="20000"
-              ToolTip="Abre o relatório com todos os ambientes, filtros e o detalhe de onde veio cada Keynote."/>
-      <Button x:Name="btn_cancel" Content="Cancelar" Margin="0" MinWidth="110"
-              ToolTip="Fecha a janela sem gravar nada."/>
-    </StackPanel>
-  </Grid>
-</Window>
-"""
+        <DataGrid Grid.Row="2" x:Name="grid" AutoGenerateColumns="False" CanUserAddRows="False"
+                  CanUserDeleteRows="False" SelectionMode="Extended" ToolTipService.ShowDuration="20000"
+                  ToolTip="Pré-visualização agrupada por ambiente: clique no ambiente para ver o que muda nele. Todas as linhas vêm marcadas; desmarque uma linha para não gravar aquele valor. Âmbar = substitui um valor existente; rosa = limpa um campo que sobrou; lilás = troca o tipo do identificador do ambiente.">
+          <DataGrid.RowStyle>
+            <Style TargetType="DataGridRow" BasedOn="{StaticResource {x:Type DataGridRow}}">
+              <Style.Triggers>
+                <DataTrigger Binding="{Binding Kind}" Value="Overwrite">
+                  <Setter Property="Foreground" Value="{StaticResource oca.Warn}"/>
+                </DataTrigger>
+                <DataTrigger Binding="{Binding Kind}" Value="Clear">
+                  <Setter Property="Foreground" Value="{StaticResource oca.Err}"/>
+                </DataTrigger>
+                <DataTrigger Binding="{Binding Kind}" Value="Tag">
+                  <Setter Property="Foreground" Value="{StaticResource oca.Violet}"/>
+                </DataTrigger>
+                <DataTrigger Binding="{Binding Kind}" Value="TagMissing">
+                  <Setter Property="Foreground" Value="{StaticResource oca.Err}"/>
+                </DataTrigger>
+                <DataTrigger Binding="{Binding Editable}" Value="False">
+                  <Setter Property="Foreground" Value="{StaticResource oca.Ink2}"/>
+                </DataTrigger>
+              </Style.Triggers>
+            </Style>
+          </DataGrid.RowStyle>
+          <DataGrid.Columns>
+            <DataGridTemplateColumn Header="Aplicar" Width="60" MinWidth="60">
+              <DataGridTemplateColumn.CellTemplate>
+                <DataTemplate>
+                  <CheckBox HorizontalAlignment="Center" VerticalAlignment="Center" Margin="0"
+                            IsChecked="{Binding Apply, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                            IsEnabled="{Binding Editable}"/>
+                </DataTemplate>
+              </DataGridTemplateColumn.CellTemplate>
+            </DataGridTemplateColumn>
+            <DataGridTextColumn Header="Ambiente" Binding="{Binding Room}" IsReadOnly="True" Width="75" MinWidth="70"/>
+            <DataGridTextColumn Header="Nome" Binding="{Binding Name}" IsReadOnly="True" Width="140" MinWidth="90"/>
+            <DataGridTextColumn Header="Pavimento" Binding="{Binding Level}" IsReadOnly="True" Width="100" MinWidth="80"/>
+            <DataGridTextColumn Header="Parâmetro" Binding="{Binding Parameter}" IsReadOnly="True" Width="190" MinWidth="160"/>
+            <DataGridTextColumn Header="Valor atual" Binding="{Binding Current}" IsReadOnly="True" Width="*" MinWidth="80"
+                                FontFamily="Consolas"/>
+            <DataGridTextColumn Header="Novo valor" Binding="{Binding New}" IsReadOnly="True" Width="*" MinWidth="80"
+                                FontFamily="Consolas"/>
+            <DataGridTemplateColumn Header="Alteração" Width="95" MinWidth="85" IsReadOnly="True">
+              <DataGridTemplateColumn.CellTemplate>
+                <DataTemplate>
+                  <Border x:Name="tag" CornerRadius="9" Padding="7,1" HorizontalAlignment="Left"
+                          BorderThickness="1" BorderBrush="Transparent" Background="{StaticResource oca.AccentSoft}">
+                    <TextBlock x:Name="tagtx" Text="{Binding Change}" FontSize="11" FontWeight="SemiBold"
+                               Foreground="{StaticResource oca.Accent}"/>
+                  </Border>
+                  <DataTemplate.Triggers>
+                    <DataTrigger Binding="{Binding Kind}" Value="Overwrite">
+                      <Setter TargetName="tag" Property="Background" Value="{StaticResource oca.WarnSoft}"/>
+                      <Setter TargetName="tagtx" Property="Foreground" Value="{StaticResource oca.Warn}"/>
+                    </DataTrigger>
+                    <DataTrigger Binding="{Binding Kind}" Value="Clear">
+                      <Setter TargetName="tag" Property="Background" Value="{StaticResource oca.ErrSoft}"/>
+                      <Setter TargetName="tagtx" Property="Foreground" Value="{StaticResource oca.Err}"/>
+                    </DataTrigger>
+                    <DataTrigger Binding="{Binding Kind}" Value="Tag">
+                      <Setter TargetName="tag" Property="Background" Value="Transparent"/>
+                      <Setter TargetName="tag" Property="BorderBrush" Value="{StaticResource oca.Violet}"/>
+                      <Setter TargetName="tagtx" Property="Foreground" Value="{StaticResource oca.Violet}"/>
+                    </DataTrigger>
+                    <DataTrigger Binding="{Binding Kind}" Value="TagMissing">
+                      <Setter TargetName="tag" Property="Background" Value="{StaticResource oca.ErrSoft}"/>
+                      <Setter TargetName="tagtx" Property="Foreground" Value="{StaticResource oca.Err}"/>
+                    </DataTrigger>
+                    <DataTrigger Binding="{Binding Editable}" Value="False">
+                      <Setter TargetName="tag" Property="Background" Value="Transparent"/>
+                      <Setter TargetName="tag" Property="BorderBrush" Value="{StaticResource oca.Line}"/>
+                      <Setter TargetName="tagtx" Property="Foreground" Value="{StaticResource oca.Ink2}"/>
+                    </DataTrigger>
+                  </DataTemplate.Triggers>
+                </DataTemplate>
+              </DataGridTemplateColumn.CellTemplate>
+            </DataGridTemplateColumn>
+            <DataGridTextColumn Header="Observação" Binding="{Binding Note}" IsReadOnly="True" Width="170" MinWidth="110"/>
+          </DataGrid.Columns>
+        </DataGrid>
+      </Grid>
+    </TabItem>
+
+    <!-- ============ TAB 2: help ============ -->
+    <TabItem Header="Como funciona">
+      <ScrollViewer VerticalScrollBarVisibility="Auto">
+        <StackPanel Margin="0,0,12,12" MaxWidth="900" HorizontalAlignment="Left">
+          <StackPanel.Resources>
+            <Style TargetType="TextBlock">
+              <Setter Property="Foreground" Value="{StaticResource oca.Ink}"/>
+              <Setter Property="FontSize" Value="12"/>
+              <Setter Property="TextWrapping" Value="Wrap"/>
+              <Setter Property="LineHeight" Value="19"/>
+            </Style>
+          </StackPanel.Resources>
+          <HeaderedContentControl Header="O QUE A FERRAMENTA FAZ" Style="{StaticResource oca.Section}">
+            <TextBlock Text="Para cada ambiente do modelo, encontra os elementos construtivos ao redor (paredes, pisos, forros, rodapés e molduras), lê a Keynote de cada um e grava os códigos nos quatro parâmetros de acabamento do ambiente. A Keynote dos elementos só é lida, nunca alterada."/>
+          </HeaderedContentControl>
+          <HeaderedContentControl Header="REGRA DE CLASSIFICAÇÃO (PELO PREFIXO DA KEYNOTE)" Style="{StaticResource oca.Section}">
+            <TextBlock x:Name="tb_help_rules"/>
+          </HeaderedContentControl>
+          <HeaderedContentControl Header="ONDE OS ELEMENTOS SÃO PROCURADOS" Style="{StaticResource oca.Section}">
+            <TextBlock x:Name="tb_help_search"/>
+          </HeaderedContentControl>
+          <HeaderedContentControl Header="LINHAS COM &quot;-&quot; E IDENTIFICADOR DO AMBIENTE" Style="{StaticResource oca.Section}">
+            <TextBlock Text="• Cada número de campo é uma linha do identificador: linha 01 = Parede 01, Piso 01, Teto 01, Rodapé 01, Rodateto 01 e Soleira 01; linha 02 = os campos 02; e assim por diante.&#10;• Se pelo menos uma linha tiver valor, os campos vazios das linhas preenchidas recebem &quot;-&quot;. Linhas sem nenhum valor continuam vazias. Ambiente sem nenhum acabamento: nada muda.&#10;• O número de linhas com valor escolhe o tipo do identificador: 1 linha = REVESTIMENTOS 01, 2 linhas = REVESTIMENTOS 02 ... até 05. Vale para nomes como &quot;REVESTIMENTOS 3X&quot; ou com outros textos antes e depois.&#10;• Só os identificadores já colocados no projeto são trocados, sempre dentro da mesma família. Nada é criado.&#10;• Se o tipo necessário não existir na família, a ferramenta avisa qual tipo está faltando e não troca aquele identificador."/>
+          </HeaderedContentControl>
+          <HeaderedContentControl Header="EXCEL" Style="{StaticResource oca.Section}">
+            <TextBlock Text="• No relatório HTML, Baixar Excel gera a aba Ambientes (Número, Nome do ambiente, Pavimento, Parede, Piso, Rodapé, Soleira, Teto e Rodateto). Só os ambientes visíveis na tabela entram.&#10;• Cada célula de acabamento traz os valores separados por &quot; / &quot; (ex.: RE01 / RE02), na ordem dos campos 01, 02, 03...&#10;• A planilha é só para consulta: ela não é lida de volta pelo Revit."/>
+          </HeaderedContentControl>
+          <HeaderedContentControl Header="PROTEÇÕES" Style="{StaticResource oca.Section}">
+            <TextBlock Text="• Piso, rodapé e parede do pavimento de cima ou de baixo não entram no ambiente.&#10;• Nada é gravado até você clicar em Atualizar Ambientes.&#10;• Valores diferentes dos atuais aparecem em âmbar na pré-visualização e na confirmação antes de gravar; desmarque a linha para manter o valor atual.&#10;• Cada acabamento é regravado por inteiro: se sobrar um campo com valor antigo (ex.: Parede 04 quando agora só há 3 revestimentos), ele aparece em rosa como Limpar.&#10;• Se houver mais Keynotes do que campos, as que sobrarem aparecem como aviso - nada é descartado sem aviso.&#10;• Se nada for encontrado para um parâmetro, o valor atual é mantido - nunca é apagado.&#10;• Tudo é gravado em uma única transação: Ctrl+Z no Revit desfaz a atualização inteira.&#10;• Ambientes em uso por outro usuário (workset) aparecem bloqueados na pré-visualização."/>
+          </HeaderedContentControl>
+          <HeaderedContentControl Header="PASSO A PASSO" Style="{StaticResource oca.Section}">
+            <TextBlock Text="1. Analisar Modelo - lê todos os ambientes e já mostra a pré-visualização: valor atual e novo valor de cada parâmetro. Não altera nada.&#10;2. Confira a lista. Todas as linhas vêm marcadas; desmarque as que não quer gravar. Linhas em âmbar substituem um valor existente.&#10;3. Atualizar Ambientes - grava as linhas marcadas.&#10;4. Abrir Relatório HTML - resumo, filtros e o detalhe de onde veio cada Keynote."/>
+          </HeaderedContentControl>
+          <HeaderedContentControl Header="QUANDO ALGO NÃO APARECE" Style="{StaticResource oca.Section}">
+            <TextBlock Text="• Forro não encontrado: aumente a margem de busca do forro ou o Limit Offset do ambiente e analise de novo.&#10;• Elemento sem Keynote: aparece no relatório como &quot;Keynote ausente&quot;.&#10;• Elemento com Keynote de acabamento fora de qualquer ambiente: seção &quot;Não atribuídos a nenhum ambiente&quot; no relatório.&#10;• Prefixo que não combina com a categoria (ex.: RE01 num piso): aparece como inconsistência, mas o valor é gravado pela regra do prefixo.&#10;• No relatório, clique num ambiente para ver cada elemento encontrado, a Keynote e o motivo de cada valor ignorado.&#10;• Shift + clique no botão do comando abre também o log passo a passo do pyRevit (no clique normal ele só aparece se houver erro)."/>
+          </HeaderedContentControl>
+        </StackPanel>
+      </ScrollViewer>
+    </TabItem>
+  </TabControl>"""
+
+# Antes da análise, "Analisar Modelo" é a ação principal; quando "Atualizar
+# Ambientes" fica habilitado, a ênfase passa para ele (só XAML, sem código).
+FOOTER_LEFT = u"""
+  <Button x:Name="btn_scan" Content="Analisar Modelo" ToolTipService.ShowDuration="20000"
+          ToolTip="Lê o modelo, analisa todos os ambientes e mostra a pré-visualização com o valor atual e o novo valor de cada parâmetro. Não altera nada.">
+    <Button.Style>
+      <Style TargetType="Button" BasedOn="{StaticResource oca.Primary}">
+        <Style.Triggers>
+          <DataTrigger Binding="{Binding IsEnabled, ElementName=btn_update}" Value="True">
+            <Setter Property="Background" Value="{StaticResource oca.Surface}"/>
+            <Setter Property="BorderBrush" Value="{StaticResource oca.FieldLine}"/>
+            <Setter Property="Foreground" Value="{StaticResource oca.Ink}"/>
+            <Setter Property="FontWeight" Value="Normal"/>
+          </DataTrigger>
+        </Style.Triggers>
+      </Style>
+    </Button.Style>
+  </Button>
+  <Button x:Name="btn_report" Content="Abrir Relatório HTML" IsEnabled="False" Margin="8,0,0,0"
+          ToolTipService.ShowDuration="20000"
+          ToolTip="Abre o relatório com todos os ambientes, filtros e o detalhe de onde veio cada Keynote."/>"""
+
+FOOTER = u"""
+  <Button x:Name="btn_update" Content="Atualizar Ambientes" IsEnabled="False" Style="{StaticResource oca.Primary}"
+          ToolTipService.ShowDuration="20000"
+          ToolTip="Grava as linhas marcadas na pré-visualização, em uma única transação (Ctrl+Z desfaz)."/>
+  <Button x:Name="btn_cancel" Content="Cancelar" Margin="8,0,0,0" ToolTip="Fecha a janela sem gravar nada."/>"""
+
+XAML = build_xaml(title=__title__, subtitle=__doc__, body=BODY, footer_right=FOOTER,
+                  footer_left=FOOTER_LEFT, resources=RESOURCES, size="L", height=800)
 
 
 def group_header(rec, rows):
@@ -2342,8 +2284,8 @@ class RoomFinishWindow(forms.WPFWindow):
     def on_scan(self, sender, args):
         margin = parse_m(self.tb_margin.Text)
         if margin is None:
-            forms.alert(u"Margem de busca do forro inválida: '{}'.\n\nUse um valor em metros entre 0 e 10 "
-                        u"(ex.: 1,00).".format(to_unicode(self.tb_margin.Text)))
+            forms.alert(u"Margem de busca do forro inválida: '{}'.".format(to_unicode(self.tb_margin.Text)),
+                        sub_msg=u"Use um valor em metros entre 0 e 10 (ex.: 1,00).", title=ALERT_TITLE)
             return
         self.search_above_m = margin
         self.mode = KEYNOTE_MODE
@@ -2353,7 +2295,7 @@ class RoomFinishWindow(forms.WPFWindow):
             scanner = Scanner(doc, self.mode, margin)
         except Exception as ex:
             log_error(u"**ERRO:** não foi possível iniciar a análise: `{}`".format(to_unicode(ex)))
-            forms.alert(u"Não foi possível iniciar a análise:\n\n{}".format(to_unicode(ex)))
+            forms.alert(u"Não foi possível iniciar a análise.", sub_msg=to_unicode(ex), title=ALERT_TITLE)
             return
         self.keynote_texts = scanner.keynote_texts
         records = []
@@ -2433,9 +2375,10 @@ class RoomFinishWindow(forms.WPFWindow):
             lines.append(u"{}\n   Necessário para {} ambiente(s): {}{}".format(
                 msg, len(uniq), u", ".join(uniq[:15]), u"..." if len(uniq) > 15 else u""))
             log(u"**ERRO - identificador:** {} Ambientes: {}".format(msg, u", ".join(uniq)))
-        forms.alert(u"Tipo de identificador não encontrado no projeto:\n\n" + u"\n\n".join(lines) +
+        forms.alert(u"Tipo de identificador não encontrado no projeto.",
+                    sub_msg=u"\n\n".join(lines) +
                     u"\n\nOs acabamentos desses ambientes podem ser gravados normalmente; apenas o "
-                    u"identificador deles não será trocado.")
+                    u"identificador deles não será trocado.", title=ALERT_TITLE)
 
     def _log_keynotes(self):
         issues = [(r, iss) for r in self.records for iss in r.get("issues", [])]
@@ -2660,20 +2603,23 @@ class RoomFinishWindow(forms.WPFWindow):
                 sl = rec["changes"][key]["slots"][slot]
                 todo.append((rec, key, slot, sl["new"], sl["kind"]))
         if not todo and not tag_todo:
-            forms.alert(u"Nenhuma linha está marcada na pré-visualização.")
+            forms.alert(u"Nenhuma linha está marcada na pré-visualização.",
+                        sub_msg=u"Marque na coluna Aplicar as linhas que devem ser gravadas.", title=ALERT_TITLE)
             return
         n_rooms = len(set([eid_int(r["room"].Id) for r, _, _, _, _ in todo] +
                           [eid_int(r["room"].Id) for r, _ in tag_todo]))
         n_ow = len([1 for _, _, _, _, k in todo if k == "Overwrite"])
         n_clear = len([1 for _, _, _, _, k in todo if k == "Clear"])
         msg = u"Gravar {} campo(s) em {} ambiente(s)?".format(len(todo), n_rooms)
+        details = []
         if n_ow:
-            msg += u"\n\n{} deles SUBSTITUEM um valor existente diferente.".format(n_ow)
+            details.append(u"{} deles SUBSTITUEM um valor existente diferente.".format(n_ow))
         if n_clear:
-            msg += u"\n{} campo(s) com valor antigo serão LIMPOS.".format(n_clear)
+            details.append(u"{} campo(s) com valor antigo serão LIMPOS.".format(n_clear))
         if tag_todo:
-            msg += u"\n\n{} identificador(es) de ambiente terão o tipo trocado.".format(len(tag_todo))
-        if not forms.alert(msg, yes=True, no=True):
+            details.append(u"{} identificador(es) de ambiente terão o tipo trocado.".format(len(tag_todo)))
+        details.append(u"Tudo é gravado em uma única transação: Ctrl+Z no Revit desfaz a atualização inteira.")
+        if not forms.alert(msg, sub_msg=u"\n".join(details), title=ALERT_TITLE, yes=True, no=True):
             return
 
         written, errors, tags_done = [], [], []
@@ -2719,7 +2665,8 @@ class RoomFinishWindow(forms.WPFWindow):
             if tx.HasStarted() and not tx.HasEnded():
                 tx.RollBack()
             log_error(u"**ERRO:** atualização desfeita - nada foi gravado. `{}`".format(to_unicode(ex)))
-            forms.alert(u"A atualização falhou e foi desfeita. Nada foi gravado.\n\n{}".format(to_unicode(ex)))
+            forms.alert(u"A atualização falhou e foi desfeita. Nada foi gravado.", sub_msg=to_unicode(ex),
+                        title=ALERT_TITLE)
             return
         finally:
             tx.Dispose()
@@ -2749,7 +2696,8 @@ u"com tipo trocado, {} erro(s).".format(
         if not os.path.exists(REPORT_PATH):
             self._write_report()
         if not open_in_browser(REPORT_PATH):
-            forms.alert(u"O relatório foi salvo, mas não abriu automaticamente:\n\n{}".format(REPORT_PATH))
+            forms.alert(u"O relatório foi salvo, mas não abriu automaticamente.",
+                        sub_msg=u"Abra o arquivo manualmente:\n{}".format(REPORT_PATH), title=ALERT_TITLE)
 
     def on_cancel(self, sender, args):
         self.Close()
@@ -2771,17 +2719,18 @@ def collect_rooms():
 def main():
     log(u"**[1/6] Script iniciado.** Documento: `{}`".format(to_unicode(doc.Title)))
     if doc.IsFamilyDocument:
-        forms.alert(u"Abra um projeto, não uma família.", exitscript=True)
+        forms.alert(u"Abra um projeto, não uma família.", title=ALERT_TITLE, exitscript=True)
     rooms = collect_rooms()
     if not rooms:
-        forms.alert(u"Nenhum ambiente encontrado neste projeto.", exitscript=True)
+        forms.alert(u"Nenhum ambiente encontrado neste projeto.", title=ALERT_TITLE, exitscript=True)
     win = RoomFinishWindow(rooms)
     for msg in win.problems:
         log(u"**ERRO:** {}".format(msg))
     if win.problems:
-        forms.alert(u"\n".join(win.problems) +
+        forms.alert(u"Alguns parâmetros de acabamento não serão gravados.",
+                    sub_msg=u"\n".join(win.problems) +
                     u"\n\nEsses parâmetros aparecem no relatório, mas não serão gravados. "
-                    u"Nada é criado automaticamente.")
+                    u"Nada é criado automaticamente.", title=ALERT_TITLE)
     win.ShowDialog()
 
 

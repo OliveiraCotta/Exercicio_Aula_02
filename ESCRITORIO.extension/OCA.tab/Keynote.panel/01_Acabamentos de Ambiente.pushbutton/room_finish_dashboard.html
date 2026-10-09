@@ -5,34 +5,35 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Acabamentos de Ambiente</title>
 <style>
-  :root{
-    --bg:#070C16; --panel:rgba(255,255,255,.028); --line:rgba(101,227,255,.22);
-    --grid:rgba(101,227,255,.05); --ink:#D9E8F5; --dim:#7A8FA9;
-    --cy:#65E3FF; --teal:#3DDCB4; --amber:#FFB454; --mag:#FF4F9A; --violet:#9D8CFF;
+  /* cores: padrão visual OCA (lib/oca_ui/theme.py), injetadas na geração do relatório */
+  :root{ /*__OCA_TOKENS__*/
+    --bg:var(--oca-Bg); --panel:var(--oca-Surface); --line:var(--oca-Line);
+    --ink:var(--oca-Ink); --dim:var(--oca-Ink2);
+    --cy:var(--oca-Accent); --teal:var(--oca-Ok); --amber:var(--oca-Warn); --mag:var(--oca-Err); --violet:var(--oca-Violet);
   }
   *{box-sizing:border-box; margin:0; padding:0}
   body{
-    background:
-      repeating-linear-gradient(0deg, var(--grid) 0 1px, transparent 1px 48px),
-      repeating-linear-gradient(90deg, var(--grid) 0 1px, transparent 1px 48px),
-      radial-gradient(1200px 600px at 15% -10%, #0D1B33 0%, var(--bg) 55%);
-    background-color:var(--bg);
-    color:var(--ink); font-family:"Bahnschrift","Segoe UI",system-ui,sans-serif;
+    background:var(--bg);
+    color:var(--ink); font-family:"Segoe UI",system-ui,sans-serif;
     padding:36px clamp(16px,4vw,56px) 80px; min-height:100vh;
   }
   .mono{font-family:Consolas,"Cascadia Mono",monospace}
   header{display:flex; justify-content:space-between; align-items:flex-end; gap:16px; flex-wrap:wrap;
     border-bottom:1px solid var(--line); padding-bottom:18px; margin-bottom:28px}
-  .eyebrow{font-size:11px; letter-spacing:.45em; color:var(--cy); text-transform:uppercase}
+  .brand{display:flex; align-items:center; gap:18px}
+  .brand .oca-logo{height:46px; width:auto; flex:none}
+  header .stamp{flex:1 1 320px; min-width:0}
+  .oca-logo[src=""]{display:none}
+  .eyebrow{font-size:11px; letter-spacing:.12em; color:var(--cy); text-transform:uppercase}
   h1{font-size:clamp(22px,3vw,36px); font-weight:600; letter-spacing:.04em; margin-top:6px}
   h1 span{color:var(--dim); font-weight:300}
   .stamp{text-align:right; font-size:11px; color:var(--dim); letter-spacing:.12em; line-height:1.8}
   .stamp b{color:var(--teal); font-weight:600}
-  h2{font-size:12px; letter-spacing:.4em; text-transform:uppercase; color:var(--dim);
+  h2{font-size:12px; letter-spacing:.1em; text-transform:uppercase; color:var(--dim);
     margin:0 0 16px; display:flex; align-items:center; gap:12px}
   h2::after{content:""; flex:1; height:1px; background:var(--line)}
 
-  .banner{border:1px solid rgba(255,79,154,.5); background:rgba(255,79,154,.07); color:var(--mag);
+  .banner{border:1px solid color-mix(in srgb,var(--mag) 50%,transparent); background:color-mix(in srgb,var(--mag) 7%,transparent); color:var(--mag);
     border-radius:4px; padding:12px 16px; margin-bottom:22px; font-size:13px; line-height:1.7}
 
   /* stat cards - click to filter the table */
@@ -43,14 +44,14 @@
   .card::before{content:""; position:absolute; top:0; left:0; width:100%; height:2px;
     background:linear-gradient(90deg, var(--c,var(--cy)), transparent 70%)}
   .card:hover{border-color:var(--cy)}
-  .card.on{border-color:var(--c,var(--cy)); background:rgba(101,227,255,.07)}
+  .card.on{border-color:var(--c,var(--cy)); background:color-mix(in srgb,var(--cy) 7%,transparent)}
   .card .v{font-size:30px; font-weight:600; color:var(--c,var(--cy)); font-variant-numeric:tabular-nums}
-  .card .l{font-size:10px; letter-spacing:.2em; text-transform:uppercase; color:var(--dim); margin-top:6px; line-height:1.5}
+  .card .l{font-size:10px; letter-spacing:.06em; text-transform:uppercase; color:var(--dim); margin-top:6px; line-height:1.5}
 
   /* filters */
   .filters{display:grid; grid-template-columns:repeat(auto-fill,minmax(160px,1fr)); gap:10px 12px; margin-bottom:12px}
-  .f label{display:block; font-size:10px; letter-spacing:.2em; text-transform:uppercase; color:var(--dim); margin-bottom:5px}
-  .f input, .f select{width:100%; background:#0C1424; border:1px solid var(--line); border-radius:3px;
+  .f label{display:block; font-size:10px; letter-spacing:.06em; text-transform:uppercase; color:var(--dim); margin-bottom:5px}
+  .f input, .f select{width:100%; background:var(--oca-Field); border:1px solid var(--line); border-radius:3px;
     color:var(--ink); padding:7px 9px; font-size:12px; font-family:inherit; outline:none}
   .f input:focus, .f select:focus{border-color:var(--cy)}
   .f.wide{grid-column:span 2}
@@ -58,24 +59,24 @@
   .btn{background:transparent; border:1px solid var(--line); border-radius:3px; color:var(--cy);
     font-family:inherit; font-size:11px; letter-spacing:.15em; text-transform:uppercase;
     padding:8px 14px; cursor:pointer}
-  .btn:hover{border-color:var(--cy); background:rgba(101,227,255,.12)}
+  .btn:hover{border-color:var(--cy); background:color-mix(in srgb,var(--cy) 12%,transparent)}
   .count{font-size:11px; color:var(--dim); letter-spacing:.15em; margin-left:auto}
 
   /* table */
   .tablewrap{overflow-x:auto}
   table{width:100%; border-collapse:collapse; font-size:13px; min-width:900px}
-  th{font-size:10px; letter-spacing:.22em; text-transform:uppercase; color:var(--cy);
+  th{font-size:10px; letter-spacing:.06em; text-transform:uppercase; color:var(--cy);
     text-align:left; padding:10px 10px; border-bottom:1px solid var(--line);
     cursor:pointer; user-select:none; white-space:nowrap}
   th .dir{color:var(--amber)}
   td{padding:9px 10px; border-bottom:1px solid rgba(255,255,255,.05); vertical-align:top}
   tbody tr.room{cursor:pointer}
-  tbody tr.room:hover td{background:rgba(101,227,255,.05)}
-  tbody tr.room.open td{background:rgba(101,227,255,.07)}
+  tbody tr.room:hover td{background:color-mix(in srgb,var(--cy) 5%,transparent)}
+  tbody tr.room.open td{background:color-mix(in srgb,var(--cy) 7%,transparent)}
   .tag{display:inline-block; padding:2px 8px; border:1px solid var(--line); border-radius:2px;
     font-size:11px; color:var(--dim)}
   .kn{display:inline-block; margin:1px 4px 1px 0; padding:1px 7px; border-radius:2px;
-    border:1px solid rgba(101,227,255,.35); background:rgba(101,227,255,.07);
+    border:1px solid color-mix(in srgb,var(--cy) 35%,transparent); background:color-mix(in srgb,var(--cy) 7%,transparent);
     font-family:Consolas,monospace; font-size:12px; color:var(--cy)}
   .st{font-size:11px; letter-spacing:.05em}
   .st.missing{color:var(--mag)}
@@ -91,7 +92,7 @@
   /* detail row */
   tr.detail td{background:rgba(0,0,0,.25); padding:16px 18px 18px}
   .dgrid{display:grid; grid-template-columns:repeat(auto-fit,minmax(260px,1fr)); gap:16px}
-  .dbox h4{font-size:10px; letter-spacing:.3em; text-transform:uppercase; color:var(--cy); margin-bottom:8px; font-weight:600}
+  .dbox h4{font-size:10px; letter-spacing:.08em; text-transform:uppercase; color:var(--cy); margin-bottom:8px; font-weight:600}
   .dbox ul{list-style:none; font-size:12px; line-height:1.7}
   .dbox li{color:var(--ink)}
   .dbox li .id{font-family:Consolas,monospace; color:var(--dim)}
@@ -101,18 +102,21 @@
   .dbox li.note{color:var(--dim)}
   .dmsg{color:var(--mag); font-size:12px; margin-bottom:10px}
 
-  .empty{text-align:center; padding:50px 0; color:var(--dim); letter-spacing:.2em}
+  .empty{text-align:center; padding:50px 0; color:var(--dim); letter-spacing:.06em}
   .meta{margin-top:40px; font-size:11px; color:var(--dim); line-height:1.9}
   .meta b{color:var(--ink); font-weight:600}
-  footer{margin-top:40px; font-size:10px; letter-spacing:.3em; color:var(--dim);
+  footer{margin-top:40px; font-size:10px; letter-spacing:.08em; color:var(--dim);
     text-transform:uppercase; text-align:center}
 </style>
 </head>
 <body>
 <header>
-  <div>
-    <div class="eyebrow">Acabamentos dos ambientes // Automação por Keynote</div>
-    <h1 id="proj"></h1>
+  <div class="brand">
+    <img class="oca-logo" src="__OCA_LOGO__" alt="">
+    <div>
+      <div class="eyebrow">Acabamentos dos ambientes // Automação por Keynote</div>
+      <h1 id="proj"></h1>
+    </div>
   </div>
   <div class="stamp mono">GERADO EM <b id="stamp"></b><br>ORIGEM <b>REVIT · PYREVIT</b></div>
 </header>
