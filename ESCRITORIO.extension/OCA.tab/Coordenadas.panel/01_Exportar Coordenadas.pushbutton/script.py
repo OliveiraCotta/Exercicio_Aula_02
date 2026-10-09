@@ -49,6 +49,7 @@ import traceback
 from datetime import datetime
 
 from pyrevit import revit, DB, script, forms
+from oca_ui import build_xaml, alert_title
 
 import clr
 clr.AddReference("System.Data")
@@ -73,7 +74,7 @@ except NameError:                       # pragma: no cover
 
 doc = revit.doc
 BIP = DB.BuiltInParameter
-TITLE = u"Exportação de Coordenadas"
+TITLE = alert_title(__title__)          # "OCA · Exportar Coordenadas" nos alertas
 
 
 # ------------------------------------------------------------------
@@ -837,97 +838,60 @@ def build_sheets(records, units, prec, read_time, notes):
 
 
 # ------------------------------------------------------------------
-# Interface (WPF)
+# Interface (WPF - padrão visual OCA, lib/oca_ui)
 # ------------------------------------------------------------------
-XAML = u"""
-<Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
-        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="Exportação de Coordenadas" Width="1040" Height="680"
-        MinWidth="760" MinHeight="520"
-        WindowStartupLocation="CenterScreen" Background="#0E1526">
-  <Window.Resources>
-    <Style x:Key="Label" TargetType="TextBlock">
-      <Setter Property="Foreground" Value="#65E3FF"/>
-      <Setter Property="FontFamily" Value="Segoe UI"/>
-      <Setter Property="FontWeight" Value="SemiBold"/>
-      <Setter Property="Margin" Value="0,0,0,6"/>
-    </Style>
-    <Style TargetType="RadioButton">
-      <Setter Property="Foreground" Value="#D9E8F5"/>
-      <Setter Property="FontFamily" Value="Segoe UI"/>
-      <Setter Property="Margin" Value="0,2,0,2"/>
-    </Style>
-    <Style TargetType="Button">
-      <Setter Property="Height" Value="30"/>
-      <Setter Property="Padding" Value="14,0"/>
-      <Setter Property="FontFamily" Value="Segoe UI"/>
-    </Style>
-    <Style TargetType="DataGridColumnHeader">
-      <Setter Property="Background" Value="#1C2E50"/>
-      <Setter Property="Foreground" Value="#65E3FF"/>
-      <Setter Property="FontWeight" Value="SemiBold"/>
-      <Setter Property="Padding" Value="6,4"/>
-      <Setter Property="BorderBrush" Value="#24375A"/>
-      <Setter Property="BorderThickness" Value="0,0,1,1"/>
-    </Style>
-    <Style x:Key="Num" TargetType="TextBlock">
-      <Setter Property="HorizontalAlignment" Value="Right"/>
-      <Setter Property="Margin" Value="6,0"/>
-    </Style>
-    <Style x:Key="Txt" TargetType="TextBlock">
-      <Setter Property="Margin" Value="6,0"/>
-    </Style>
-  </Window.Resources>
-  <Grid Margin="16">
+BODY = u"""
+  <Grid>
+    <Grid.Resources>
+      <Style x:Key="Num" TargetType="TextBlock">
+        <Setter Property="HorizontalAlignment" Value="Right"/>
+        <Setter Property="Margin" Value="6,0"/>
+      </Style>
+      <Style x:Key="Txt" TargetType="TextBlock">
+        <Setter Property="Margin" Value="6,0"/>
+      </Style>
+    </Grid.Resources>
     <Grid.RowDefinitions>
-      <RowDefinition Height="Auto"/>
       <RowDefinition Height="Auto"/>
       <RowDefinition Height="*"/>
       <RowDefinition Height="Auto"/>
       <RowDefinition Height="130"/>
-      <RowDefinition Height="Auto"/>
     </Grid.RowDefinitions>
 
-    <TextBlock Grid.Row="0" Text="Exportação de Coordenadas" FontSize="17"
-               FontWeight="SemiBold" Foreground="#FFFFFF" Margin="0,0,0,12"/>
-
-    <WrapPanel Grid.Row="1" Margin="0,0,0,12">
-      <Border Background="#13203A" CornerRadius="4" Padding="12,8" Margin="0,0,12,0">
+    <Grid Grid.Row="0">
+      <Grid.ColumnDefinitions>
+        <ColumnDefinition Width="Auto"/>
+        <ColumnDefinition Width="32"/>
+        <ColumnDefinition Width="Auto"/>
+        <ColumnDefinition Width="32"/>
+        <ColumnDefinition Width="Auto"/>
+        <ColumnDefinition Width="*"/>
+        <ColumnDefinition Width="Auto"/>
+      </Grid.ColumnDefinitions>
+      <HeaderedContentControl Grid.Column="0" Header="PONTO DE REFERÊNCIA" Style="{StaticResource oca.Section}">
         <StackPanel>
-          <TextBlock Style="{StaticResource Label}" Text="Ponto de referência"/>
-          <RadioButton x:Name="rb_pbp" GroupName="ref" IsChecked="True"
-                       Content="Project Base Point"/>
+          <RadioButton x:Name="rb_pbp" GroupName="ref" IsChecked="True" Content="Project Base Point"/>
           <RadioButton x:Name="rb_sp" GroupName="ref" Content="Survey Point"/>
         </StackPanel>
-      </Border>
-      <Border Background="#13203A" CornerRadius="4" Padding="12,8" Margin="0,0,12,0">
+      </HeaderedContentControl>
+      <HeaderedContentControl Grid.Column="2" Header="LER MODELOS VINCULADOS" Style="{StaticResource oca.Section}">
         <StackPanel>
-          <TextBlock Style="{StaticResource Label}" Text="Ler modelos vinculados"/>
           <RadioButton x:Name="rb_links_yes" GroupName="links" Content="Sim"/>
           <RadioButton x:Name="rb_links_no" GroupName="links" IsChecked="True" Content="Não"/>
         </StackPanel>
-      </Border>
-      <Border Background="#13203A" CornerRadius="4" Padding="12,8" Margin="0,0,12,0">
-        <StackPanel>
-          <TextBlock Style="{StaticResource Label}" Text="Precisão"/>
-          <ComboBox x:Name="cb_prec" Width="140">
-            <ComboBoxItem Content="2 casas decimais"/>
-            <ComboBoxItem Content="3 casas decimais"/>
-            <ComboBoxItem Content="4 casas decimais"/>
-          </ComboBox>
-        </StackPanel>
-      </Border>
-      <StackPanel VerticalAlignment="Bottom" Margin="0,0,0,8">
-        <Button x:Name="btn_read" Content="Ler coordenadas" Width="150"/>
-      </StackPanel>
-    </WrapPanel>
+      </HeaderedContentControl>
+      <HeaderedContentControl Grid.Column="4" Header="PRECISÃO" Style="{StaticResource oca.Section}">
+        <ComboBox x:Name="cb_prec" Width="160" HorizontalAlignment="Left">
+          <ComboBoxItem Content="2 casas decimais"/>
+          <ComboBoxItem Content="3 casas decimais"/>
+          <ComboBoxItem Content="4 casas decimais"/>
+        </ComboBox>
+      </HeaderedContentControl>
+      <Button x:Name="btn_read" Grid.Column="6" Content="Ler coordenadas" VerticalAlignment="Bottom" Margin="0,0,0,14"/>
+    </Grid>
 
-    <DataGrid x:Name="grid_coords" Grid.Row="2" AutoGenerateColumns="False"
-              IsReadOnly="True" CanUserAddRows="False" HeadersVisibility="Column"
-              SelectionMode="Extended" Background="#13203A" Foreground="#E6F0FF"
-              RowBackground="#13203A" AlternatingRowBackground="#172744"
-              BorderBrush="#24375A" GridLinesVisibility="Horizontal"
-              HorizontalGridLinesBrush="#24375A" RowHeight="24">
+    <DataGrid x:Name="grid_coords" Grid.Row="1" AutoGenerateColumns="False"
+              IsReadOnly="True" CanUserAddRows="False" SelectionMode="Extended" RowHeight="24">
       <DataGrid.Columns>
         <DataGridTextColumn Header="Modelo" Binding="{Binding model}" Width="2*"
                             ElementStyle="{StaticResource Txt}"/>
@@ -936,13 +900,13 @@ XAML = u"""
         <DataGridTextColumn Header="Referência" Binding="{Binding ref}" Width="Auto"
                             ElementStyle="{StaticResource Txt}"/>
         <DataGridTextColumn Header="Norte/Sul" Binding="{Binding ns}" Width="*"
-                            ElementStyle="{StaticResource Num}"/>
+                            ElementStyle="{StaticResource Num}" FontFamily="Consolas"/>
         <DataGridTextColumn Header="Leste/Oeste" Binding="{Binding ew}" Width="*"
-                            ElementStyle="{StaticResource Num}"/>
+                            ElementStyle="{StaticResource Num}" FontFamily="Consolas"/>
         <DataGridTextColumn Header="Elevação" Binding="{Binding elev}" Width="*"
-                            ElementStyle="{StaticResource Num}"/>
+                            ElementStyle="{StaticResource Num}" FontFamily="Consolas"/>
         <DataGridTextColumn Header="Ângulo" Binding="{Binding angle}" Width="Auto"
-                            ElementStyle="{StaticResource Num}"/>
+                            ElementStyle="{StaticResource Num}" FontFamily="Consolas"/>
         <DataGridTextColumn Header="Project North" Binding="{Binding pn}" Width="Auto"
                             ElementStyle="{StaticResource Num}"/>
         <DataGridTextColumn Header="True North" Binding="{Binding tn}" Width="Auto"
@@ -952,23 +916,24 @@ XAML = u"""
       </DataGrid.Columns>
     </DataGrid>
 
-    <TextBlock x:Name="tb_status" Grid.Row="3" Foreground="#7A8FA9" Margin="0,8,0,4"
-               TextWrapping="Wrap"
-               Text="Escolha as opções e clique em 'Ler coordenadas'."/>
+    <Border Grid.Row="2" Style="{StaticResource oca.Msg.Info}" Margin="0,10,0,8"
+            Visibility="{Binding Visibility, ElementName=tb_status}">
+      <TextBlock x:Name="tb_status" Style="{StaticResource oca.MsgText}"
+                 Text="Escolha as opções e clique em 'Ler coordenadas'."/>
+    </Border>
 
-    <TextBox x:Name="tb_notes" Grid.Row="4" IsReadOnly="True" TextWrapping="Wrap"
-             VerticalScrollBarVisibility="Auto" Background="#0A1020" Foreground="#B8C9E0"
-             BorderBrush="#24375A" FontFamily="Segoe UI" FontSize="11" Padding="6"/>
+    <TextBox x:Name="tb_notes" Grid.Row="3" IsReadOnly="True" TextWrapping="Wrap" Height="Auto"
+             VerticalContentAlignment="Top" VerticalScrollBarVisibility="Auto" Padding="8,6"
+             FontSize="11" Foreground="{StaticResource oca.Ink2}"/>
+  </Grid>"""
 
-    <StackPanel Grid.Row="5" Orientation="Horizontal" HorizontalAlignment="Right"
-                Margin="0,12,0,0">
-      <Button x:Name="btn_export" Content="Exportar para Excel" Width="170"
-              Margin="0,0,10,0"/>
-      <Button x:Name="btn_close" Content="Fechar" Width="100"/>
-    </StackPanel>
-  </Grid>
-</Window>
-"""
+FOOTER = u"""
+  <Button x:Name="btn_export" Content="Exportar para Excel" Style="{StaticResource oca.Primary}"/>
+  <Button x:Name="btn_close" Content="Fechar" Margin="8,0,0,0"/>"""
+
+XAML = build_xaml(title=__title__, subtitle=__doc__, body=BODY, footer_right=FOOTER,
+                  size="L", height=680, width=1040)
+
 
 GRID_KEYS = ["model", "tipo", "ref", "ns", "ew", "elev", "angle", "pn", "tn", "obs"]
 TIPO_COLUMN_INDEX = 1
@@ -1085,7 +1050,7 @@ class CoordinatesWindow(forms.WPFWindow):
             friendly_error(u"Não foi possível gravar o arquivo Excel.\n\nSe ele estiver "
                            u"aberto no Excel, feche-o e tente novamente.", ex)
             return
-        if forms.alert(u"Arquivo exportado com sucesso:\n{}\n\nAbrir agora?".format(path),
+        if forms.alert(u"Arquivo exportado com sucesso. Abrir agora?", sub_msg=path,
                        title=TITLE, yes=True, no=True):
             try:
                 os.startfile(path)
@@ -1118,9 +1083,8 @@ def main():
         forms.alert(u"Abra um modelo do Revit antes de executar o comando.", title=TITLE)
         return
     if doc.IsFamilyDocument:
-        forms.alert(u"Este comando funciona apenas em modelos de projeto (não em "
-                    u"famílias): famílias não têm Project Base Point/Survey Point.",
-                    title=TITLE)
+        forms.alert(u"Este comando funciona apenas em modelos de projeto.",
+                    sub_msg=u"Famílias não têm Project Base Point/Survey Point.", title=TITLE)
         return
     try:
         CoordinatesWindow(doc).ShowDialog()
