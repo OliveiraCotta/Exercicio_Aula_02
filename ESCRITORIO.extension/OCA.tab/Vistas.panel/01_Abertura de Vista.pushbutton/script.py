@@ -49,8 +49,11 @@ import re
 import math
 
 from pyrevit import revit, DB, script, forms
+from oca_ui import build_xaml, alert_title
 from Autodesk.Revit.DB.Architecture import Room
 from Autodesk.Revit.UI.Selection import ISelectionFilter, ObjectType
+
+ALERT_TITLE = alert_title(__title__)
 
 doc = revit.doc
 uidoc = revit.uidoc
@@ -1098,195 +1101,172 @@ def active_view_text(callout_items):
 FOLDER_BLOCK = u"""
             <StackPanel x:Name="p_box">
               <RadioButton x:Name="p_f_exist" GroupName="p_folder" Content="Pasta existente"/>
-              <ComboBox x:Name="p_list" Margin="20,4,0,0"/>
-              <RadioButton x:Name="p_f_new" GroupName="p_folder" Content="Nova pasta"
-                           Margin="0,8,0,0"/>
-              <TextBox x:Name="p_new" Margin="20,4,0,0"
+              <ComboBox x:Name="p_list" Margin="22,0,0,8"/>
+              <RadioButton x:Name="p_f_new" GroupName="p_folder" Content="Nova pasta"/>
+              <TextBox x:Name="p_new" Margin="22,0,0,8"
                        ToolTip="Ex.: D003_DETALHAMENTO - o texto antes do 1º '_' vira o prefixo do View Name"/>
               <RadioButton x:Name="p_f_none" GroupName="p_folder"
-                           Content="Não definir pasta (View Name sem prefixo)" Margin="0,8,0,0"/>
+                           Content="Não definir pasta (View Name sem prefixo)"/>
             </StackPanel>
-            <TextBlock x:Name="p_lock" TextWrapping="Wrap" FontSize="11"
-                       Foreground="#FFB454" Margin="0,6,0,0"/>
-            <TextBlock x:Name="p_prefix" FontSize="11" Margin="0,6,0,0"/>
+            <Border Style="{StaticResource oca.Msg.Warn}" Visibility="{Binding Visibility, ElementName=p_lock}">
+              <TextBlock x:Name="p_lock" Style="{StaticResource oca.MsgText}"/>
+            </Border>
+            <TextBlock x:Name="p_prefix" Style="{StaticResource oca.Hint}" Foreground="{StaticResource oca.Ink}"
+                       Margin="0,8,0,0"/>
 """
 
-CROP_XAML = u"""
-<Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
-        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="Abertura de Vista" Height="Auto" Width="1240"
-        SizeToContent="Height" WindowStartupLocation="CenterScreen"
-        ResizeMode="NoResize" Background="#0E1526">
-  <Window.Resources>
-    <Style TargetType="TextBlock">
-      <Setter Property="Foreground" Value="#CFE3FF"/>
-      <Setter Property="FontFamily" Value="Segoe UI"/>
-      <Setter Property="Margin" Value="0,10,0,3"/>
-    </Style>
-    <Style TargetType="ComboBox">
-      <Setter Property="Height" Value="26"/>
-      <Setter Property="Padding" Value="4,2,4,2"/>
-    </Style>
-    <Style TargetType="TextBox">
-      <Setter Property="Height" Value="26"/>
-      <Setter Property="Padding" Value="4,3,4,2"/>
-    </Style>
-    <Style TargetType="RadioButton">
-      <Setter Property="Foreground" Value="#CFE3FF"/>
-      <Setter Property="FontFamily" Value="Segoe UI"/>
-      <Setter Property="Margin" Value="0,5,0,0"/>
-    </Style>
-    <Style TargetType="CheckBox">
-      <Setter Property="Foreground" Value="#CFE3FF"/>
-      <Setter Property="FontFamily" Value="Segoe UI"/>
-      <Setter Property="Margin" Value="0,6,0,0"/>
-    </Style>
-    <Style TargetType="Border">
-      <Setter Property="Background" Value="#131D33"/>
-      <Setter Property="BorderBrush" Value="#26405F"/>
-      <Setter Property="BorderThickness" Value="1"/>
-      <Setter Property="Padding" Value="12,4,12,10"/>
-      <Setter Property="Margin" Value="0,12,0,0"/>
-    </Style>
-  </Window.Resources>
+CROP_BODY = u"""
   <ScrollViewer VerticalScrollBarVisibility="Auto">
-  <StackPanel Margin="18">
-    <TextBlock Text="ABERTURA/RECORTE DE VISTA" FontSize="15" FontWeight="SemiBold"
-               Foreground="#65E3FF" Margin="0,0,0,4"/>
-    <TextBlock x:Name="info" TextWrapping="Wrap" FontSize="11"
-               Foreground="#7A8FA9" Margin="0,0,0,2"/>
+  <StackPanel>
+    <TextBlock x:Name="info" Style="{StaticResource oca.Hint}" Margin="0,0,0,12"/>
 
     <Grid>
       <Grid.ColumnDefinitions>
         <ColumnDefinition Width="*"/>
-        <ColumnDefinition Width="16"/>
+        <ColumnDefinition Width="28"/>
         <ColumnDefinition Width="*"/>
-        <ColumnDefinition Width="16"/>
+        <ColumnDefinition Width="28"/>
         <ColumnDefinition Width="*"/>
       </Grid.ColumnDefinitions>
 
       <!-- coluna 1: premissas + o que fazer -->
       <StackPanel Grid.Column="0">
-        <Border>
+        <HeaderedContentControl Header="PREMISSAS" Style="{StaticResource oca.Section}">
           <StackPanel>
-            <TextBlock Text="PREMISSAS" FontSize="12" FontWeight="SemiBold" Foreground="#65E3FF"/>
-            <TextBlock x:Name="sel_txt" TextWrapping="Wrap" FontSize="11"
-                       Foreground="#7A8FA9" Margin="0,0,0,2"/>
-            <TextBlock x:Name="view_txt" TextWrapping="Wrap" FontSize="11"
-                       Foreground="#7A8FA9" Margin="0,4,0,2"/>
-            <TextBlock Text="Margem ao redor do elemento (m)"/>
-            <TextBox x:Name="margin"/>
+            <TextBlock x:Name="sel_txt" Style="{StaticResource oca.Hint}"/>
+            <TextBlock x:Name="view_txt" Style="{StaticResource oca.Hint}" Margin="0,4,0,10"/>
+            <Grid>
+              <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="{StaticResource oca.LabelWidth}"/>
+                <ColumnDefinition Width="*"/>
+              </Grid.ColumnDefinitions>
+              <TextBlock Text="Margem" Style="{StaticResource oca.Label}"/>
+              <StackPanel Grid.Column="1" Orientation="Horizontal">
+                <TextBox x:Name="margin" Width="72"/>
+                <TextBlock Text="m ao redor do elemento" Style="{StaticResource oca.Hint}"
+                           VerticalAlignment="Center" Margin="8,0,0,0"/>
+              </StackPanel>
+            </Grid>
           </StackPanel>
-        </Border>
+        </HeaderedContentControl>
 
-        <Border>
+        <HeaderedContentControl Header="O QUE FAZER  ·  UMA VISTA PARA TODA A SELEÇÃO" Style="{StaticResource oca.Section}">
           <StackPanel>
-            <TextBlock Text="O QUE FAZER  ·  UMA VISTA PARA TODA A SELEÇÃO" FontSize="12"
-                       FontWeight="SemiBold" Foreground="#65E3FF"/>
             <RadioButton x:Name="rb_plans" GroupName="mode"
                          Content="Criar nova vista de planta (Piso, Forro, Estrutural, Área)"/>
             <RadioButton x:Name="rb_callout" GroupName="mode"
                          Content="Criar vista de chamada de detalhe (Callout) na vista ativa"/>
             <RadioButton x:Name="rb_current" GroupName="mode"
                          Content="Recortar a vista ativa (planta, corte ou elevação)"/>
-            <TextBlock x:Name="mode_hint" TextWrapping="Wrap" FontSize="11"
-                       Foreground="#7A8FA9" Margin="20,4,0,0"/>
-            <TextBlock x:Name="reasons" TextWrapping="Wrap" FontSize="11"
-                       Foreground="#FFB454" Margin="0,8,0,0"/>
-            <TextBlock x:Name="vtype_lbl" Text="Tipo de vista"/>
-            <ComboBox x:Name="vtype"/>
+            <TextBlock x:Name="mode_hint" Style="{StaticResource oca.Hint}" Margin="22,0,0,0"/>
+            <Border Style="{StaticResource oca.Msg.Warn}" Visibility="{Binding Visibility, ElementName=reasons}">
+              <TextBlock x:Name="reasons" Style="{StaticResource oca.MsgText}"/>
+            </Border>
+            <Grid Margin="0,10,0,0">
+              <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="{StaticResource oca.LabelWidth}"/>
+                <ColumnDefinition Width="*"/>
+              </Grid.ColumnDefinitions>
+              <TextBlock x:Name="vtype_lbl" Text="Tipo de vista" Style="{StaticResource oca.Label}"/>
+              <ComboBox x:Name="vtype" Grid.Column="1"/>
+            </Grid>
           </StackPanel>
-        </Border>
+        </HeaderedContentControl>
       </StackPanel>
 
       <!-- coluna 2: view template + destino -->
       <StackPanel Grid.Column="2">
-        <Border>
+        <HeaderedContentControl Header="MODELO DE VISTA (VIEW TEMPLATE)" Style="{StaticResource oca.Section}">
           <StackPanel>
-            <TextBlock Text="MODELO DE VISTA (VIEW TEMPLATE)" FontSize="12" FontWeight="SemiBold"
-                       Foreground="#65E3FF"/>
-            <ComboBox x:Name="template" Margin="0,8,0,0"/>
+            <ComboBox x:Name="template"/>
             <TextBlock Text="Só aparecem os templates que o Revit aceita para o tipo de vista."
-                       TextWrapping="Wrap" FontSize="11" Foreground="#7A8FA9" Margin="0,6,0,0"/>
+                       Style="{StaticResource oca.Hint}" Margin="0,6,0,0"/>
           </StackPanel>
-        </Border>
+        </HeaderedContentControl>
 
-        <Border>
+        <HeaderedContentControl Header="DESTINO DA VISTA  ·  NAVEGADOR DE PROJETO" Style="{StaticResource oca.Section}">
           <StackPanel>
-            <TextBlock Text="DESTINO DA VISTA  ·  NAVEGADOR DE PROJETO" FontSize="12"
-                       FontWeight="SemiBold" Foreground="#65E3FF"/>
-            <TextBlock x:Name="folder_src" TextWrapping="Wrap" FontSize="11"
-                       Foreground="#7A8FA9" Margin="0,0,0,2"/>
-            <TextBlock x:Name="folder_reason" TextWrapping="Wrap" FontSize="11"
-                       Foreground="#FFB454" Margin="0,0,0,2"/>""" + FOLDER_BLOCK + u"""
+            <TextBlock x:Name="folder_src" Style="{StaticResource oca.Hint}" Margin="0,0,0,8"/>
+            <Border Style="{StaticResource oca.Msg.Warn}" Margin="0,0,0,8"
+                    Visibility="{Binding Visibility, ElementName=folder_reason}">
+              <TextBlock x:Name="folder_reason" Style="{StaticResource oca.MsgText}"/>
+            </Border>""" + FOLDER_BLOCK + u"""
           </StackPanel>
-        </Border>
+        </HeaderedContentControl>
       </StackPanel>
 
       <!-- coluna 3: nomenclatura + pré-visualização -->
       <StackPanel Grid.Column="4">
-        <Border>
+        <StackPanel.Resources>
+          <Style x:Key="FieldLabel" TargetType="TextBlock" BasedOn="{StaticResource oca.Label}">
+            <Setter Property="Margin" Value="0,8,0,4"/>
+          </Style>
+        </StackPanel.Resources>
+        <HeaderedContentControl Header="NOMENCLATURA" Style="{StaticResource oca.Section}">
           <StackPanel>
-            <TextBlock Text="NOMENCLATURA" FontSize="12" FontWeight="SemiBold"
-                       Foreground="#65E3FF"/>
             <TextBlock Text="Vale para View Name, Title on Sheet e Title on Sheet - English."
-                       TextWrapping="Wrap" FontSize="11" Foreground="#7A8FA9" Margin="0,0,0,2"/>
-            <TextBlock Text="A - Principal"/>
+                       Style="{StaticResource oca.Hint}"/>
+            <TextBlock Text="A - Principal" Style="{StaticResource FieldLabel}"/>
             <ComboBox x:Name="vname"/>
-            <TextBlock x:Name="manual_lbl" TextWrapping="Wrap"
+            <TextBlock x:Name="manual_lbl" Style="{StaticResource FieldLabel}"
                        Text="Nome manual - View Name e Title on Sheet (vazio = mantém o nome do Revit;  # = sequência 01, 02...)"/>
             <TextBox x:Name="manual"/>
-            <TextBlock x:Name="manual_en_lbl" TextWrapping="Wrap"
+            <TextBlock x:Name="manual_en_lbl" Style="{StaticResource FieldLabel}"
                        Text="Nome manual - Title on Sheet - English (vazio = sem título em inglês)"/>
             <TextBox x:Name="manual_en"/>
-            <TextBlock x:Name="suffix_lbl" Text="B - Complemento"/>
+            <TextBlock x:Name="suffix_lbl" Text="B - Complemento" Style="{StaticResource FieldLabel}"/>
             <ComboBox x:Name="vsuffix"/>
-            <TextBlock x:Name="suffix_text_lbl" TextWrapping="Wrap"
+            <TextBlock x:Name="suffix_text_lbl" Style="{StaticResource FieldLabel}"
                        Text="Complemento manual - View Name e Title on Sheet (vazio = sem complemento;  # = sequência 01, 02...)"/>
             <TextBox x:Name="suffix_text"/>
-            <TextBlock x:Name="suffix_text_en_lbl" TextWrapping="Wrap"
+            <TextBlock x:Name="suffix_text_en_lbl" Style="{StaticResource FieldLabel}"
                        Text="Complemento manual - Title on Sheet - English (vazio = sem complemento)"/>
             <TextBox x:Name="suffix_text_en"/>
           </StackPanel>
-        </Border>
+        </HeaderedContentControl>
 
-        <Border>
+        <HeaderedContentControl Header="PRÉ-VISUALIZAÇÃO" Style="{StaticResource oca.Section}">
           <StackPanel>
-            <TextBlock Text="PRÉ-VISUALIZAÇÃO" FontSize="10" Foreground="#7A8FA9"
-                       Margin="0,6,0,6"/>
-            <TextBlock Text="VIEW NAME  (prefixo da pasta + _ + nome)" FontSize="10"
-                       Foreground="#7A8FA9" Margin="0"/>
-            <TextBlock x:Name="pv_name" FontWeight="SemiBold" TextWrapping="Wrap" Margin="0,2,0,6"/>
-            <TextBlock Text="TITLE ON SHEET" FontSize="10" Foreground="#7A8FA9" Margin="0"/>
-            <TextBlock x:Name="pv_title" FontWeight="SemiBold" TextWrapping="Wrap" Margin="0,2,0,6"/>
-            <TextBlock Text="TITLE ON SHEET - ENGLISH  (automático)" FontSize="10"
-                       Foreground="#7A8FA9" Margin="0"/>
-            <TextBlock x:Name="pv_en" FontWeight="SemiBold" TextWrapping="Wrap" Margin="0,2,0,8"/>
-            <TextBlock Text="PASTA DE DESTINO" FontSize="10" Foreground="#7A8FA9" Margin="0"/>
-            <TextBlock x:Name="pv_folder" FontWeight="SemiBold" TextWrapping="Wrap" Margin="0,2,0,6"/>
-            <TextBlock Text="VIEW TEMPLATE" FontSize="10" Foreground="#7A8FA9" Margin="0"/>
-            <TextBlock x:Name="pv_template" FontWeight="SemiBold" TextWrapping="Wrap" Margin="0,2,0,0"/>
+            <Border Style="{StaticResource oca.Card}" Margin="0">
+              <StackPanel>
+                <TextBlock Text="VIEW NAME  (prefixo da pasta + _ + nome)" Style="{StaticResource oca.Caption}"/>
+                <TextBlock x:Name="pv_name" Style="{StaticResource oca.Value}" Margin="0,2,0,8"/>
+                <TextBlock Text="TITLE ON SHEET" Style="{StaticResource oca.Caption}"/>
+                <TextBlock x:Name="pv_title" Style="{StaticResource oca.Value}" Margin="0,2,0,8"/>
+                <TextBlock Text="TITLE ON SHEET - ENGLISH  (automático)" Style="{StaticResource oca.Caption}"/>
+                <TextBlock x:Name="pv_en" Style="{StaticResource oca.Value}" Margin="0,2,0,8"/>
+                <TextBlock Text="PASTA DE DESTINO" Style="{StaticResource oca.Caption}"/>
+                <TextBlock x:Name="pv_folder" Style="{StaticResource oca.Value}" Margin="0,2,0,8"/>
+                <TextBlock Text="VIEW TEMPLATE" Style="{StaticResource oca.Caption}"/>
+                <TextBlock x:Name="pv_template" Style="{StaticResource oca.Value}" Margin="0,2,0,0"/>
+              </StackPanel>
+            </Border>
+            <Border Style="{StaticResource oca.Msg.Warn}" Visibility="{Binding Visibility, ElementName=live_hint}">
+              <TextBlock x:Name="live_hint" Style="{StaticResource oca.MsgText}"/>
+            </Border>
+            <Border Style="{StaticResource oca.Msg.Warn}" Visibility="{Binding Visibility, ElementName=name_hint}">
+              <TextBlock x:Name="name_hint" Style="{StaticResource oca.MsgText}"/>
+            </Border>
           </StackPanel>
-        </Border>
-        <TextBlock x:Name="live_hint" TextWrapping="Wrap" FontSize="11"
-                   Foreground="#FFB454" Margin="0,6,0,0"/>
-        <TextBlock x:Name="name_hint" TextWrapping="Wrap" FontSize="11"
-                   Foreground="#FFB454" Margin="0,4,0,0"/>
+        </HeaderedContentControl>
       </StackPanel>
     </Grid>
 
-    <CheckBox x:Name="open_views" Content="Abrir a vista criada ao final" Margin="0,12,0,0"/>
+    <CheckBox x:Name="open_views" Content="Abrir a vista criada ao final" Margin="0,0,0,12"/>
 
-    <TextBlock x:Name="error" TextWrapping="Wrap" FontSize="11"
-               Foreground="#FF4F9A" Margin="0,10,0,0"/>
-    <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,14,0,0">
-      <Button x:Name="cancel" Content="Cancelar" Width="80" Height="28" Margin="0,0,10,0"/>
-      <Button x:Name="ok" Content="Aplicar" Width="110" Height="28"/>
-    </StackPanel>
+    <Border Style="{StaticResource oca.Msg.Err}" Margin="0,0,0,12"
+            Visibility="{Binding Visibility, ElementName=error}">
+      <TextBlock x:Name="error" Style="{StaticResource oca.MsgText}"/>
+    </Border>
   </StackPanel>
-  </ScrollViewer>
-</Window>
-"""
+  </ScrollViewer>"""
+
+CROP_FOOTER = u"""
+  <Button x:Name="ok" Content="Aplicar" Style="{StaticResource oca.Primary}"/>
+  <Button x:Name="cancel" Content="Cancelar" Margin="8,0,0,0"/>"""
+
+CROP_XAML = build_xaml(title=__title__, subtitle=__doc__, body=CROP_BODY,
+                       footer_right=CROP_FOOTER, size="M", width=1240)
 
 FOLDER_MODES = ("existing", "new", "none")
 MODE_HINTS = {
@@ -1710,14 +1690,16 @@ for el in elements:
     geoms.append(g)
 
 if not geoms:
-    forms.alert(u"Nenhum elemento válido selecionado.\n\n" + u"\n".join(warnings), exitscript=True)
+    forms.alert(u"Nenhum elemento válido selecionado.", sub_msg=u"\n".join(warnings) or None,
+                title=ALERT_TITLE, exitscript=True)
 
 plan_level, other_levels = pick_plan_level(geoms)
 plan_items = plan_type_items()
 callout_items = callout_type_items(active_view)
 reasons = check_modes(plan_items, callout_items, plan_level)
 if len(reasons) == len(MODES):
-    forms.alert(u"Nenhuma ação disponível:\n\n" + u"\n".join(reasons.values()), exitscript=True)
+    forms.alert(u"Nenhuma ação disponível para a seleção.", sub_msg=u"\n".join(reasons.values()),
+                title=ALERT_TITLE, exitscript=True)
 
 folders = ProjectFolders()
 
@@ -1798,9 +1780,10 @@ if mode == "current":
     sb = active_view.get_Parameter(BIP.VIEWER_VOLUME_OF_INTEREST_CROP)
     if sb is not None and sb.AsElementId() != INVALID_ID:
         sb_name = to_unicode(doc.GetElement(sb.AsElementId()).Name)
-        if not forms.alert(u"O recorte da vista ativa está vinculado à Scope Box '{}'.\n\n"
-                           u"Remover o vínculo e aplicar o recorte do elemento?".format(sb_name),
-                           yes=True, no=True):
+        if not forms.alert(u"Remover o vínculo com a Scope Box '{}'?".format(sb_name),
+                           sub_msg=u"O recorte da vista ativa está vinculado a essa Scope Box. "
+                                   u"Para aplicar o recorte do elemento, o vínculo precisa ser removido.",
+                           title=ALERT_TITLE, yes=True, no=True):
             script.exit()
         remove_scope_box = True
 
@@ -1890,7 +1873,7 @@ if view is not None and opts["open"]:
 # ------------------------------------------------------------------
 if error:
     forms.alert(u"Não foi possível concluir: {}".format(error),
-                sub_msg=u"\n".join(warnings) or None)
+                sub_msg=u"\n".join(warnings) or None, title=ALERT_TITLE)
 elif warnings or notes:
     forms.alert(u"Vista '{}' ajustada, com avisos:".format(to_unicode(view.Name)),
-                sub_msg=u"\n".join(u"- " + w for w in warnings + notes))
+                sub_msg=u"\n".join(u"- " + w for w in warnings + notes), title=ALERT_TITLE)
