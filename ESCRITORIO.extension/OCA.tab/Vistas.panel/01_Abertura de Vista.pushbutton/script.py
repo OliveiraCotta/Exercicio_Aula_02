@@ -587,6 +587,7 @@ def view_type_label(view):
 # ------------------------------------------------------------------
 EN_TITLE_PARAM = u"Title on Sheet - English"
 ROOM_EN_PARAM = u"Room Name English"
+LEVEL_EN_PARAM = u"Level Name English"   # nome do nível no Title on Sheet - English
 EN_SEP = u" - "   # separador do complemento no título em inglês (hífen, como no PT)
 
 # (chave, nome PT, Title on Sheet - English, leva complemento PAV./AMPLIAÇÃO)
@@ -677,6 +678,20 @@ def level_text(level):
     return re.sub(u"^PAV\\.?\\s*", u"", name)   # evita "PAV. PAV. TÉRREO"
 
 
+def level_text_en(level):
+    """Nome do nível só para o Title on Sheet - English: parâmetro compartilhado
+    'Level Name English' do Level; vazio ou inexistente = nome do nível (level_text).
+    level_text continua sendo o nome em português (Title on Sheet, View Name, combo)."""
+    if level is None:
+        return u""
+    try:
+        p = level.LookupParameter(LEVEL_EN_PARAM)
+        value = to_unicode(p.AsString()).strip() if p is not None and p.HasValue else u""
+    except Exception:
+        value = u""
+    return value.upper() if value else level_text(level)
+
+
 def suffix_labels(level):
     """Itens do combo Complemento, já com o nome do nível."""
     lv = level_text(level)
@@ -713,10 +728,11 @@ def compose_names(opt, suffix_key, level, room, manual, suffix_text=u"", suffix_
         pt = _join(pt, free_suffix(suffix_text), u" - ")
         en = _join(en, free_suffix(suffix_text_en), EN_SEP)
     else:
-        lv = level_text(level)
+        lv = level_text(level)         # português: nome do nível no Revit
+        lv_en = level_text_en(level)   # inglês: 'Level Name English' (ou o nome do nível)
         _k, suf_pt, suf_en = next(s for s in SUFFIXES if s[0] == suffix_key)
         pt += u" - " + u" ".join(x for x in (suf_pt, lv) if x)
-        en += EN_SEP + u" ".join(x for x in (suf_en, lv) if x)
+        en += EN_SEP + u" ".join(x for x in (suf_en, lv_en) if x)
     if opt["room"] and room is not None:
         number, name, name_en = room_info(room)
         pt = u"{} - {} - {}".format(number, name, pt)
