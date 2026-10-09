@@ -11,7 +11,7 @@
     --bg:#070C16; --panel:rgba(255,255,255,.028); --line:rgba(101,227,255,.22);
     --grid:rgba(101,227,255,.05); --ink:#D9E8F5; --dim:#7A8FA9;
     --cy:#65E3FF; --teal:#3DDCB4; --amber:#FFB454; --mag:#FF4F9A; --violet:#9D8CFF;
-    --green:#50D682; --red:#E84A4A; --orange:#FF8C00; --purple:#B07CC6; --pink:#FF8DC8; --blue:#6DB6E8;
+    --green:#50D682; --red:#E84A4A; --orange:#FF8C00;
   }
   *{box-sizing:border-box; margin:0; padding:0}
   body{
@@ -101,7 +101,6 @@
   .was{display:block; font-size:11px; color:var(--dim); text-decoration:line-through; margin-top:2px}
   .legend{display:flex; gap:16px; flex-wrap:wrap; font-size:11px; color:var(--dim); margin:4px 0 12px}
   .legend i{display:inline-block; width:12px; height:12px; border-radius:2px; vertical-align:-2px; margin-right:6px}
-  .dot{display:inline-block; width:12px; height:12px; border-radius:50%; vertical-align:-2px}
   .empty{text-align:center; padding:36px 0; color:var(--teal); letter-spacing:.2em}
   footer{margin-top:60px; font-size:10px; letter-spacing:.3em; color:var(--dim);
     text-transform:uppercase; text-align:center; line-height:2}
@@ -167,11 +166,6 @@
 
 <!-- 3. resultado -->
 <div id="resultWrap"></div>
-
-<!-- 4. destaques no modelo -->
-<h2>Situação dos tipos na vista ativa <small>(após gravar)</small></h2>
-<div class="cards" id="h_cards"></div>
-<div id="h_wrap"></div>
 
 <!-- 5. inconsistências -->
 <h2>Inconsistências <small>(clique para filtrar)</small></h2>
@@ -399,32 +393,6 @@ function renderResult(){
     <div class="scroll"><table><thead>${head}</thead><tbody>${body}</tbody></table></div>`;
   wrap.querySelectorAll(".rtabs button").forEach(b=>b.onclick=()=>{ rtab=b.dataset.t; renderResult(); });
 }
-
-/* ---- 4. situação dos tipos: vermelho / laranja / lilás / rosa ---- */
-(function(){
-  const H = DATA.highlight, sum = l => l.reduce((s,x)=>s+x.count,0);
-  const CLS = [
-    {k:"red",    c:"var(--red)",    l:"Vermelho: Falta keynote, descrição e descrição em IN"},
-    {k:"orange", c:"var(--orange)", l:"Laranja: Falta keynote"},
-    {k:"purple", c:"var(--purple)", l:"Roxo: Falta descrição"},
-    {k:"pink",   c:"var(--pink)",   l:"Rosa: Falta descrição em IN"},
-    {k:"blue",   c:"var(--blue)",   l:"Azul: Tem apenas keynote"},
-  ];
-  $("h_cards").innerHTML = CLS.map(m=>{ const l = H.filter(x=>x.color===m.k);
-    return `<div class="card" style="--c:${m.c}"><div class="v">${fmt(sum(l))}</div>
-      <div class="l" style="text-transform:none;letter-spacing:.03em;font-size:12px">${esc(m.l)}</div><div class="h">${l.length} tipo(s)</div></div>`; }).join("");
-  if(DATA.highlightNote){ $("h_wrap").innerHTML = `<p class="muted">${esc(DATA.highlightNote)}</p>`; return; }
-  if(!H.length){ $("h_wrap").innerHTML = `<div class="empty">✓ Todos os tipos visíveis têm Keynote, Descrição e ${esc(DATA.inParam)}</div>`; return; }
-  const v = x => x ? esc(x) : '<span class="none">vazio</span>';
-  const colorOf = k => (CLS.find(c=>c.k===k)||CLS[1]).c;
-  $("h_wrap").innerHTML = `<div class="scroll" style="max-height:50vh"><table><thead><tr><th></th><th>Família</th>
-    <th>Tipo</th><th>Falta</th><th>Keynote</th><th>Descrição</th><th>Descrição IN</th><th>Elementos</th></tr></thead><tbody>${
-    groupRows(H.slice().sort((a,b)=>a.category.localeCompare(b.category,"pt-BR")),"category",8,x=>`<tr>
-      <td><span class="dot" style="background:${colorOf(x.color)}" title="${esc(x.colorLabel||"")}"></span></td><td>${esc(x.family)}</td>
-      <td>${esc(x.type)} <span class="muted mono">#${x.typeId}</span></td>
-      <td class="warn">${x.missing.map(esc).join(", ")}</td><td class="key">${v(x.key)}</td><td>${v(x.desc)}</td>
-      <td>${x.hasIn ? v(x.en) : '<span class="none">sem parâmetro</span>'}</td><td class="mono">${x.count}</td></tr>`)}</tbody></table></div>`;
-})();
 
 /* ---- 5. inconsistências + keynotes ---- */
 let activeFlag = null;

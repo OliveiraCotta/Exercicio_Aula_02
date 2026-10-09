@@ -17,31 +17,24 @@ Onde cada dado mora:
 
 Aba 1 - resumo, fluxo (Excel > Modelo), planilha e caminho do TXT de Keynote.
 
-Aba 2 - tabela de verificação (uma janela, duas tabelas, busca e agrupamento
-por Keynote ou por Categoria):
+Aba 2 - janela de verificação (NÃO modal - dá para navegar no modelo). Três
+tabelas recolhíveis, uma barra de rolagem só (a da janela), busca e
+agrupamento por Keynote ou por Categoria:
   1. Excel -> Modelo: o que o Excel tem e difere do modelo. Tipos com o mesmo
      Keynote, mesma Descrição, mesma Descrição IN e mesma Categoria viram UMA
      linha. Valor vazio no Excel nunca apaga o modelo.
   2. Elementos do modelo SEM Keynote ou SEM Descrição: só o Keynote é
      digitado; "Verificar no Excel" traz a Descrição e a Descrição IN da
      planilha para os campos vazios.
-  Cada tabela agrupa por Keynote ou por Categoria. Clicar numa linha seleciona
-  e mostra os elementos na vista ativa.
-  Tabela 3: tipos com Keynote que não existe no Excel (só consulta).
+  3. Tipos com Keynote que não existe no Excel (só consulta).
+  Clicar numa linha seleciona os elementos no Revit e mostra na vista ativa.
+  O modelo NÃO é colorido. As cores deixadas pelas versões anteriores do
+  comando são localizadas e removidas (pergunta antes).
 
 Fluxo: ANALISA Excel x modelo > TABELAS (o que vai mudar, o que falta, o que
 não está no Excel) > "Gravar marcados" grava e ATUALIZA as tabelas (a janela
-continua aberta, pode gravar várias vezes) > "Finalizar" devolve as cores,
-gera/carrega o TXT de Keynote e faz o relatório. Fechar no X só devolve as cores.
-
-Destaque temporário na vista ativa SÓ enquanto o comando está aberto (janela
-NÃO modal - dá para navegar no modelo). Só o fundo é colorido, em tom claro:
-Vermelho = falta keynote, descrição e descrição em IN · Laranja = falta keynote
-· Roxo = falta descrição · Rosa = falta descrição em IN · Azul = tem apenas
-keynote; corretos em meio-tom. As sobreposições originais voltam ao gravar ou
-fechar a janela.
-
-Tabela 3: tipos com Keynote que não existe no Excel (só consulta).
+continua aberta, pode gravar várias vezes) > "Finalizar" gera/carrega o TXT
+de Keynote e faz o relatório. Fechar no X não gera TXT nem relatório.
 
 TXT de Keynote do Revit (sempre, ao gravar): gerado do Excel com a
 mesma estrutura do arquivo do escritório - CATEGORIA/prefixos, PREFIXO/GRUPO/
@@ -304,7 +297,6 @@ class KeynoteWindow(forms.WPFWindow):
             "mode": "to_model",            # fluxo único
             "scope": "model",              # sempre o modelo inteiro
             "materials": False,            # materiais não são lidos
-            "highlight": True,             # o modelo é sempre colorido na verificação
             "txt_on": True,                # TXT sempre gerado e carregado ao gravar
             "txt_path": txt,
         }
@@ -1025,46 +1017,12 @@ def cat_rank(cat):
 
 
 # ------------------------------------------------------------------
-# 5d. Situação dos TIPOS no modelo + destaque temporário (vista ativa)
-#   Vermelho = falta tudo · Laranja = falta Keynote · Lilás = falta Descrição
-#   Rosa claro = falta Descrição IN · corretos em meio-tom 70%.
-#   A janela é NÃO modal (dá para mexer no modelo com ela aberta), então as
-#   cores são sobreposições de vista gravadas e DEVOLVIDAS ao estado anterior
-#   quando a janela fecha ou ao gravar.
+# 5d. Situação dos TIPOS no modelo (sem keynote / descrição / descrição IN)
+#   O comando NÃO colore mais o modelo: a conferência é feita selecionando a
+#   linha da tabela, que seleciona e mostra os elementos na vista ativa.
+#   As cores deixadas pelas versões anteriores são localizadas e removidas
+#   (seção 9).
 # ------------------------------------------------------------------
-# cor por situação do TIPO. Só o FUNDO da superfície é colorido (tom claro),
-# para as linhas, padrões e limites do elemento continuarem visíveis.
-HL_CLASSES = OrderedDict([
-    ("red",    {"rgb": (232, 74, 74),   "label": u"Vermelho", "what": u"Falta keynote, descrição e descrição em IN"}),
-    ("orange", {"rgb": (255, 140, 0),   "label": u"Laranja",  "what": u"Falta keynote"}),
-    ("purple", {"rgb": (142, 68, 173),  "label": u"Roxo",     "what": u"Falta descrição"}),
-    ("pink",   {"rgb": (255, 105, 180), "label": u"Rosa",     "what": u"Falta descrição em IN"}),
-    ("blue",   {"rgb": (52, 152, 219),  "label": u"Azul",     "what": u"Tem apenas keynote"}),
-])
-HL_TINT = 0.45                # mistura com branco: cor clara, "meio-tom" da cor
-OK_TRANSPARENCY = 70          # elementos corretos: meio-tom + 70% de transparência
-hl_note = u""
-
-
-def hl_class(missing):
-    m = set(missing)
-    if len(m) >= 3:
-        return "red"
-    if u"Keynote" in m:
-        return "orange"
-    if u"Descrição" in m and PARAM_IN_NAME in m:
-        return "blue"             # tem apenas o keynote
-    if u"Descrição" in m:
-        return "purple"
-    if m:
-        return "pink"
-    return "ok"
-
-
-def hl_tint(rgb):
-    return tuple(int(round(c + (255 - c) * HL_TINT)) for c in rgb)
-
-
 def view_allows_overrides(view):
     if view is None or getattr(view, "IsTemplate", False):
         return False
@@ -1130,221 +1088,110 @@ def type_status(t):
     return key, desc, en, ip is not None, missing
 
 
-def collect_highlight(view=None):
-    """Tipos visíveis na vista (padrão: ativa) sem Keynote, Descrição ou
-    Descrição IN, com a classe de cor de cada um."""
-    global hl_note
-    view = view or active_view
-    if not view_allows_overrides(view):
-        hl_note = u"a vista ativa não aceita sobreposição de cores (tabela, folha...)"
-        return []
-    hl_note = u""
-    out = []
-    for info in scan_types(view):
-        t = info["t"]
-        key, desc, en, has_in, missing = type_status(t)
-        if not missing:
-            continue
-        cls = hl_class(missing)
-        out.append({"color": cls, "colorLabel": HL_CLASSES[cls]["label"],
-                    "missing": missing, "category": info["category"],
-                    "family": family_name(t), "type": elem_name(t), "typeId": eid_int(t.Id),
-                    "key": key, "desc": desc, "en": en, "hasIn": has_in,
-                    "count": len(info["ids"]), "ids": info["ids"]})
-    out.sort(key=lambda x: (list(HL_CLASSES).index(x["color"]), x["category"],
-                            x["family"], x["type"]))
-    return out
+# ---- cores deixadas no modelo pelas versões anteriores deste comando ----
+# Cores usadas antes (laranja, vermelho, lilás, rosa claro, roxo, rosa, azul),
+# puras e no tom claro (45% de branco). Os corretos ficavam em meio-tom + 70%.
+_OLD_RGB = ((255, 140, 0), (232, 74, 74), (200, 162, 200), (255, 182, 193),
+            (142, 68, 173), (255, 105, 180), (52, 152, 219))
+OLD_COLORS = set(_OLD_RGB) | set(
+    tuple(int(round(c + (255 - c) * 0.45)) for c in rgb) for rgb in _OLD_RGB)
+_OGS_COLORS = ("ProjectionLineColor", "CutLineColor", "SurfaceForegroundPatternColor",
+               "CutForegroundPatternColor", "SurfaceBackgroundPatternColor",
+               "CutBackgroundPatternColor", "ProjectionFillColor", "CutFillColor")
 
 
-def solid_fill_id():
+def _rgb(c):
     try:
-        for fp in DB.FilteredElementCollector(doc).OfClass(DB.FillPatternElement):
-            try:
-                if fp.GetFillPattern().IsSolidFill:
-                    return fp.Id
-            except Exception:
-                continue
+        if c is not None and c.IsValid:
+            return (int(c.Red), int(c.Green), int(c.Blue))
     except Exception:
         pass
-    return INVALID_ID
+    return None
 
 
-def _color_ogs(rgb, fill):
-    """Só o fundo (background) da superfície e do corte, em tom claro: linhas,
-    padrões de piso/forro e limites do elemento continuam aparecendo."""
-    c = DB.Color(*hl_tint(rgb))
-    o = DB.OverrideGraphicSettings()
-    if fill == INVALID_ID:
-        return o
-    try:                                        # Revit 2019+
-        o.SetSurfaceBackgroundPatternId(fill)
-        o.SetSurfaceBackgroundPatternColor(c)
-        o.SetCutBackgroundPatternId(fill)
-        o.SetCutBackgroundPatternColor(c)
-    except AttributeError:                      # Revit <= 2018
-        o.SetProjectionFillPatternId(fill)
-        o.SetProjectionFillColor(c)
-    return o
-
-
-def _ok_ogs():
-    o = DB.OverrideGraphicSettings()
-    o.SetHalftone(True)
+def is_old_highlight(o):
+    """Sobreposição igual à que o comando aplicava (2+ campos com a mesma cor
+    do comando, ou meio-tom + 70% de transparência)."""
     try:
-        o.SetSurfaceTransparency(OK_TRANSPARENCY)
+        if o.Halftone and int(o.Transparency) == 70:
+            return True
     except Exception:
         pass
-    return o
+    hits = defaultdict(int)
+    for name in _OGS_COLORS:
+        try:
+            rgb = _rgb(getattr(o, name, None))
+        except Exception:
+            rgb = None
+        if rgb in OLD_COLORS:
+            hits[rgb] += 1
+    return any(n >= 2 for n in hits.values())
 
 
-def _colors_log_path():
+def _colors_log_path(name="keynotes_cores"):
     try:
-        return script.get_document_data_file("keynotes_cores", "json")
+        return script.get_document_data_file(name, "json")
     except Exception:
         return None
 
 
-def recover_leftover_colors():
-    """Se uma execução anterior terminou sem devolver as cores (Revit fechou
-    ou travou com a janela aberta), limpa essas sobreposições agora."""
-    path = _colors_log_path()
-    if not path or not os.path.isfile(path):
-        return 0
+def graphic_views():
+    out = []
     try:
-        with codecs.open(path, "r", encoding="utf-8") as f:
-            views = json.load(f).get("views", {})
-    except Exception:
-        views = {}
-    n = 0
-    if views:
-        t = DB.Transaction(doc, u"Limpar cores de execução anterior - Keynotes")
-        t.Start()
-        try:
-            for vid, eids in views.items():
-                view = doc.GetElement(DB.ElementId(int(vid)))
-                if view is None:
-                    continue
-                for e in eids:
-                    try:
-                        view.SetElementOverrides(DB.ElementId(int(e)),
-                                                 DB.OverrideGraphicSettings())
-                        n += 1
-                    except Exception:
-                        pass
-            t.Commit()
-        except Exception:
-            if t.HasStarted() and not t.HasEnded():
-                t.RollBack()
-    try:
-        os.remove(path)
+        for v in DB.FilteredElementCollector(doc).OfClass(DB.View):
+            if view_allows_overrides(v):
+                out.append(v)
     except Exception:
         pass
-    return n
+    return out
 
 
-class Painter(object):
-    """Colore as vistas SÓ enquanto o comando está aberto e devolve depois as
-    sobreposições ORIGINAIS de cada elemento (o modelo volta ao que era).
-    Os elementos pintados ficam anotados num arquivo até as cores saírem; se o
-    Revit fechar no meio, a próxima execução limpa o que sobrou.
-    Precisa rodar no contexto da API (script ou ExternalEvent)."""
-
-    def __init__(self):
-        self.saved = OrderedDict()    # id da vista -> {elem id: (ElementId, ogs anterior)}
-        self.last = []                # destaque da última vista pintada
-
-    def _log(self):
-        path = _colors_log_path()
-        if not path:
-            return
+def find_old_highlight(views, progress=None):
+    """-> [(vista, [ElementId com a cor antiga])]"""
+    found = []
+    for n, v in enumerate(views):
+        if progress is not None:
+            try:
+                progress.update_progress(n + 1, len(views))
+            except Exception:
+                pass
+        ids = []
         try:
-            if self.saved:
-                with codecs.open(path, "w", encoding="utf-8") as f:
-                    json.dump({"views": dict((str(v), list(p.keys()))
-                                             for v, p in self.saved.items())}, f)
-            elif os.path.isfile(path):
-                os.remove(path)
-        except Exception:
-            pass
-
-    def paint(self, view):
-        """-> (lista de tipos destacados, nº de elementos corretos em meio-tom)"""
-        hl = collect_highlight(view)
-        if hl_note:
-            self.last = []
-            return [], 0
-        bad = set()
-        for item in hl:
-            bad.update(eid_int(i) for i in item["ids"])
-        ok_ids = []
-        for info in scan_types(view):
-            ids = [i for i in info["ids"] if eid_int(i) not in bad]
-            if ids and not type_status(info["t"])[4]:
-                ok_ids.extend(ids)
-        fill = solid_fill_id()
-        ogs = dict((k, _color_ogs(v["rgb"], fill)) for k, v in HL_CLASSES.items())
-        ok = _ok_ogs()
-        prev = self.saved.setdefault(eid_int(view.Id), {})
-        pairs = [(i, ogs[item["color"]]) for item in hl for i in item["ids"]] + \
-            [(i, ok) for i in ok_ids]
-        t = DB.Transaction(doc, u"Destaque temporário - Keynotes")
-        t.Start()
-        try:
-            for eid, o in pairs:
-                k = eid_int(eid)
-                try:
-                    if k not in prev:
-                        prev[k] = (eid, view.GetElementOverrides(eid))
-                    view.SetElementOverrides(eid, o)
-                except Exception:
-                    pass
-            t.Commit()
-        except Exception:
-            if t.HasStarted() and not t.HasEnded():
-                t.RollBack()
-        self._log()
-        self.last = hl
-        try:
-            revit.uidoc.RefreshActiveView()
-        except Exception:
-            pass
-        return hl, len(ok_ids)
-
-    def clear(self):
-        """Devolve as sobreposições originais em todas as vistas pintadas."""
-        if not self.saved:
-            return
-        t = DB.Transaction(doc, u"Remover destaque - Keynotes")
-        t.Start()
-        try:
-            for vid, prev in self.saved.items():
-                view = doc.GetElement(DB.ElementId(vid))
-                if view is None:
+            for e in DB.FilteredElementCollector(doc, v.Id).WhereElementIsNotElementType():
+                cat = e.Category
+                if cat is None or not is_model_category(cat):
                     continue
-                for eid, o in prev.values():
-                    try:
-                        view.SetElementOverrides(eid, o)
-                    except Exception:
-                        pass
-            t.Commit()
+                try:
+                    if is_old_highlight(v.GetElementOverrides(e.Id)):
+                        ids.append(e.Id)
+                except Exception:
+                    continue
         except Exception:
-            if t.HasStarted() and not t.HasEnded():
-                t.RollBack()
-        self.saved.clear()
-        self._log()
-        try:
-            revit.uidoc.RefreshActiveView()
-        except Exception:
-            pass
+            continue
+        if ids:
+            found.append((v, ids))
+    return found
 
 
-def hl_summary(hl, n_ok=0):
-    """Contagem de elementos por cor (o meio-tom dos corretos não é listado)."""
-    parts = [u"{}: {}".format(v["label"], sum(x["count"] for x in hl if x["color"] == k))
-             for k, v in HL_CLASSES.items()]
-    if not hl:
-        return u"Nenhum elemento incompleto na vista."
-    return u"Elementos na vista  -  " + u"   ·   ".join(parts)
+def clear_old_highlight(found):
+    """Volta a sobreposição desses elementos ao padrão. -> (limpos, falhas)"""
+    ok, bad = 0, 0
+    t = DB.Transaction(doc, u"Remover cores antigas - Keynotes")
+    t.Start()
+    try:
+        for v, ids in found:
+            for eid in ids:
+                try:
+                    v.SetElementOverrides(eid, DB.OverrideGraphicSettings())
+                    ok += 1
+                except Exception:
+                    bad += 1
+        t.Commit()
+    except Exception:
+        if t.HasStarted() and not t.HasEnded():
+            t.RollBack()
+        return 0, ok + bad
+    return ok, bad
 
 
 # ---- ações no Revit com a janela aberta (janela não modal) ----
@@ -1402,8 +1249,8 @@ def show_in_view(ids):
     vis = [i for i in ids if eid_int(i) in visible]
     if not vis:
         return (u"{} elemento(s) selecionado(s), mas nenhum está visível na vista ativa "
-                u"({}). Abra uma vista 3D e clique em 'Mostrar na vista ativa' ou "
-                u"'Colorir vista ativa'.".format(len(ids), to_unicode(view.Name)))
+                u"({}). Abra uma vista 3D e clique em 'Mostrar na vista ativa'.".format(
+                    len(ids), to_unicode(view.Name)))
     try:
         uidoc.ShowElements(List[DB.ElementId](vis))
     except Exception:
@@ -1595,6 +1442,8 @@ for _asm in ("PresentationFramework", "PresentationCore", "WindowsBase", "System
 import System
 from System.Data import DataTable
 
+# tabela com altura do conteúdo: quem rola é a janela (barra à direita);
+# sem virtualização, para o agrupamento sempre redesenhar todas as linhas
 _GRID_STYLE = u"""
               AutoGenerateColumns="False" CanUserAddRows="False"
               CanUserDeleteRows="False" CanUserSortColumns="False" CanUserReorderColumns="False"
@@ -1603,10 +1452,12 @@ _GRID_STYLE = u"""
               SelectionUnit="FullRow" GridLinesVisibility="Horizontal"
               HorizontalGridLinesBrush="#1C2B44" Background="#0A1120" RowBackground="#0E1526"
               AlternatingRowBackground="#111C31" Foreground="#D9E8F5" BorderBrush="#2A4A66"
-              BorderThickness="1" FontFamily="Segoe UI" FontSize="12"
-              VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Auto"
-              EnableRowVirtualization="True" FrozenColumnCount="1"
-              VirtualizingPanel.IsVirtualizingWhenGrouping="True"
+              BorderThickness="1" FontFamily="Segoe UI" FontSize="12" Margin="0,4,0,0"
+              VerticalScrollBarVisibility="Disabled" HorizontalScrollBarVisibility="Auto"
+              EnableRowVirtualization="False" EnableColumnVirtualization="False"
+              VirtualizingPanel.IsVirtualizing="False"
+              VirtualizingPanel.IsVirtualizingWhenGrouping="False"
+              ScrollViewer.CanContentScroll="False"
               ColumnHeaderStyle="{StaticResource head}" RowStyle="{StaticResource row}" """
 
 # cabeçalho de grupo em linha única, na largura toda da tabela
@@ -1674,9 +1525,13 @@ _CHECK_COL = u"""
 
 
 def _col(header, binding, width, style=u"wrap", readonly=True, cell=None):
-    return (u'<DataGridTextColumn Header="{}" Binding="{{Binding {}}}" Width="{}" '
+    """Colunas de texto >= 100 são proporcionais (ocupam a largura da janela);
+    as estreitas (Qtd, Keynote) têm largura fixa."""
+    size = (u'Width="{}*" MinWidth="{}"'.format(width, int(width * 0.55)) if width >= 100
+            else u'Width="{}"'.format(width))
+    return (u'<DataGridTextColumn Header="{}" Binding="{{Binding {}}}" {} '
             u'IsReadOnly="{}" ElementStyle="{{StaticResource {}}}"{}/>'.format(
-                header, binding, width, u"True" if readonly else u"False", style,
+                header, binding, size, u"True" if readonly else u"False", style,
                 u' CellStyle="{{StaticResource {}}}"'.format(cell) if cell else u""))
 
 
@@ -1737,122 +1592,138 @@ VERIFY_XAML = u"""
     """ + _mark_style(u"mEn", u"EnMark") + u"""
     """ + _mark_style(u"mKey", u"KeyMark") + u"""
   </Window.Resources>
-  <Grid Margin="16">
-    <Grid.RowDefinitions>
-      <RowDefinition Height="Auto"/>
-      <RowDefinition Height="Auto"/>
-      <RowDefinition Height="Auto"/>
-      <RowDefinition Height="3*"/>
-      <RowDefinition Height="10"/>
-      <RowDefinition Height="Auto"/>
-      <RowDefinition Height="2*"/>
-      <RowDefinition Height="10"/>
-      <RowDefinition Height="Auto"/>
-      <RowDefinition Height="1.5*"/>
-      <RowDefinition Height="Auto"/>
-    </Grid.RowDefinitions>
-    <StackPanel Grid.Row="0">
+  <DockPanel Margin="16,12,4,12">
+    <StackPanel DockPanel.Dock="Top" Margin="0,0,12,0">
       <TextBlock Text="ATUALIZAÇÃO DAS DESCRIÇÕES DO MODELO POR KEYNOTE   ·   Excel &gt; Modelo"
                  FontSize="15" FontWeight="SemiBold" Foreground="#65E3FF" FontFamily="Segoe UI"/>
       <TextBlock x:Name="info" TextWrapping="Wrap" FontSize="12" Foreground="#CFE3FF"
                  FontFamily="Segoe UI" Margin="0,6,0,0"/>
-      <WrapPanel Margin="0,6,0,0">""" + u"".join(
-          u'<Border Width="14" Height="14" Background="#{0:02X}{1:02X}{2:02X}" BorderBrush="#9FB3CC" '
-          u'BorderThickness="1" Margin="0,0,6,0"/><TextBlock Style="{{StaticResource small}}" '
-          u'FontSize="12" Margin="0,0,18,0" Text="{3}: {4}"/>'.format(
-              *(hl_tint(v["rgb"]) + (v["label"], v["what"])))
-          for v in HL_CLASSES.values()) + u"""
+      <WrapPanel Margin="0,10,0,0">
+        <TextBlock Text="Buscar " Style="{StaticResource small}"/>
+        <TextBox x:Name="f_text" Width="300" Height="26" Margin="0,0,18,0" Padding="4,3,4,2"/>
+        <Button x:Name="b_show" Content="Mostrar na vista ativa"/>
+        <Button x:Name="b_expand" Content="Expandir tabelas"/>
+        <Button x:Name="b_collapse" Content="Recolher tabelas"/>
       </WrapPanel>
-      <TextBlock x:Name="hlinfo" TextWrapping="Wrap" FontSize="12" Foreground="#FFB454"
-                 FontFamily="Segoe UI" Margin="0,4,0,0"/>
+      <TextBlock Style="{StaticResource small}" FontSize="11" Foreground="#7A8FA9" Margin="0,4,0,0"
+                 TextWrapping="Wrap"
+                 Text="Clique numa linha: os elementos ficam selecionados no Revit e aparecem na vista ativa. A janela pode ficar aberta enquanto você navega no modelo (abra uma vista 3D para conferir). Clique no título de cada tabela para recolher ou expandir."/>
       <TextBlock x:Name="viewinfo" TextWrapping="Wrap" FontSize="12" Foreground="#7BE3A0"
                  FontFamily="Segoe UI" Margin="0,4,0,0"/>
     </StackPanel>
-    <WrapPanel Grid.Row="1" Margin="0,10,0,6">
-      <TextBlock Text="Buscar " Style="{StaticResource small}"/>
-      <TextBox x:Name="f_text" Width="300" Height="26" Margin="0,0,18,0" Padding="4,3,4,2"/>
-      <Button x:Name="b_show" Content="Mostrar na vista ativa"/>
-      <Button x:Name="b_paint" Content="Colorir vista ativa"/>
-      <TextBlock Style="{StaticResource small}" FontSize="11" Foreground="#7A8FA9"
-                 Text="Clique numa linha: o elemento fica selecionado no Revit. A janela pode ficar aberta enquanto você navega no modelo."/>
-    </WrapPanel>
-    <DockPanel Grid.Row="2" Margin="0,6,0,6" LastChildFill="False">
-      <TextBlock Style="{StaticResource lbl}"
-                 Text="1 · EXCEL &gt; MODELO  (tipos iguais agrupados numa linha)"/>
-      <TextBlock Text="Agrupar por " Style="{StaticResource small}"/>
-      <ComboBox x:Name="f_mode1" Width="120" Height="26" Margin="0,0,14,0"/>
-      <Button x:Name="b_all" Content="Marcar visíveis"/>
-      <Button x:Name="b_none" Content="Desmarcar visíveis"/>
-      <Button x:Name="b_fill" Content="Somente preencher vazios"/>
-      <TextBlock DockPanel.Dock="Right" VerticalAlignment="Center" FontSize="11"
-                 Foreground="#7A8FA9" FontFamily="Segoe UI"
-                 Text="Célula verde = preenche vazio · Âmbar = substitui o valor atual · Cinza = não pode ser gravado"/>
-    </DockPanel>
-    <DataGrid x:Name="grid" Grid.Row="3" """ + _GRID_STYLE + u""">
-      <DataGrid.Columns>""" + _CHECK_COL + u"""
-        """ + _col(u"Agrupamento", u"Grupo", 150) + u"""
-        """ + _col(u"Categoria", u"Categoria", 110) + u"""
-        """ + _col(u"Família", u"Familia", 130) + u"""
-        """ + _col(u"Tipo", u"Tipo", 170) + u"""
-        """ + _col(u"Keynote", u"Keynote", 75, u"mono") + u"""
-        """ + _col(u"Descrição atual", u"PtAtual", 180) + u"""
-        """ + _col(u"Descrição nova", u"PtNova", 180, cell=u"mPt") + u"""
-        """ + _col(u"Descrição em IN atual", u"EnAtual", 160) + u"""
-        """ + _col(u"Descrição em IN nova", u"EnNova", 160, cell=u"mEn") + u"""
-        """ + _col(u"Destino", u"Destino", 150) + u"""
-      </DataGrid.Columns>""" + _GROUP_STYLE + u"""
-    </DataGrid>
-    <DockPanel Grid.Row="5" Margin="0,8,0,6" LastChildFill="False">
-      <TextBlock Style="{StaticResource lbl}"
-                 Text="2 · ELEMENTOS SEM KEYNOTE OU SEM DESCRIÇÃO  (clique duas vezes no Keynote para digitar)"/>
-      <TextBlock Text="Agrupar por " Style="{StaticResource small}"/>
-      <ComboBox x:Name="f_mode2" Width="120" Height="26" Margin="0,0,14,0"/>
-      <Button x:Name="b2_all" Content="Marcar visíveis"/>
-      <Button x:Name="b2_none" Content="Desmarcar visíveis"/>
-      <Button x:Name="b2_check" Content="Verificar no Excel"/>
-      <TextBlock DockPanel.Dock="Right" VerticalAlignment="Center" FontSize="11"
-                 Foreground="#7A8FA9" FontFamily="Segoe UI"
-                 Text="Célula azul = keynote digitado · Verde = trazido do Excel"/>
-    </DockPanel>
-    <DataGrid x:Name="grid2" Grid.Row="6" """ + _GRID_STYLE + u""">
-      <DataGrid.Columns>""" + _CHECK_COL + u"""
-        """ + _col(u"Categoria", u"Categoria", 110) + u"""
-        """ + _col(u"Família", u"Familia", 140) + u"""
-        """ + _col(u"Tipo", u"Tipo", 190) + u"""
-        """ + _col(u"Qtd", u"Qtd", 45, u"mono") + u"""
-        """ + _col(u"Keynote ✎", u"Keynote", 100, u"edit", False, u"mKey") + u"""
-        """ + _col(u"Descrição (Excel)", u"Descricao", 230, cell=u"mPt") + u"""
-        """ + _col(u"Descrição em IN (Excel)", u"DescricaoIN", 210, cell=u"mEn") + u"""
-        """ + _col(u"Verificação", u"Verificacao", 300) + u"""
-      </DataGrid.Columns>""" + _GROUP_STYLE + u"""
-    </DataGrid>
-    <DockPanel Grid.Row="8" Margin="0,8,0,6" LastChildFill="False">
-      <TextBlock Style="{StaticResource lbl}"
-                 Text="3 · ELEMENTOS COM KEYNOTE QUE NÃO ESTÁ NO EXCEL  (só consulta - inclua o código na planilha)"/>
-      <TextBlock Text="Agrupar por " Style="{StaticResource small}"/>
-      <ComboBox x:Name="f_mode3" Width="120" Height="26" Margin="0,0,14,0"/>
-    </DockPanel>
-    <DataGrid x:Name="grid3" Grid.Row="9" """ + _GRID_STYLE + u""" IsReadOnly="True">
-      <DataGrid.Columns>
-        """ + _col(u"Categoria", u"Categoria", 120) + u"""
-        """ + _col(u"Família", u"Familia", 150) + u"""
-        """ + _col(u"Tipo", u"Tipo", 220) + u"""
-        """ + _col(u"Qtd", u"Qtd", 45, u"mono") + u"""
-        """ + _col(u"Keynote", u"Keynote", 100, u"mono") + u"""
-        """ + _col(u"Descrição atual", u"Descricao", 240) + u"""
-        """ + _col(u"Descrição em IN atual", u"DescricaoIN", 220) + u"""
-        """ + _col(u"Situação", u"Verificacao", 260) + u"""
-      </DataGrid.Columns>""" + _GROUP_STYLE_RO + u"""
-    </DataGrid>
-    <DockPanel Grid.Row="10" Margin="0,12,0,0" LastChildFill="False">
-      <TextBlock x:Name="counter" DockPanel.Dock="Left" VerticalAlignment="Center"
-                 Foreground="#CFE3FF" FontFamily="Segoe UI" TextWrapping="Wrap" MaxWidth="900"/>
-      <Button x:Name="b_finish" DockPanel.Dock="Right" Content="Finalizar"
-              Width="130" Margin="0" FontWeight="SemiBold"/>
-      <Button x:Name="b_apply" DockPanel.Dock="Right" Content="Gravar marcados"
-              Width="160" Margin="0,0,10,0"/>
-    </DockPanel>
-  </Grid>
+    <Grid DockPanel.Dock="Bottom" Margin="0,10,12,0">
+      <Grid.ColumnDefinitions>
+        <ColumnDefinition Width="*"/>
+        <ColumnDefinition Width="Auto"/>
+        <ColumnDefinition Width="Auto"/>
+      </Grid.ColumnDefinitions>
+      <TextBlock x:Name="counter" Grid.Column="0" VerticalAlignment="Center" Margin="0,0,12,0"
+                 Foreground="#CFE3FF" FontFamily="Segoe UI" TextWrapping="Wrap"/>
+      <Button x:Name="b_apply" Grid.Column="1" Content="Gravar marcados" MinWidth="170"
+              Margin="0,0,10,0"/>
+      <Button x:Name="b_finish" Grid.Column="2" Content="Finalizar" MinWidth="130"
+              Margin="0" FontWeight="SemiBold"/>
+    </Grid>
+    <ScrollViewer x:Name="scroll" VerticalScrollBarVisibility="Visible"
+                  HorizontalScrollBarVisibility="Disabled" Margin="0,8,0,0">
+      <StackPanel Margin="0,0,12,0">
+        <Expander x:Name="ex1" IsExpanded="True" Margin="0,4,0,0" Foreground="#CFE3FF">
+          <Expander.Header>
+            <StackPanel Orientation="Horizontal">
+              <TextBlock Style="{StaticResource lbl}" Margin="4,0,8,0" Text="1 · EXCEL &gt; MODELO"/>
+              <TextBlock x:Name="h1" Style="{StaticResource small}" Margin="0,0,18,0"
+                         Foreground="#7A8FA9"/>
+              <TextBlock Text="Agrupar por " Style="{StaticResource small}"/>
+              <ComboBox x:Name="f_mode1" Width="120" Height="26" Margin="0,0,14,0"/>
+              <Button x:Name="b_all" Content="Marcar visíveis"/>
+              <Button x:Name="b_none" Content="Desmarcar visíveis"/>
+              <Button x:Name="b_fill" Content="Somente preencher vazios"/>
+            </StackPanel>
+          </Expander.Header>
+          <StackPanel Margin="0,6,0,0">
+            <TextBlock Style="{StaticResource small}" FontSize="11" Foreground="#7A8FA9"
+                       TextWrapping="Wrap"
+                       Text="Tipos com o mesmo keynote, descrições e categoria ficam numa linha só.   Célula verde = preenche vazio  ·  Âmbar = substitui o valor atual  ·  Cinza = não pode ser gravado"/>
+            <DataGrid x:Name="grid" """ + _GRID_STYLE + u""">
+              <DataGrid.Columns>""" + _CHECK_COL + u"""
+                """ + _col(u"Agrupamento", u"Grupo", 150) + u"""
+                """ + _col(u"Categoria", u"Categoria", 110) + u"""
+                """ + _col(u"Família", u"Familia", 130) + u"""
+                """ + _col(u"Tipo", u"Tipo", 170) + u"""
+                """ + _col(u"Keynote", u"Keynote", 75, u"mono") + u"""
+                """ + _col(u"Descrição atual", u"PtAtual", 180) + u"""
+                """ + _col(u"Descrição nova", u"PtNova", 180, cell=u"mPt") + u"""
+                """ + _col(u"Descrição em IN atual", u"EnAtual", 160) + u"""
+                """ + _col(u"Descrição em IN nova", u"EnNova", 160, cell=u"mEn") + u"""
+                """ + _col(u"Destino", u"Destino", 130) + u"""
+              </DataGrid.Columns>""" + _GROUP_STYLE + u"""
+            </DataGrid>
+          </StackPanel>
+        </Expander>
+        <Expander x:Name="ex2" IsExpanded="True" Margin="0,16,0,0" Foreground="#CFE3FF">
+          <Expander.Header>
+            <StackPanel Orientation="Horizontal">
+              <TextBlock Style="{StaticResource lbl}" Margin="4,0,8,0"
+                         Text="2 · ELEMENTOS SEM KEYNOTE OU SEM DESCRIÇÃO"/>
+              <TextBlock x:Name="h2" Style="{StaticResource small}" Margin="0,0,18,0"
+                         Foreground="#7A8FA9"/>
+              <TextBlock Text="Agrupar por " Style="{StaticResource small}"/>
+              <ComboBox x:Name="f_mode2" Width="120" Height="26" Margin="0,0,14,0"/>
+              <Button x:Name="b2_all" Content="Marcar visíveis"/>
+              <Button x:Name="b2_none" Content="Desmarcar visíveis"/>
+              <Button x:Name="b2_check" Content="Verificar no Excel"/>
+            </StackPanel>
+          </Expander.Header>
+          <StackPanel Margin="0,6,0,0">
+            <TextBlock Style="{StaticResource small}" FontSize="11" Foreground="#7A8FA9"
+                       TextWrapping="Wrap"
+                       Text="Clique duas vezes no Keynote para digitar e depois em 'Verificar no Excel' para trazer a Descrição e a Descrição em IN.   Célula azul = keynote digitado  ·  Verde = trazido do Excel"/>
+            <DataGrid x:Name="grid2" """ + _GRID_STYLE + u""">
+              <DataGrid.Columns>""" + _CHECK_COL + u"""
+                """ + _col(u"Categoria", u"Categoria", 110) + u"""
+                """ + _col(u"Família", u"Familia", 140) + u"""
+                """ + _col(u"Tipo", u"Tipo", 190) + u"""
+                """ + _col(u"Qtd", u"Qtd", 45, u"mono") + u"""
+                """ + _col(u"Keynote ✎", u"Keynote", 95, u"edit", False, u"mKey") + u"""
+                """ + _col(u"Descrição (Excel)", u"Descricao", 230, cell=u"mPt") + u"""
+                """ + _col(u"Descrição em IN (Excel)", u"DescricaoIN", 210, cell=u"mEn") + u"""
+                """ + _col(u"Verificação", u"Verificacao", 260) + u"""
+              </DataGrid.Columns>""" + _GROUP_STYLE + u"""
+            </DataGrid>
+          </StackPanel>
+        </Expander>
+        <Expander x:Name="ex3" IsExpanded="True" Margin="0,16,0,8" Foreground="#CFE3FF">
+          <Expander.Header>
+            <StackPanel Orientation="Horizontal">
+              <TextBlock Style="{StaticResource lbl}" Margin="4,0,8,0"
+                         Text="3 · ELEMENTOS COM KEYNOTE QUE NÃO ESTÁ NO EXCEL"/>
+              <TextBlock x:Name="h3" Style="{StaticResource small}" Margin="0,0,18,0"
+                         Foreground="#7A8FA9"/>
+              <TextBlock Text="Agrupar por " Style="{StaticResource small}"/>
+              <ComboBox x:Name="f_mode3" Width="120" Height="26" Margin="0,0,14,0"/>
+            </StackPanel>
+          </Expander.Header>
+          <StackPanel Margin="0,6,0,0">
+            <TextBlock Style="{StaticResource small}" FontSize="11" Foreground="#7A8FA9"
+                       TextWrapping="Wrap"
+                       Text="Só consulta: inclua o código na planilha do Excel e rode o comando de novo."/>
+            <DataGrid x:Name="grid3" """ + _GRID_STYLE + u""" IsReadOnly="True">
+              <DataGrid.Columns>
+                """ + _col(u"Categoria", u"Categoria", 120) + u"""
+                """ + _col(u"Família", u"Familia", 150) + u"""
+                """ + _col(u"Tipo", u"Tipo", 220) + u"""
+                """ + _col(u"Qtd", u"Qtd", 45, u"mono") + u"""
+                """ + _col(u"Keynote", u"Keynote", 95, u"mono") + u"""
+                """ + _col(u"Descrição atual", u"Descricao", 240) + u"""
+                """ + _col(u"Descrição em IN atual", u"DescricaoIN", 220) + u"""
+                """ + _col(u"Situação", u"Verificacao", 240) + u"""
+              </DataGrid.Columns>""" + _GROUP_STYLE_RO + u"""
+            </DataGrid>
+          </StackPanel>
+        </Expander>
+      </StackPanel>
+    </ScrollViewer>
+  </DockPanel>
 </Window>
 """
 
@@ -1884,9 +1755,9 @@ def _key_label(key):
 
 class VerifyWindow(forms.WPFWindow):
     """Janela NÃO modal: o Revit continua utilizável. Tudo que mexe no modelo
-    (mostrar, colorir, gravar) passa por run_in_revit (ExternalEvent)."""
+    (mostrar, gravar) passa por run_in_revit (ExternalEvent)."""
 
-    def __init__(self, rows, inc, notx, info_text, hl_text):
+    def __init__(self, rows, inc, notx, info_text):
         forms.WPFWindow.__init__(self, VERIFY_XAML, literal_string=True)
         self.finalized, self._busy = False, False
         self.rows, self.inc, self.notx = rows, inc, notx
@@ -1894,22 +1765,12 @@ class VerifyWindow(forms.WPFWindow):
         self.by_rid2 = dict((r["rid"], r) for r in inc)
         self.by_rid3 = dict((r["rid"], r) for r in notx)
         self.info.Text = info_text
-        self.hlinfo.Text = hl_text
         self.viewinfo.Text = u""
         self._last_ids = []
-
-        self.t1 = self._new_table(COLS1)
-        self.t2 = self._new_table(COLS2)
-        self.t3 = self._new_table(COLS3)
+        self.t1 = self.t2 = self.t3 = None
         self.d1, self.d2, self.d3 = {}, {}, {}
-        self.grid.ItemsSource = self.t1.DefaultView
-        self.grid2.ItemsSource = self.t2.DefaultView
-        self.grid3.ItemsSource = self.t3.DefaultView
-        from System.Windows.Data import PropertyGroupDescription
         from System.Windows import RoutedEventHandler
         from System.Windows.Controls.Primitives import ButtonBase
-        for g in (self.grid, self.grid2, self.grid3):
-            g.Items.GroupDescriptions.Add(PropertyGroupDescription("Grp"))
         # botões "Marcar grupo / Desmarcar grupo" dos cabeçalhos de grupo
         self.grid.AddHandler(ButtonBase.ClickEvent, RoutedEventHandler(self._grp_click1))
         self.grid2.AddHandler(ButtonBase.ClickEvent, RoutedEventHandler(self._grp_click2))
@@ -1926,13 +1787,15 @@ class VerifyWindow(forms.WPFWindow):
         self.f_mode2.SelectionChanged += self._on_mode
         self.f_mode3.SelectionChanged += self._on_mode
         self.f_text.TextChanged += self._filter
-        self.t1.ColumnChanged += self._on_changed1
-        self.t2.ColumnChanged += self._on_changed2
         self.grid.SelectionChanged += self._on_select1
         self.grid2.SelectionChanged += self._on_select2
         self.grid3.SelectionChanged += self._on_select3
         self.b_show.Click += lambda s, a: self._show(self._last_ids)
-        self.b_paint.Click += self._paint
+        self.b_expand.Click += lambda s, a: self._expand(True)
+        self.b_collapse.Click += lambda s, a: self._expand(False)
+        # a roda do mouse sobre uma tabela rola a janela (as tabelas não rolam)
+        for g in (self.grid, self.grid2, self.grid3):
+            g.PreviewMouseWheel += self._wheel
         self.b_all.Click += lambda s, a: self._set_visible1(lambda r: True)
         self.b_none.Click += lambda s, a: self._set_visible1(lambda r: False)
         self.b_fill.Click += lambda s, a: self._set_visible1(lambda r: not r["over"])
@@ -2018,9 +1881,24 @@ class VerifyWindow(forms.WPFWindow):
         d.update(PtMark=u"", EnMark=u"", KeyMark=u"")
         return d
 
+    @staticmethod
+    def _bind(grid, tb):
+        """Liga a tabela NOVA à grade, agrupada pela coluna Grp. Trocar a fonte
+        inteira (em vez de apagar e refazer as linhas) evita a grade ficar
+        vazia quando uma linha ainda estava em edição."""
+        from System.Windows.Data import PropertyGroupDescription
+        grid.ItemsSource = None
+        grid.Items.GroupDescriptions.Clear()
+        grid.ItemsSource = tb.DefaultView
+        grid.Items.GroupDescriptions.Add(PropertyGroupDescription("Grp"))
+
     def _rebuild(self):
+        self._commit()
         self._busy = True
         try:
+            self.t1 = self._new_table(COLS1)
+            self.t2 = self._new_table(COLS2)
+            self.t3 = self._new_table(COLS3)
             self._fill(self.t1, self.d1, self.rows, self._grp1, self._vals1,
                        lambda r: (r["key"], r["view"]["category"], r["view"]["family"],
                                   r["view"]["type"]))
@@ -2028,13 +1906,28 @@ class VerifyWindow(forms.WPFWindow):
                        lambda r: (r["category"], r["family"], r["name"]))
             self._fill(self.t3, self.d3, self.notx, self._grp3, self._vals3,
                        lambda r: (r["key"], r["category"], r["family"], r["name"]))
+            self._bind(self.grid, self.t1)
+            self._bind(self.grid2, self.t2)
+            self._bind(self.grid3, self.t3)
+            self.t1.ColumnChanged += self._on_changed1
+            self.t2.ColumnChanged += self._on_changed2
+        except Exception as ex:
+            self.viewinfo.Text = u"Erro ao montar as tabelas: {}".format(to_unicode(ex))
         finally:
             self._busy = False
         self._filter(None, None)
 
     def _on_mode(self, sender, args):
-        self._commit()
         self._rebuild()
+
+    # ---- recolher / expandir e rolagem da janela ----
+    def _expand(self, value):
+        for ex in (self.ex1, self.ex2, self.ex3):
+            ex.IsExpanded = value
+
+    def _wheel(self, sender, args):
+        args.Handled = True
+        self.scroll.ScrollToVerticalOffset(self.scroll.VerticalOffset - args.Delta * 0.4)
 
     # ---- busca (vale para as duas tabelas) ----
     def _filter(self, sender, args):
@@ -2057,15 +1950,23 @@ class VerifyWindow(forms.WPFWindow):
         return [int(drv.Row["RowId"]) for drv in tb.DefaultView]
 
     def _commit(self):
-        """Confirma uma célula em edição na tabela 2 antes de ler os valores."""
+        """Confirma células/linhas em edição (tabelas 1 e 2) antes de ler os
+        valores ou remontar as tabelas."""
         try:
             from System.Windows.Controls import DataGridEditingUnit
-            self.grid2.CommitEdit(DataGridEditingUnit.Cell, True)
-            self.grid2.CommitEdit(DataGridEditingUnit.Row, True)
         except Exception:
-            pass
+            return
+        for g in (self.grid, self.grid2):
+            try:
+                g.CommitEdit(DataGridEditingUnit.Cell, True)
+                g.CommitEdit(DataGridEditingUnit.Row, True)
+            except Exception:
+                try:
+                    g.CancelEdit()
+                except Exception:
+                    pass
 
-    # ---- Revit: mostrar / colorir (via ExternalEvent) ----
+    # ---- Revit: selecionar e mostrar na vista ativa (via ExternalEvent) ----
     @staticmethod
     def _ids_of_types(type_ids):
         out = []
@@ -2105,15 +2006,6 @@ class VerifyWindow(forms.WPFWindow):
 
         def act():
             win.viewinfo.Text = show_in_view(win._last_ids)
-        run_in_revit(act)
-
-    def _paint(self, sender, args):
-        win = self
-
-        def act():
-            hl, n_ok = PAINTER.paint(doc.ActiveView)
-            win.hlinfo.Text = (u"Destaque: " + hl_note) if hl_note else (
-                u"Vista '{}'  ·  ".format(to_unicode(doc.ActiveView.Name)) + hl_summary(hl))
         run_in_revit(act)
 
     # ---- tabela 1 ----
@@ -2248,6 +2140,15 @@ class VerifyWindow(forms.WPFWindow):
             u"Tabela 3: {} tipo(s) com Keynote fora do Excel".format(
                 len(s1), tot1, n_types, n_over, len(s2), len(self.inc), n_edit,
                 len(self.notx)))
+        vis = [len(self._visible(tb)) if tb is not None else 0
+               for tb in (self.t1, self.t2, self.t3)]
+        tots = (len(self.rows), len(self.inc), len(self.notx))
+        for lbl, n, tot, extra in ((self.h1, vis[0], tots[0], u"{} marcada(s)".format(len(s1))),
+                                   (self.h2, vis[1], tots[1], u"{} marcada(s)".format(len(s2))),
+                                   (self.h3, vis[2], tots[2], u"")):
+            txt = u"{} linha(s)".format(tot) if n == tot else \
+                u"{} de {} linha(s) na busca".format(n, tot)
+            lbl.Text = u"·  " + txt + (u"  ·  " + extra if extra else u"")
 
     def selected(self):
         return [r for r in self.rows if r["sel"] and r["enabled"]]
@@ -2255,14 +2156,13 @@ class VerifyWindow(forms.WPFWindow):
     def selected_inc(self):
         return [r for r in self.inc if r["sel"]]
 
-    def reload(self, rows, inc, notx, info_text, hl_text, msg):
+    def reload(self, rows, inc, notx, info_text, msg):
         """Depois de gravar: novas linhas (o que ainda falta) nas 3 tabelas."""
         self.rows, self.inc, self.notx = rows, inc, notx
         self.by_rid = dict((r["rid"], r) for r in rows)
         self.by_rid2 = dict((r["rid"], r) for r in inc)
         self.by_rid3 = dict((r["rid"], r) for r in notx)
         self.info.Text = info_text
-        self.hlinfo.Text = hl_text
         self.viewinfo.Text = msg
         self._rebuild()
         self.b_apply.IsEnabled = True
@@ -2279,13 +2179,13 @@ class VerifyWindow(forms.WPFWindow):
         run_in_revit(lambda: save_run(sel1, sel2))
 
     def _finish(self, sender, args):
-        """Devolve as cores, gera/carrega o TXT de Keynote e faz o relatório."""
+        """Gera/carrega o TXT de Keynote e faz o relatório."""
         self.finalized = True
         run_in_revit(finalize_run)
         self.Close()
 
     def _on_closed(self, sender, args):
-        if not self.finalized:            # fechou no X: só devolve as cores
+        if not self.finalized:            # fechou no X: sem TXT e sem relatório
             run_in_revit(cancel_run)
 
 
@@ -2440,17 +2340,15 @@ def make_info_text():
 
 
 analyze_model()
-PAINTER = Painter()
 info_text = make_info_text()
 
 
 def cancel_run():
-    """Janela fechada no X (sem Finalizar): devolve as cores originais do modelo.
-    O que já foi gravado com 'Gravar marcados' continua gravado."""
-    PAINTER.clear()
-    output.print_md(u"**Janela fechada sem Finalizar.** As cores da vista foram restauradas; "
-                    u"{} parâmetro(s) gravado(s) antes continuam no modelo (Ctrl+Z desfaz). "
-                    u"TXT de Keynote e relatório não foram gerados.".format(len(changes)))
+    """Janela fechada no X (sem Finalizar). O que já foi gravado com
+    'Gravar marcados' continua gravado."""
+    output.print_md(u"**Janela fechada sem Finalizar.** {} parâmetro(s) gravado(s) antes "
+                    u"continuam no modelo (Ctrl+Z desfaz). TXT de Keynote e relatório não "
+                    u"foram gerados.".format(len(changes)))
 
 
 # ------------------------------------------------------------------
@@ -2472,7 +2370,7 @@ def inc_view(r):
 
 def save_run(chosen_rows, chosen_inc):
     global INC_FIELDS, MODEL, chosen_ids, chosen_inc_ids, chosen_item_ids, chosen_items
-    global errs, f, failed_rows, field, getp, h, hl, it, label, n_before, n_ok, n_saved
+    global errs, f, failed_rows, field, getp, h, it, label, n_before, n_saved
     global new, old, p, r, t, to_write, tp, where
     n_before = len(changes)
     chosen_ids = set(r["rid"] for r in chosen_rows)
@@ -2598,26 +2496,21 @@ def save_run(chosen_rows, chosen_inc):
         INC_LOG.append(inc_view(r))
     n_saved = len(changes) - n_before
 
-    # relê o modelo, refaz as tabelas e as cores da vista ativa
+    # relê o modelo e refaz as tabelas
     MODEL = collect_model(use_view, opts["materials"])
     analyze_model()
-    PAINTER.clear()
-    hl, n_ok = PAINTER.paint(doc.ActiveView)
     if VW is not None:
         VW.reload(VROWS, INC, NOTX, make_info_text(),
-                  (u"Destaque: " + hl_note) if hl_note else
-                  u"Vista '{}'  ·  {}".format(to_unicode(doc.ActiveView.Name), hl_summary(hl)),
                   u"{} parâmetro(s) gravado(s) no modelo. Tabelas atualizadas - "
                   u"grave mais ou clique em Finalizar.".format(n_saved))
 
 
 def finalize_run():
-    global FIELD_LABEL, HL_FINAL, ISSUES, RESULT, XL_FIELD_LABEL, _ag, _name, agcat, aggrp
+    global FIELD_LABEL, ISSUES, RESULT, XL_FIELD_LABEL, _ag, _name, agcat, aggrp
     global all_keys, build_result, c, cat_summary, cats, data, eff_en, eff_pt, excel_table
     global f, flags, h, holders, html, in_excel, in_model, inc_written, issue_count, it, k
     global key, keynotes_out, m_en, m_pt, missing_in_by_cat, msg, n, ok, out_path, r, rec
     global s, template_path, txt_info, txt_text, txt_warns, v, with_in, x, xl_en, xl_pt
-    PAINTER.clear()                    # devolve as cores originais do modelo
     # o que ficou nas tabelas sem gravar entra como pendente no relatório
     for it in m_blocked:
         h = it["h"]
@@ -2878,10 +2771,6 @@ def finalize_run():
         return out
 
 
-    # destaque recalculado depois das gravações (para o relatório)
-    HL_FINAL = collect_highlight() if opts["highlight"] else []
-
-
     # ------------------------------------------------------------------
     # 8. Janela de saída + relatório HTML (opcional nos modos que gravam)
     # ------------------------------------------------------------------
@@ -2898,9 +2787,6 @@ def finalize_run():
                              "both": u"modelo e no Excel"}[RESULT["target"]],
                             len(RESULT["filled"]), len(RESULT["changed"]),
                             len(RESULT["missing"])))
-    if opts["highlight"]:
-        output.print_md(u"- Situação após gravar (vista ativa): {}".format(
-            hl_note or hl_summary(HL_FINAL)))
     inc_written = [r for r in INC_LOG if r["status"].startswith(u"Gravado")]
     if INC_LOG or INC:
         output.print_md(u"- Tabela 2 (tipos sem Keynote / Descrição): **{}** tipo(s) "
@@ -2963,8 +2849,6 @@ def finalize_run():
                         "typeId": r["id"], "count": r["count"], "key": r["key"],
                         "pt": r["pt"], "en": r["en"], "hasIn": r["hasIn"]} for r in NOTX],
         "excelTable": excel_table(),
-        "highlight": [dict((k, v) for k, v in x.items() if k != "ids") for x in HL_FINAL],
-        "highlightNote": hl_note if opts["highlight"] else u"desligado",
         "txt": txt_info,
         "result": RESULT,
         "changes": changes,
@@ -2993,19 +2877,79 @@ def finalize_run():
 
 
 # ------------------------------------------------------------------
-# 9. Abre a tabela de verificação (NÃO modal) com o modelo colorido
+# 9. Remove as cores que as versões anteriores deixaram no modelo e abre a
+#    tabela de verificação (NÃO modal)
 # ------------------------------------------------------------------
-_n_left = recover_leftover_colors()
-if _n_left:
-    output.print_md(u"- Cores que tinham ficado de uma execução anterior foram limpas "
-                    u"({} elemento(s)).".format(_n_left))
-_hl, _n_ok = PAINTER.paint(active_view)
-if hl_note:
-    _hl_text = u"Destaque indisponível: {}. Abra uma planta, corte ou 3D e clique em " \
-               u"'Colorir vista ativa'.".format(hl_note)
-else:
-    _hl_text = u"Vista '{}'  ·  {}".format(to_unicode(active_view.Name), hl_summary(_hl))
+def cleanup_old_colors():
+    """Na 1ª execução desta versão (por documento) procura em TODAS as vistas;
+    depois, só na vista ativa e nas vistas anotadas pela versão anterior."""
+    done_mark = _colors_log_path("keynotes_cores_limpeza")
+    old_log = _colors_log_path()
+    logged = set()
+    if old_log and os.path.isfile(old_log):
+        try:
+            with codecs.open(old_log, "r", encoding="utf-8") as f:
+                logged = set(int(v) for v in json.load(f).get("views", {}).keys())
+        except Exception:
+            logged = set()
+    first = not (done_mark and os.path.isfile(done_mark))
+    if first:
+        views = graphic_views()
+    else:
+        views = [v for v in graphic_views()
+                 if eid_int(v.Id) in logged or eid_int(v.Id) == eid_int(active_view.Id)]
+    if not views:
+        found = []
+    elif len(views) > 3:
+        with forms.ProgressBar(title=u"Procurando cores antigas do comando nas vistas "
+                                     u"({value} de {max_value})") as pb:
+            found = find_old_highlight(views, pb)
+    else:
+        found = find_old_highlight(views)
+
+    def mark_done():
+        for path in (old_log,):
+            try:
+                if path and os.path.isfile(path):
+                    os.remove(path)
+            except Exception:
+                pass
+        try:
+            if done_mark:
+                with codecs.open(done_mark, "w", encoding="utf-8") as f:
+                    json.dump({"done": datetime.now().isoformat()}, f)
+        except Exception:
+            pass
+
+    if not found:
+        mark_done()
+        return
+    n = sum(len(ids) for _v, ids in found)
+    lines = [u"  • {}: {} elemento(s)".format(to_unicode(v.Name), len(ids))
+             for v, ids in found[:12]]
+    if len(found) > 12:
+        lines.append(u"  • ... e mais {} vista(s)".format(len(found) - 12))
+    if forms.alert(u"As versões anteriores deste comando deixaram cores no modelo "
+                   u"({} elemento(s) em {} vista(s)):\n\n{}\n\nRemover agora? A "
+                   u"sobreposição gráfica desses elementos volta ao padrão da vista."
+                   .format(n, len(found), u"\n".join(lines)), yes=True, no=True):
+        ok, bad = clear_old_highlight(found)
+        output.print_md(u"- Cores antigas do comando removidas: **{}** elemento(s){}.".format(
+            ok, u" · {} não puderam ser limpos (vista emprestada por outro usuário?)"
+            .format(bad) if bad else u""))
+        if not bad:
+            mark_done()
+    else:
+        output.print_md(u"- :warning: {} elemento(s) ainda com as cores antigas do comando "
+                        u"(pergunta de novo na próxima execução).".format(n))
+
+
+try:
+    cleanup_old_colors()
+except Exception as _ex:
+    output.print_md(u"- :warning: Não foi possível verificar as cores antigas: {}".format(
+        to_unicode(_ex)))
 if not VROWS and not INC:
     info_text += u"  ·  Nada a atualizar: o modelo já coincide com o Excel."
-VW = VerifyWindow(VROWS, INC, NOTX, info_text, _hl_text)
+VW = VerifyWindow(VROWS, INC, NOTX, info_text)
 VW.Show()
