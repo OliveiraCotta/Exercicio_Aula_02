@@ -63,6 +63,7 @@ from datetime import datetime
 from collections import OrderedDict, defaultdict
 
 from pyrevit import revit, DB, script, forms
+from oca_ui import build_xaml, alert_title, brand_report, output_header
 
 import clr
 clr.AddReference("System.Xml")
@@ -87,6 +88,7 @@ HERE = os.path.dirname(__file__)
 
 output = script.get_output()
 output.set_title("Atualização Descrição por Keynotes")
+ALERT_TITLE = alert_title(__title__)
 
 
 # ------------------------------------------------------------------
@@ -201,76 +203,76 @@ def open_in_browser(path):
 
 
 # ------------------------------------------------------------------
-# 1. Janela de opções
+# 1. Janela de opções (padrão visual OCA - lib/oca_ui)
 # ------------------------------------------------------------------
-KN_XAML = u"""
-<Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
-        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="Atualização Descrição por Keynotes" Height="Auto" Width="560"
-        SizeToContent="Height" WindowStartupLocation="CenterScreen"
-        ResizeMode="NoResize" Background="#0E1526">
-  <Window.Resources>
-    <Style TargetType="TextBlock">
-      <Setter Property="Foreground" Value="#CFE3FF"/>
-      <Setter Property="FontFamily" Value="Segoe UI"/>
-      <Setter Property="Margin" Value="0,12,0,4"/>
-    </Style>
-    <Style TargetType="RadioButton">
-      <Setter Property="Foreground" Value="#D9E8F5"/>
-      <Setter Property="FontFamily" Value="Segoe UI"/>
-      <Setter Property="Margin" Value="0,4,0,0"/>
-    </Style>
-    <Style TargetType="CheckBox">
-      <Setter Property="Foreground" Value="#D9E8F5"/>
-      <Setter Property="FontFamily" Value="Segoe UI"/>
-      <Setter Property="Margin" Value="0,8,0,0"/>
-    </Style>
-  </Window.Resources>
-  <StackPanel Margin="18">
-    <TextBlock Text="KEYNOTES  ×  EXCEL" FontSize="15" FontWeight="SemiBold"
-               Foreground="#65E3FF" Margin="0,0,0,4"/>
-    <TextBlock TextWrapping="Wrap" FontSize="11" Foreground="#7A8FA9" Margin="0,0,0,4"
-               Text="Compara os Keynotes dos tipos e materiais usados no modelo com a aba MATERIAIS da planilha, nos dois sentidos. Descrição PT = parâmetro Description; Descrição IN = parâmetro compartilhado 'Descrição IN' (GUID 70307f6e). Antes de gravar abre a tabela de verificação para marcar o que muda no modelo e o que muda no Excel."/>
+KN_BODY = u"""
+  <StackPanel>
+    <TextBlock Style="{StaticResource oca.Hint}" Margin="0,0,0,14"
+               Text="Descrição PT = parâmetro Description; Descrição IN = parâmetro compartilhado 'Descrição IN' (GUID 70307f6e). Antes de gravar abre a tabela de verificação para marcar o que muda no modelo e o que muda no Excel."/>
 
-    <TextBlock Text="Planilha Excel (.xlsx - feche o arquivo no Excel antes de gravar)"/>
-    <DockPanel LastChildFill="True">
-      <Button x:Name="browse" DockPanel.Dock="Right" Content="Procurar..." Width="90"
-              Height="26" Margin="8,0,0,0"/>
-      <TextBox x:Name="xlsx" Height="26" Padding="4,3,4,2"/>
-    </DockPanel>
+    <HeaderedContentControl Header="PLANILHA EXCEL" Style="{StaticResource oca.Section}">
+      <StackPanel>
+        <Grid>
+          <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="*"/>
+            <ColumnDefinition Width="Auto"/>
+          </Grid.ColumnDefinitions>
+          <TextBox x:Name="xlsx"/>
+          <Button x:Name="browse" Grid.Column="1" Content="Procurar..." Margin="8,0,0,0"/>
+        </Grid>
+        <TextBlock Text=".xlsx - feche o arquivo no Excel antes de gravar." Style="{StaticResource oca.Hint}" Margin="0,4,0,0"/>
+      </StackPanel>
+    </HeaderedContentControl>
 
-    <TextBlock Text="Verificação / atualização"/>
-    <RadioButton x:Name="m_analyze" GroupName="mode"
-                 Content="Somente analisar  (tabela de verificação + relatório - nada é gravado)"/>
-    <RadioButton x:Name="m_to_excel" GroupName="mode"
-                 Content="Modelo → Excel  (dados do modelo comparados com o Excel)"/>
-    <RadioButton x:Name="m_to_model" GroupName="mode"
-                 Content="Excel → Modelo  (dados do Excel comparados com o modelo)"/>
-    <RadioButton x:Name="m_both" GroupName="mode"
-                 Content="Ambos, simultâneo  (escolher na tabela o que vai para cada lado)"/>
+    <HeaderedContentControl Header="VERIFICAÇÃO / ATUALIZAÇÃO" Style="{StaticResource oca.Section}">
+      <StackPanel>
+        <RadioButton x:Name="m_analyze" GroupName="mode">
+          <TextBlock TextWrapping="Wrap"><Run Text="Somente analisar"/><Run Text="  ·  tabela de verificação + relatório - nada é gravado" FontSize="11" Foreground="{StaticResource oca.Ink2}"/></TextBlock>
+        </RadioButton>
+        <RadioButton x:Name="m_to_excel" GroupName="mode">
+          <TextBlock TextWrapping="Wrap"><Run Text="Modelo → Excel"/><Run Text="  ·  dados do modelo comparados com o Excel" FontSize="11" Foreground="{StaticResource oca.Ink2}"/></TextBlock>
+        </RadioButton>
+        <RadioButton x:Name="m_to_model" GroupName="mode">
+          <TextBlock TextWrapping="Wrap"><Run Text="Excel → Modelo"/><Run Text="  ·  dados do Excel comparados com o modelo" FontSize="11" Foreground="{StaticResource oca.Ink2}"/></TextBlock>
+        </RadioButton>
+        <RadioButton x:Name="m_both" GroupName="mode">
+          <TextBlock TextWrapping="Wrap"><Run Text="Ambos, simultâneo"/><Run Text="  ·  escolher na tabela o que vai para cada lado" FontSize="11" Foreground="{StaticResource oca.Ink2}"/></TextBlock>
+        </RadioButton>
+      </StackPanel>
+    </HeaderedContentControl>
 
-    <TextBlock Text="Escopo"/>
-    <RadioButton x:Name="s_model" GroupName="scope" Content="Modelo inteiro"/>
-    <RadioButton x:Name="s_view" GroupName="scope" Content="Somente elementos visíveis na vista ativa"/>
-    <CheckBox x:Name="materials" Content="Incluir Keynotes de materiais"/>
-    <CheckBox x:Name="highlight" Content="Destacar no modelo (vista ativa) durante a verificação: vermelho / laranja"/>
+    <HeaderedContentControl Header="ESCOPO" Style="{StaticResource oca.Section}">
+      <StackPanel>
+        <RadioButton x:Name="s_model" GroupName="scope" Content="Modelo inteiro"/>
+        <RadioButton x:Name="s_view" GroupName="scope" Content="Somente elementos visíveis na vista ativa"/>
+        <CheckBox x:Name="materials" Content="Incluir Keynotes de materiais" Margin="0,6,0,6"/>
+        <CheckBox x:Name="highlight" Content="Destacar no modelo (vista ativa) durante a verificação: vermelho / laranja"/>
+      </StackPanel>
+    </HeaderedContentControl>
 
-    <TextBlock Text="TXT de Keynotes do Revit"/>
-    <CheckBox x:Name="txt_on" Margin="0,2,0,6"
-              Content="Gerar o TXT a partir do Excel e carregar no projeto (confirma no final)"/>
-    <DockPanel LastChildFill="True">
-      <Button x:Name="txt_browse" DockPanel.Dock="Right" Content="Salvar como..." Width="90"
-              Height="26" Margin="8,0,0,0"/>
-      <TextBox x:Name="txt_path" Height="26" Padding="4,3,4,2"/>
-    </DockPanel>
+    <HeaderedContentControl Header="TXT DE KEYNOTES DO REVIT" Style="{StaticResource oca.Section}">
+      <StackPanel>
+        <CheckBox x:Name="txt_on" Margin="0,0,0,8"
+                  Content="Gerar o TXT a partir do Excel e carregar no projeto (confirma no final)"/>
+        <Grid>
+          <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="*"/>
+            <ColumnDefinition Width="Auto"/>
+          </Grid.ColumnDefinitions>
+          <TextBox x:Name="txt_path"/>
+          <Button x:Name="txt_browse" Grid.Column="1" Content="Salvar como..." Margin="8,0,0,0"
+                 />
+        </Grid>
+      </StackPanel>
+    </HeaderedContentControl>
+  </StackPanel>"""
 
-    <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,20,0,0">
-      <Button x:Name="cancel" Content="Cancelar" Width="90" Height="28" Margin="0,0,10,0"/>
-      <Button x:Name="ok" Content="Executar" Width="120" Height="28"/>
-    </StackPanel>
-  </StackPanel>
-</Window>
-"""
+KN_FOOTER = u"""
+  <Button x:Name="ok" Content="Executar" Style="{StaticResource oca.Primary}"/>
+  <Button x:Name="cancel" Content="Cancelar" Margin="8,0,0,0"/>"""
+
+KN_XAML = build_xaml(title=__title__, subtitle=__doc__, body=KN_BODY,
+                     footer_right=KN_FOOTER, size="M")
 
 
 def default_txt_path(xlsx_path):
@@ -321,11 +323,12 @@ class KeynoteWindow(forms.WPFWindow):
     def _ok(self, sender, args):
         path = to_unicode(self.xlsx.Text).strip().strip('"')
         if not path or not os.path.isfile(path) or not path.lower().endswith(".xlsx"):
-            forms.alert(u"Selecione um arquivo .xlsx válido.", title=__title__.replace("\n", " "))
+            forms.alert(u"Selecione um arquivo .xlsx válido.",
+                        sub_msg=u"Use Procurar... para escolher a planilha de Keynotes.", title=ALERT_TITLE)
             return
         txt = to_unicode(self.txt_path.Text).strip().strip('"') or default_txt_path(path)
         if self.txt_on.IsChecked and not os.path.isdir(os.path.dirname(txt) or u"."):
-            forms.alert(u"Pasta do TXT de Keynotes não existe:\n{}".format(txt))
+            forms.alert(u"A pasta do TXT de Keynotes não existe.", sub_msg=txt, title=ALERT_TITLE)
             return
         if self.m_to_excel.IsChecked:
             mode = "to_excel"
@@ -391,9 +394,9 @@ if use_view:
             bad.add(_vt)
     if active_view is None or getattr(active_view, "IsTemplate", False) \
             or active_view.ViewType in bad:
-        forms.alert(u"A vista ativa não é uma vista gráfica (tabela, folha...).\n"
-                    u"Abra uma planta, corte, elevação ou 3D, ou use o escopo "
-                    u"'Modelo inteiro'.", exitscript=True)
+        forms.alert(u"A vista ativa não é uma vista gráfica (tabela, folha...).",
+                    sub_msg=u"Abra uma planta, corte, elevação ou 3D, ou use o escopo "
+                            u"'Modelo inteiro'.", title=ALERT_TITLE, exitscript=True)
 
 
 # ------------------------------------------------------------------
@@ -652,8 +655,8 @@ def read_excel(path):
 try:
     XL = read_excel(XLSX_PATH)
 except Exception as ex:
-    forms.alert(u"Não foi possível ler a planilha:\n{}".format(to_unicode(ex)),
-                exitscript=True)
+    forms.alert(u"Não foi possível ler a planilha.", sub_msg=to_unicode(ex),
+                title=ALERT_TITLE, exitscript=True)
 
 
 # ------------------------------------------------------------------
@@ -948,15 +951,16 @@ if "model" in MODE_DIRS[MODE] and MODE != "analyze":
     clash = sorted(set(h["category"] for hs in MODEL.values() for h in hs if h["en_clash"]))
     if missing_cats:
         msg = (u"O parâmetro compartilhado '{}' (GUID {}) não está disponível em:\n\n"
-               u"{}\n\nVincular ao projeto como parâmetro de TIPO nessas categorias?\n"
-               u"(sem ele, a descrição em inglês não é gravada nesses itens)").format(
+               u"{}\n\nSem ele, a descrição em inglês não é gravada nesses itens.").format(
                    PARAM_IN_NAME, PARAM_IN_GUID_STR,
                    u"\n".join(u"  • " + to_unicode(c.Name) for c in missing_cats))
         if clash:
             msg += (u"\n\nAtenção: em {} já existe um parâmetro '{}' que NÃO é o "
                     u"compartilhado do escritório (GUID diferente). Ele será ignorado."
                     ).format(u", ".join(clash), PARAM_IN_NAME)
-        if forms.alert(msg, yes=True, no=True):
+        if forms.alert(u"Vincular o parâmetro '{}' ao projeto como parâmetro de TIPO nessas "
+                       u"categorias?".format(PARAM_IN_NAME), sub_msg=msg, title=ALERT_TITLE,
+                       yes=True, no=True):
             ok, info = bind_in_param(missing_cats)
             output.print_md(u"- Parâmetro **{}**: {}{}".format(
                 PARAM_IN_NAME, u"" if ok else u":warning: não vinculado - ", info))
@@ -965,7 +969,7 @@ if "model" in MODE_DIRS[MODE] and MODE != "analyze":
 
 if not MODEL and MODE == "to_model":
     forms.alert(u"Nenhum tipo ou material com Keynote preenchido foi encontrado "
-                u"no escopo escolhido.", exitscript=True)
+                u"no escopo escolhido.", title=ALERT_TITLE, exitscript=True)
 
 
 # ------------------------------------------------------------------
@@ -1555,91 +1559,70 @@ for _asm in ("PresentationFramework", "PresentationCore", "WindowsBase", "System
 import System
 from System.Data import DataTable
 
-VERIFY_XAML = u"""
-<Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
-        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="Verificação de Keynotes · Modelo × Excel" Width="1400" Height="780"
-        MinWidth="900" MinHeight="460" WindowStartupLocation="CenterScreen"
-        Background="#0E1526">
-  <Window.Resources>
-    <Style TargetType="Button">
-      <Setter Property="Height" Value="28"/>
-      <Setter Property="Padding" Value="12,0,12,0"/>
-      <Setter Property="Margin" Value="0,0,8,0"/>
-    </Style>
-    <Style x:Key="wrap" TargetType="TextBlock">
-      <Setter Property="TextWrapping" Value="Wrap"/>
-      <Setter Property="Padding" Value="4,2,4,2"/>
-    </Style>
-    <Style x:Key="mono" TargetType="TextBlock">
-      <Setter Property="FontFamily" Value="Consolas"/>
-      <Setter Property="Padding" Value="4,2,4,2"/>
-    </Style>
-  </Window.Resources>
-  <Grid Margin="16">
+VERIFY_BODY = u"""
+  <Grid>
+    <Grid.Resources>
+      <Style x:Key="wrap" TargetType="TextBlock">
+        <Setter Property="TextWrapping" Value="Wrap"/>
+        <Setter Property="Padding" Value="4,2,4,2"/>
+      </Style>
+      <Style x:Key="mono" TargetType="TextBlock">
+        <Setter Property="FontFamily" Value="Consolas"/>
+        <Setter Property="Padding" Value="4,2,4,2"/>
+      </Style>
+    </Grid.Resources>
     <Grid.RowDefinitions>
       <RowDefinition Height="Auto"/>
       <RowDefinition Height="Auto"/>
       <RowDefinition Height="*"/>
-      <RowDefinition Height="Auto"/>
     </Grid.RowDefinitions>
+
     <StackPanel Grid.Row="0">
-      <TextBlock Text="VERIFICAÇÃO  ·  MODELO × EXCEL" FontSize="15" FontWeight="SemiBold"
-                 Foreground="#65E3FF" FontFamily="Segoe UI"/>
-      <TextBlock x:Name="info" TextWrapping="Wrap" FontSize="12" Foreground="#CFE3FF"
-                 FontFamily="Segoe UI" Margin="0,6,0,0"/>
-      <TextBlock x:Name="hlinfo" TextWrapping="Wrap" FontSize="12" Foreground="#FF9A9A"
-                 FontFamily="Segoe UI" Margin="0,4,0,0"/>
-      <TextBlock TextWrapping="Wrap" FontSize="11" Foreground="#7A8FA9" FontFamily="Segoe UI"
-                 Margin="0,4,0,0"
+      <Border Style="{StaticResource oca.Msg.Info}" Margin="0"
+              Visibility="{Binding Visibility, ElementName=info}">
+        <TextBlock x:Name="info" Style="{StaticResource oca.MsgText}"/>
+      </Border>
+      <Border Style="{StaticResource oca.Msg.Err}" Margin="0,6,0,0"
+              Visibility="{Binding Visibility, ElementName=hlinfo}">
+        <TextBlock x:Name="hlinfo" Style="{StaticResource oca.MsgText}"/>
+      </Border>
+      <TextBlock Style="{StaticResource oca.Hint}" Margin="0,8,0,0"
                  Text="→ Modelo = valor do Excel gravado no tipo/material  ·  → Excel = valor do modelo gravado na planilha  ·  Verde = preenche vazio  ·  Âmbar = sobrescreve valor existente  ·  Cinza = não pode ser gravado. Marcar a linha do agrupamento marca o grupo inteiro (linhas visíveis). Um mesmo campo não pode ir para os dois lados ao mesmo tempo: marcar um lado desmarca o outro."/>
     </StackPanel>
+
     <WrapPanel Grid.Row="1" Margin="0,12,0,8">
-      <TextBlock Text="Sentido " Foreground="#CFE3FF" VerticalAlignment="Center" FontFamily="Segoe UI"/>
-      <ComboBox x:Name="f_dir" Width="170" Height="26" Margin="0,0,14,0"/>
-      <TextBlock Text="Agrupamento " Foreground="#CFE3FF" VerticalAlignment="Center" FontFamily="Segoe UI"/>
-      <ComboBox x:Name="f_cat" Width="210" Height="26" Margin="0,0,14,0"/>
-      <TextBlock Text="Buscar " Foreground="#CFE3FF" VerticalAlignment="Center" FontFamily="Segoe UI"/>
-      <TextBox x:Name="f_text" Width="200" Height="26" Margin="0,0,14,0" Padding="4,3,4,2"/>
-      <Button x:Name="b_all" Content="Marcar visíveis"/>
-      <Button x:Name="b_none" Content="Desmarcar visíveis"/>
+      <TextBlock Text="Sentido" Style="{StaticResource oca.Label}"/>
+      <ComboBox x:Name="f_dir" Width="170" Margin="0,0,16,0"/>
+      <TextBlock Text="Agrupamento" Style="{StaticResource oca.Label}"/>
+      <ComboBox x:Name="f_cat" Width="210" Margin="0,0,16,0"/>
+      <TextBlock Text="Buscar" Style="{StaticResource oca.Label}"/>
+      <TextBox x:Name="f_text" Width="200" Margin="0,0,16,0"/>
+      <Button x:Name="b_all" Content="Marcar visíveis" Margin="0,0,8,0"/>
+      <Button x:Name="b_none" Content="Desmarcar visíveis" Margin="0,0,8,0"/>
       <Button x:Name="b_fill" Content="Somente preencher vazios"/>
     </WrapPanel>
+
     <DataGrid x:Name="grid" Grid.Row="2" AutoGenerateColumns="False" CanUserAddRows="False"
               CanUserDeleteRows="False" CanUserSortColumns="False" CanUserReorderColumns="False"
-              CanUserResizeRows="False" HeadersVisibility="Column" SelectionMode="Single"
-              SelectionUnit="FullRow" GridLinesVisibility="Horizontal"
-              HorizontalGridLinesBrush="#1C2B44" Background="#0A1120" RowBackground="#0E1526"
-              AlternatingRowBackground="#111C31" Foreground="#D9E8F5" BorderBrush="#2A4A66"
-              BorderThickness="1" FontFamily="Segoe UI" FontSize="12"
+              CanUserResizeRows="False" SelectionMode="Single" SelectionUnit="FullRow"
               VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Auto"
               EnableRowVirtualization="True" FrozenColumnCount="1">
-      <DataGrid.ColumnHeaderStyle>
-        <Style TargetType="DataGridColumnHeader">
-          <Setter Property="Background" Value="#13203A"/>
-          <Setter Property="Foreground" Value="#65E3FF"/>
-          <Setter Property="FontWeight" Value="SemiBold"/>
-          <Setter Property="Padding" Value="6,6,6,6"/>
-          <Setter Property="BorderBrush" Value="#2A4A66"/>
-          <Setter Property="BorderThickness" Value="0,0,1,1"/>
-        </Style>
-      </DataGrid.ColumnHeaderStyle>
       <DataGrid.RowStyle>
-        <Style TargetType="DataGridRow">
+        <Style TargetType="DataGridRow" BasedOn="{StaticResource {x:Type DataGridRow}}">
           <Style.Triggers>
             <DataTrigger Binding="{Binding Kind}" Value="group">
-              <Setter Property="Background" Value="#1B2A47"/>
-              <Setter Property="Foreground" Value="#65E3FF"/>
+              <Setter Property="Background" Value="{StaticResource oca.AccentSoft}"/>
+              <Setter Property="Foreground" Value="{StaticResource oca.Accent}"/>
               <Setter Property="FontWeight" Value="Bold"/>
             </DataTrigger>
             <DataTrigger Binding="{Binding Kind}" Value="fill">
-              <Setter Property="Foreground" Value="#7BE3A0"/>
+              <Setter Property="Foreground" Value="{StaticResource oca.Ok}"/>
             </DataTrigger>
             <DataTrigger Binding="{Binding Kind}" Value="over">
-              <Setter Property="Foreground" Value="#FFB454"/>
+              <Setter Property="Foreground" Value="{StaticResource oca.Warn}"/>
             </DataTrigger>
             <DataTrigger Binding="{Binding Kind}" Value="blocked">
-              <Setter Property="Foreground" Value="#7A8FA9"/>
+              <Setter Property="Foreground" Value="{StaticResource oca.Ink2}"/>
             </DataTrigger>
           </Style.Triggers>
         </Style>
@@ -1648,7 +1631,7 @@ VERIFY_XAML = u"""
         <DataGridTemplateColumn Header="✓" Width="36">
           <DataGridTemplateColumn.CellTemplate>
             <DataTemplate>
-              <CheckBox HorizontalAlignment="Center" VerticalAlignment="Center"
+              <CheckBox HorizontalAlignment="Center" VerticalAlignment="Center" Margin="0"
                         IsChecked="{Binding Sel, UpdateSourceTrigger=PropertyChanged}"
                         IsEnabled="{Binding Enabled}"/>
             </DataTemplate>
@@ -1665,17 +1648,21 @@ VERIFY_XAML = u"""
         <DataGridTextColumn Header="Destino" Binding="{Binding Destino}" Width="200" IsReadOnly="True" ElementStyle="{StaticResource wrap}"/>
       </DataGrid.Columns>
     </DataGrid>
-    <DockPanel Grid.Row="3" Margin="0,12,0,0" LastChildFill="False">
-      <TextBlock x:Name="counter" DockPanel.Dock="Left" VerticalAlignment="Center"
-                 Foreground="#CFE3FF" FontFamily="Segoe UI"/>
-      <Button x:Name="b_apply" DockPanel.Dock="Right" Content="Gravar marcados"
-              Width="160" Margin="0"/>
-      <Button x:Name="b_cancel" DockPanel.Dock="Right" Content="Cancelar" Width="100"
-              Margin="0,0,10,0"/>
-    </DockPanel>
-  </Grid>
-</Window>
-"""
+  </Grid>"""
+
+VERIFY_FOOTER_LEFT = u"""
+  <TextBlock x:Name="counter" VerticalAlignment="Center" Foreground="{StaticResource oca.Ink}"/>"""
+
+VERIFY_FOOTER = u"""
+  <Button x:Name="b_apply" Content="Gravar marcados" Style="{StaticResource oca.Primary}"/>
+  <Button x:Name="b_cancel" Content="Cancelar" Margin="8,0,0,0"/>"""
+
+VERIFY_XAML = build_xaml(title=u"Verificação · Modelo × Excel",
+                         subtitle=u"Atualização Descrição por Keynotes · marque o que muda no modelo "
+                                  u"e o que muda na planilha.",
+                         body=VERIFY_BODY, footer_right=VERIFY_FOOTER,
+                         footer_left=VERIFY_FOOTER_LEFT, size="L", height=780, width=1400)
+
 
 DIR_LABEL = {"all": u"Todos", "model": u"Excel → Modelo", "excel": u"Modelo → Excel"}
 COLS = ("Grupo", "Familia", "Tipo", "Keynote", "PtAtual", "PtNova", "EnAtual",
@@ -2075,8 +2062,8 @@ if chosen_items:
         t.Commit()
     except Exception as ex:
         t.RollBack()
-        forms.alert(u"Atualização do modelo desfeita (rollback):\n{}".format(to_unicode(ex)),
-                    exitscript=True)
+        forms.alert(u"Atualização do modelo desfeita (rollback). Nada foi gravado no modelo.",
+                    sub_msg=to_unicode(ex), title=ALERT_TITLE, exitscript=True)
 
 # ---- Modelo -> Excel: grava as linhas marcadas ----
 x_chosen = [r for r in chosen_rows if r["dir"] == "excel"]
@@ -2091,9 +2078,10 @@ if x_chosen:
                 fills.append((r["rec"], f, r[f + "_new"]))
     xl_ok = True
     while not ensure_file_closed(XLSX_PATH):
-        if not forms.alert(u"A planilha está aberta (ou bloqueada).\n\n{}\n\n"
-                           u"Feche o arquivo no Excel e clique em Sim para tentar de novo.\n"
-                           u"Não = não gravar no Excel.".format(XLSX_PATH), yes=True, no=True):
+        if not forms.alert(u"A planilha está aberta (ou bloqueada). Tentar de novo?",
+                           sub_msg=u"{}\n\nFeche o arquivo no Excel e clique em Sim para tentar de novo.\n"
+                                   u"Não = não gravar no Excel.".format(XLSX_PATH),
+                           title=ALERT_TITLE, yes=True, no=True):
             xl_ok = False
             break
     if xl_ok:
@@ -2116,9 +2104,10 @@ if x_chosen:
                                 "id": None})
         except Exception as ex:
             xl_ok = False
-            forms.alert(u"Falha ao gravar a planilha. Se o arquivo não abrir, restaure o "
-                        u"backup criado ao lado dele (*_backup_AAAAMMDD_HHMMSS.xlsx).\n\n{}".format(
-                            to_unicode(ex)))
+            forms.alert(u"Falha ao gravar a planilha.",
+                        sub_msg=u"Se o arquivo não abrir, restaure o backup criado ao lado dele "
+                                u"(*_backup_AAAAMMDD_HHMMSS.xlsx).\n\n{}".format(to_unicode(ex)),
+                        title=ALERT_TITLE)
     if not xl_ok:
         for r in x_chosen:
             failed_rows.add(r["rid"])
@@ -2138,12 +2127,12 @@ if opts["txt_on"]:
     txt_info["warnings"] = txt_warns
     txt_info["lines"] = len(txt_text.splitlines())
     n_keys = txt_info["lines"] - len(XL["kn_headers"]) - len(XL["dados_rows"])
-    if forms.alert(u"Gravar o TXT de Keynotes do Revit a partir do Excel e carregar no "
-                   u"projeto?\n\n{}\n\n{} agrupamento(s) · {} grupo(s) · {} keynote(s)\n"
+    if forms.alert(u"Gravar o TXT de Keynotes do Revit a partir do Excel e carregar no projeto?",
+                   sub_msg=u"{}\n\n{} agrupamento(s) · {} grupo(s) · {} keynote(s)\n"
                    u"Texto do keynote = DESCRIÇÃO | DESCRIÇÃO IN{}".format(
                        opts["txt_path"], len(XL["kn_headers"]), len(XL["dados_rows"]), n_keys,
                        u"\n\n{} aviso(s) - ver relatório.".format(len(txt_warns))
-                       if txt_warns else u""), yes=True, no=True):
+                       if txt_warns else u""), title=ALERT_TITLE, yes=True, no=True):
         try:
             txt_info["backup"], txt_info["encoding"] = write_keynote_txt(
                 opts["txt_path"], txt_text)
@@ -2393,6 +2382,7 @@ hl_orange = sum(x["count"] for x in HL_FINAL if x["color"] == u"orange")
 # ------------------------------------------------------------------
 # 8. Janela de saída + relatório HTML (opcional nos modos que gravam)
 # ------------------------------------------------------------------
+output_header(output, __title__, u"Keynotes × Excel - {}".format(MODES[MODE]))
 output.print_md(u"## Keynotes × Excel - {}".format(MODES[MODE]))
 output.print_md(u"- **{}** keynote(s) no modelo ({} tipo(s)/material(is)) · **{}** no Excel "
                 u"(aba *{}*) · **{}** em ambos".format(
@@ -2437,11 +2427,11 @@ if missing_in_by_cat:
 
 if MODE != "analyze":
     make_html = forms.alert(
-        u"Gerar o relatório HTML?\n\n"
-        u"{} preenchido(s) · {} alterado(s) · {} faltando / pendente(s)\n"
+        u"Gerar o relatório HTML?",
+        sub_msg=u"{} preenchido(s) · {} alterado(s) · {} faltando / pendente(s)\n"
         u"(agrupados por agrupamento de Keynotes)".format(
             len(RESULT["filled"]), len(RESULT["changed"]), len(RESULT["missing"])),
-        yes=True, no=True)
+        title=ALERT_TITLE, yes=True, no=True)
     if not make_html:
         script.exit()
 
@@ -2481,15 +2471,16 @@ for _name in ("keynotes.html", "script.html"):
         template_path = os.path.join(HERE, _name)
         break
 if template_path is None:
-    forms.alert(u"Modelo do relatório não encontrado (keynotes.html) na pasta do botão:\n"
-                u"{}".format(HERE), exitscript=True)
+    forms.alert(u"Modelo do relatório não encontrado (keynotes.html).",
+                sub_msg=u"Pasta do botão:\n{}".format(HERE), title=ALERT_TITLE, exitscript=True)
 with codecs.open(template_path, "r", encoding="utf-8") as f:
     html = f.read()
-html = html.replace("__DATA__", json.dumps(data, ensure_ascii=False,
-                                           default=lambda o: to_unicode(o)))
+html = brand_report(html.replace("__DATA__", json.dumps(data, ensure_ascii=False,
+                                                        default=lambda o: to_unicode(o))))
 out_path = script.get_document_data_file("keynotes_report", "html")
 with codecs.open(out_path, "w", encoding="utf-8") as f:
     f.write(html)
 
 if not open_in_browser(out_path):
-    forms.alert(u"Relatório gerado, mas não abriu automaticamente:\n\n{}".format(out_path))
+    forms.alert(u"Relatório gerado, mas não abriu automaticamente.",
+                sub_msg=u"Abra o arquivo manualmente:\n{}".format(out_path), title=ALERT_TITLE)

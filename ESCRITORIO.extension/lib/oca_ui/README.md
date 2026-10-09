@@ -57,7 +57,7 @@ FOOTER = u"""
   <Button x:Name="cancel" Content="Cancelar" Margin="8,0,0,0"/>"""
 
 XAML = build_xaml(title=__title__, subtitle=__doc__, body=BODY,
-                  footer_right=FOOTER, size="S")   # S 460 px, M 580 px, L 1160 px (+ height)
+                  footer_right=FOOTER, size="S")   # S 460 px, M 580 px, L 1160 px (+ height; width= se precisar)
 ```
 
 2. A classe da janela continua igual (`forms.WPFWindow.__init__(self, XAML, literal_string=True)`).
