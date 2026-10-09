@@ -18,8 +18,8 @@ Onde cada dado mora:
 Aba 1 - resumo, fluxo (Excel > Modelo), planilha e caminho do TXT de Keynote.
 
 Aba 2 - janela de verificação (NÃO modal - dá para navegar no modelo). Três
-tabelas recolhíveis, uma barra de rolagem só (a da janela), busca e
-agrupamento por Keynote ou por Categoria:
+tabelas recolhíveis (botão ▼ ou clique no título), uma barra de rolagem só (a
+da janela), colunas ajustáveis, busca e agrupamento por Keynote ou Categoria:
   1. Excel -> Modelo: o que o Excel tem e difere do modelo. Tipos com o mesmo
      Keynote, mesma Descrição, mesma Descrição IN e mesma Categoria viram UMA
      linha. Valor vazio no Excel nunca apaga o modelo.
@@ -34,7 +34,8 @@ agrupamento por Keynote ou por Categoria:
 Fluxo: ANALISA Excel x modelo > TABELAS (o que vai mudar, o que falta, o que
 não está no Excel) > "Gravar marcados" grava e ATUALIZA as tabelas (a janela
 continua aberta, pode gravar várias vezes) > "Finalizar" gera/carrega o TXT
-de Keynote e faz o relatório. Fechar no X não gera TXT nem relatório.
+de Keynote, pergunta pelo relatório e encerra o comando (fecha as janelas).
+Fechar no X não gera TXT nem relatório.
 
 TXT de Keynote do Revit (sempre, ao gravar): gerado do Excel com a
 mesma estrutura do arquivo do escritório - CATEGORIA/prefixos, PREFIXO/GRUPO/
@@ -1447,7 +1448,7 @@ from System.Data import DataTable
 _GRID_STYLE = u"""
               AutoGenerateColumns="False" CanUserAddRows="False"
               CanUserDeleteRows="False" CanUserSortColumns="False" CanUserReorderColumns="False"
-              CanUserResizeColumns="False"
+              CanUserResizeColumns="True"
               CanUserResizeRows="False" HeadersVisibility="Column" SelectionMode="Single"
               SelectionUnit="FullRow" GridLinesVisibility="Horizontal"
               HorizontalGridLinesBrush="#1C2B44" Background="#0A1120" RowBackground="#0E1526"
@@ -1469,10 +1470,6 @@ _GROUP_STYLE = u"""
               <Border Background="#1B2A47" BorderBrush="#2A4A66" BorderThickness="0,1,0,1"
                       Padding="8,4,8,4">
                 <DockPanel LastChildFill="True">
-                  <Button DockPanel.Dock="Right" Content="Desmarcar grupo" Tag="{Binding Name}"
-                          Height="22" Padding="8,0,8,0" Margin="6,0,0,0" FontSize="11"/>
-                  <Button DockPanel.Dock="Right" Content="Marcar grupo" Tag="{Binding Name}"
-                          Height="22" Padding="8,0,8,0" Margin="6,0,0,0" FontSize="11"/>
                   <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
                     <TextBlock Text="{Binding Name}" Foreground="#65E3FF" FontWeight="Bold"
                                FontFamily="Segoe UI" TextTrimming="CharacterEllipsis"/>
@@ -1485,13 +1482,6 @@ _GROUP_STYLE = u"""
           </GroupStyle.HeaderTemplate>
         </GroupStyle>
       </DataGrid.GroupStyle>"""
-
-# grupo da tabela 3 (só leitura, sem botões de marcar)
-_GROUP_STYLE_RO = _GROUP_STYLE.replace(u"""
-                  <Button DockPanel.Dock="Right" Content="Desmarcar grupo" Tag="{Binding Name}"
-                          Height="22" Padding="8,0,8,0" Margin="6,0,0,0" FontSize="11"/>
-                  <Button DockPanel.Dock="Right" Content="Marcar grupo" Tag="{Binding Name}"
-                          Height="22" Padding="8,0,8,0" Margin="6,0,0,0" FontSize="11"/>""", u"")
 
 # cor da CÉLULA que vai mudar (coluna "<campo>Mark" da linha):
 #   fill = preenche vazio · over = sobrescreve · edit = digitado · blocked = não grava
@@ -1525,8 +1515,9 @@ _CHECK_COL = u"""
 
 
 def _col(header, binding, width, style=u"wrap", readonly=True, cell=None):
-    """Colunas de texto >= 100 são proporcionais (ocupam a largura da janela);
-    as estreitas (Qtd, Keynote) têm largura fixa."""
+    """Colunas de texto >= 100 começam proporcionais (ocupam a largura da janela);
+    as estreitas (Qtd, Keynote) começam com largura fixa. O usuário pode arrastar
+    a divisa do cabeçalho para alargar ou estreitar qualquer coluna."""
     size = (u'Width="{}*" MinWidth="{}"'.format(width, int(width * 0.55)) if width >= 100
             else u'Width="{}"'.format(width))
     return (u'<DataGridTextColumn Header="{}" Binding="{{Binding {}}}" {} '
@@ -1601,13 +1592,7 @@ VERIFY_XAML = u"""
       <WrapPanel Margin="0,10,0,0">
         <TextBlock Text="Buscar " Style="{StaticResource small}"/>
         <TextBox x:Name="f_text" Width="300" Height="26" Margin="0,0,18,0" Padding="4,3,4,2"/>
-        <Button x:Name="b_show" Content="Mostrar na vista ativa"/>
-        <Button x:Name="b_expand" Content="Expandir tabelas"/>
-        <Button x:Name="b_collapse" Content="Recolher tabelas"/>
       </WrapPanel>
-      <TextBlock Style="{StaticResource small}" FontSize="11" Foreground="#7A8FA9" Margin="0,4,0,0"
-                 TextWrapping="Wrap"
-                 Text="Clique numa linha: os elementos ficam selecionados no Revit e aparecem na vista ativa. A janela pode ficar aberta enquanto você navega no modelo (abra uma vista 3D para conferir). Clique no título de cada tabela para recolher ou expandir."/>
       <TextBlock x:Name="viewinfo" TextWrapping="Wrap" FontSize="12" Foreground="#7BE3A0"
                  FontFamily="Segoe UI" Margin="0,4,0,0"/>
     </StackPanel>
@@ -1627,20 +1612,20 @@ VERIFY_XAML = u"""
     <ScrollViewer x:Name="scroll" VerticalScrollBarVisibility="Visible"
                   HorizontalScrollBarVisibility="Disabled" Margin="0,8,0,0">
       <StackPanel Margin="0,0,12,0">
-        <Expander x:Name="ex1" IsExpanded="True" Margin="0,4,0,0" Foreground="#CFE3FF">
-          <Expander.Header>
-            <StackPanel Orientation="Horizontal">
-              <TextBlock Style="{StaticResource lbl}" Margin="4,0,8,0" Text="1 · EXCEL &gt; MODELO"/>
-              <TextBlock x:Name="h1" Style="{StaticResource small}" Margin="0,0,18,0"
-                         Foreground="#7A8FA9"/>
-              <TextBlock Text="Agrupar por " Style="{StaticResource small}"/>
-              <ComboBox x:Name="f_mode1" Width="120" Height="26" Margin="0,0,14,0"/>
-              <Button x:Name="b_all" Content="Marcar visíveis"/>
-              <Button x:Name="b_none" Content="Desmarcar visíveis"/>
-              <Button x:Name="b_fill" Content="Somente preencher vazios"/>
-            </StackPanel>
-          </Expander.Header>
-          <StackPanel Margin="0,6,0,0">
+        <Border Background="#13203A" BorderBrush="#2A4A66" BorderThickness="1"
+                Padding="6,4,8,4" Margin="0,4,0,0">
+          <DockPanel LastChildFill="False">
+            <Button x:Name="tg1" Content="▼" Width="28" Height="24" Padding="0" Margin="0,0,8,0"
+                    ToolTip="Recolher / expandir a tabela"/>
+            <TextBlock x:Name="tt1" Style="{StaticResource lbl}" Margin="0,0,8,0" Cursor="Hand"
+                       Text="1 · EXCEL &gt; MODELO"/>
+            <TextBlock x:Name="h1" Style="{StaticResource small}" Margin="0,0,18,0"
+                       Foreground="#7A8FA9"/>
+            <TextBlock Text="Agrupar por " Style="{StaticResource small}"/>
+            <ComboBox x:Name="f_mode1" Width="120" Height="26" Margin="0,0,14,0"/>
+          </DockPanel>
+        </Border>
+        <StackPanel x:Name="body1" Margin="0,6,0,0">
             <TextBlock Style="{StaticResource small}" FontSize="11" Foreground="#7A8FA9"
                        TextWrapping="Wrap"
                        Text="Tipos com o mesmo keynote, descrições e categoria ficam numa linha só.   Célula verde = preenche vazio  ·  Âmbar = substitui o valor atual  ·  Cinza = não pode ser gravado"/>
@@ -1658,23 +1643,22 @@ VERIFY_XAML = u"""
                 """ + _col(u"Destino", u"Destino", 130) + u"""
               </DataGrid.Columns>""" + _GROUP_STYLE + u"""
             </DataGrid>
-          </StackPanel>
-        </Expander>
-        <Expander x:Name="ex2" IsExpanded="True" Margin="0,16,0,0" Foreground="#CFE3FF">
-          <Expander.Header>
-            <StackPanel Orientation="Horizontal">
-              <TextBlock Style="{StaticResource lbl}" Margin="4,0,8,0"
-                         Text="2 · ELEMENTOS SEM KEYNOTE OU SEM DESCRIÇÃO"/>
-              <TextBlock x:Name="h2" Style="{StaticResource small}" Margin="0,0,18,0"
-                         Foreground="#7A8FA9"/>
-              <TextBlock Text="Agrupar por " Style="{StaticResource small}"/>
-              <ComboBox x:Name="f_mode2" Width="120" Height="26" Margin="0,0,14,0"/>
-              <Button x:Name="b2_all" Content="Marcar visíveis"/>
-              <Button x:Name="b2_none" Content="Desmarcar visíveis"/>
-              <Button x:Name="b2_check" Content="Verificar no Excel"/>
-            </StackPanel>
-          </Expander.Header>
-          <StackPanel Margin="0,6,0,0">
+        </StackPanel>
+        <Border Background="#13203A" BorderBrush="#2A4A66" BorderThickness="1"
+                Padding="6,4,8,4" Margin="0,16,0,0">
+          <DockPanel LastChildFill="False">
+            <Button x:Name="tg2" Content="▼" Width="28" Height="24" Padding="0" Margin="0,0,8,0"
+                    ToolTip="Recolher / expandir a tabela"/>
+            <TextBlock x:Name="tt2" Style="{StaticResource lbl}" Margin="0,0,8,0" Cursor="Hand"
+                       Text="2 · ELEMENTOS SEM KEYNOTE OU SEM DESCRIÇÃO"/>
+            <TextBlock x:Name="h2" Style="{StaticResource small}" Margin="0,0,18,0"
+                       Foreground="#7A8FA9"/>
+            <TextBlock Text="Agrupar por " Style="{StaticResource small}"/>
+            <ComboBox x:Name="f_mode2" Width="120" Height="26" Margin="0,0,14,0"/>
+            <Button x:Name="b2_check" Content="Verificar no Excel" Height="26"/>
+          </DockPanel>
+        </Border>
+        <StackPanel x:Name="body2" Margin="0,6,0,0">
             <TextBlock Style="{StaticResource small}" FontSize="11" Foreground="#7A8FA9"
                        TextWrapping="Wrap"
                        Text="Clique duas vezes no Keynote para digitar e depois em 'Verificar no Excel' para trazer a Descrição e a Descrição em IN.   Célula azul = keynote digitado  ·  Verde = trazido do Excel"/>
@@ -1690,20 +1674,21 @@ VERIFY_XAML = u"""
                 """ + _col(u"Verificação", u"Verificacao", 260) + u"""
               </DataGrid.Columns>""" + _GROUP_STYLE + u"""
             </DataGrid>
-          </StackPanel>
-        </Expander>
-        <Expander x:Name="ex3" IsExpanded="True" Margin="0,16,0,8" Foreground="#CFE3FF">
-          <Expander.Header>
-            <StackPanel Orientation="Horizontal">
-              <TextBlock Style="{StaticResource lbl}" Margin="4,0,8,0"
-                         Text="3 · ELEMENTOS COM KEYNOTE QUE NÃO ESTÁ NO EXCEL"/>
-              <TextBlock x:Name="h3" Style="{StaticResource small}" Margin="0,0,18,0"
-                         Foreground="#7A8FA9"/>
-              <TextBlock Text="Agrupar por " Style="{StaticResource small}"/>
-              <ComboBox x:Name="f_mode3" Width="120" Height="26" Margin="0,0,14,0"/>
-            </StackPanel>
-          </Expander.Header>
-          <StackPanel Margin="0,6,0,0">
+        </StackPanel>
+        <Border Background="#13203A" BorderBrush="#2A4A66" BorderThickness="1"
+                Padding="6,4,8,4" Margin="0,16,0,0">
+          <DockPanel LastChildFill="False">
+            <Button x:Name="tg3" Content="▼" Width="28" Height="24" Padding="0" Margin="0,0,8,0"
+                    ToolTip="Recolher / expandir a tabela"/>
+            <TextBlock x:Name="tt3" Style="{StaticResource lbl}" Margin="0,0,8,0" Cursor="Hand"
+                       Text="3 · ELEMENTOS COM KEYNOTE QUE NÃO ESTÁ NO EXCEL"/>
+            <TextBlock x:Name="h3" Style="{StaticResource small}" Margin="0,0,18,0"
+                       Foreground="#7A8FA9"/>
+            <TextBlock Text="Agrupar por " Style="{StaticResource small}"/>
+            <ComboBox x:Name="f_mode3" Width="120" Height="26" Margin="0,0,14,0"/>
+          </DockPanel>
+        </Border>
+        <StackPanel x:Name="body3" Margin="0,6,0,8">
             <TextBlock Style="{StaticResource small}" FontSize="11" Foreground="#7A8FA9"
                        TextWrapping="Wrap"
                        Text="Só consulta: inclua o código na planilha do Excel e rode o comando de novo."/>
@@ -1717,10 +1702,9 @@ VERIFY_XAML = u"""
                 """ + _col(u"Descrição atual", u"Descricao", 240) + u"""
                 """ + _col(u"Descrição em IN atual", u"DescricaoIN", 220) + u"""
                 """ + _col(u"Situação", u"Verificacao", 240) + u"""
-              </DataGrid.Columns>""" + _GROUP_STYLE_RO + u"""
+              </DataGrid.Columns>""" + _GROUP_STYLE + u"""
             </DataGrid>
-          </StackPanel>
-        </Expander>
+        </StackPanel>
       </StackPanel>
     </ScrollViewer>
   </DockPanel>
@@ -1769,12 +1753,6 @@ class VerifyWindow(forms.WPFWindow):
         self._last_ids = []
         self.t1 = self.t2 = self.t3 = None
         self.d1, self.d2, self.d3 = {}, {}, {}
-        from System.Windows import RoutedEventHandler
-        from System.Windows.Controls.Primitives import ButtonBase
-        # botões "Marcar grupo / Desmarcar grupo" dos cabeçalhos de grupo
-        self.grid.AddHandler(ButtonBase.ClickEvent, RoutedEventHandler(self._grp_click1))
-        self.grid2.AddHandler(ButtonBase.ClickEvent, RoutedEventHandler(self._grp_click2))
-
         self.f_mode1.ItemsSource = GROUP_MODES
         self.f_mode1.SelectedIndex = 0
         self.f_mode2.ItemsSource = GROUP_MODES
@@ -1790,17 +1768,13 @@ class VerifyWindow(forms.WPFWindow):
         self.grid.SelectionChanged += self._on_select1
         self.grid2.SelectionChanged += self._on_select2
         self.grid3.SelectionChanged += self._on_select3
-        self.b_show.Click += lambda s, a: self._show(self._last_ids)
-        self.b_expand.Click += lambda s, a: self._expand(True)
-        self.b_collapse.Click += lambda s, a: self._expand(False)
+        # recolher / expandir: botão ▼ ou clique no título da tabela
+        for n in (1, 2, 3):
+            getattr(self, "tg%d" % n).Click += (lambda k: lambda s, a: self._toggle(k))(n)
+            getattr(self, "tt%d" % n).MouseLeftButtonUp += (lambda k: lambda s, a: self._toggle(k))(n)
         # a roda do mouse sobre uma tabela rola a janela (as tabelas não rolam)
         for g in (self.grid, self.grid2, self.grid3):
             g.PreviewMouseWheel += self._wheel
-        self.b_all.Click += lambda s, a: self._set_visible1(lambda r: True)
-        self.b_none.Click += lambda s, a: self._set_visible1(lambda r: False)
-        self.b_fill.Click += lambda s, a: self._set_visible1(lambda r: not r["over"])
-        self.b2_all.Click += lambda s, a: self._set_visible2(True)
-        self.b2_none.Click += lambda s, a: self._set_visible2(False)
         self.b2_check.Click += self._verify_all
         self.b_apply.Click += self._apply
         self.b_finish.Click += self._finish
@@ -1819,7 +1793,7 @@ class VerifyWindow(forms.WPFWindow):
 
     @staticmethod
     def _mode(combo):
-        return combo.SelectedItem or GROUP_MODES[max(combo.SelectedIndex, 0)]
+        return GROUP_MODES[min(max(combo.SelectedIndex, 0), len(GROUP_MODES) - 1)]
 
     def _grp1(self, r):
         return _key_label(r["key"]) if self._mode(self.f_mode1) == u"Keynote" else r["category"]
@@ -1921,9 +1895,12 @@ class VerifyWindow(forms.WPFWindow):
         self._rebuild()
 
     # ---- recolher / expandir e rolagem da janela ----
-    def _expand(self, value):
-        for ex in (self.ex1, self.ex2, self.ex3):
-            ex.IsExpanded = value
+    def _toggle(self, n):
+        from System.Windows import Visibility
+        body, btn = getattr(self, "body%d" % n), getattr(self, "tg%d" % n)
+        show = body.Visibility != Visibility.Visible
+        body.Visibility = Visibility.Visible if show else Visibility.Collapsed
+        btn.Content = u"▼" if show else u"▶"
 
     def _wheel(self, sender, args):
         args.Handled = True
@@ -2024,15 +2001,6 @@ class VerifyWindow(forms.WPFWindow):
         finally:
             self._busy = False
 
-    def _set_visible1(self, rule):
-        self._busy = True
-        try:
-            for rid in self._visible(self.t1):
-                self._check1(rid, rule(self.by_rid[rid]))
-            self._update_counter()
-        finally:
-            self._busy = False
-
     # ---- tabela 2 (só o Keynote é digitado; Descrições vêm do Excel) ----
     def _check2(self, rid, value):
         r = self.by_rid2[rid]
@@ -2068,15 +2036,6 @@ class VerifyWindow(forms.WPFWindow):
         finally:
             self._busy = False
 
-    def _set_visible2(self, value):
-        self._busy = True
-        try:
-            for rid in self._visible(self.t2):
-                self._check2(rid, value)
-            self._update_counter()
-        finally:
-            self._busy = False
-
     def _verify_all(self, sender, args):
         """Confere cada Keynote no Excel e traz Descrição / Descrição IN de lá."""
         self._commit()
@@ -2087,42 +2046,6 @@ class VerifyWindow(forms.WPFWindow):
                 self._refresh2(r)
                 if inc_changed(r):
                     self._check2(r["rid"], True)
-            self._update_counter()
-        finally:
-            self._busy = False
-
-    # ---- botões de grupo ----
-    @staticmethod
-    def _group_button(args):
-        """-> (grupo, marcar?) se o clique veio de um botão de cabeçalho de grupo."""
-        from System.Windows.Controls import Button
-        src = args.OriginalSource
-        if not isinstance(src, Button) or src.Tag is None:
-            return None, None
-        return to_unicode(src.Tag), to_unicode(src.Content).startswith(u"Marcar")
-
-    def _grp_click1(self, sender, args):
-        grp, val = self._group_button(args)
-        if grp is None:
-            return
-        self._busy = True
-        try:
-            for rid in self._visible(self.t1):
-                if self.d1[rid]["Grp"] == grp:
-                    self._check1(rid, val)
-            self._update_counter()
-        finally:
-            self._busy = False
-
-    def _grp_click2(self, sender, args):
-        grp, val = self._group_button(args)
-        if grp is None:
-            return
-        self._busy = True
-        try:
-            for rid in self._visible(self.t2):
-                if self.d2[rid]["Grp"] == grp:
-                    self._check2(rid, val)
             self._update_counter()
         finally:
             self._busy = False
@@ -2506,6 +2429,31 @@ def save_run(chosen_rows, chosen_inc):
 
 
 def finalize_run():
+    """'Finalizar': TXT de Keynote + relatório e ENCERRA o comando (a janela de
+    verificação já fechou; a janela de saída do pyRevit também é fechada).
+    Problemas que estariam só na janela de saída aparecem antes num aviso."""
+    try:
+        _finalize_report()
+    finally:
+        problems = []
+        try:
+            if txt_info["on"] and not (txt_info["written"] and txt_info["loaded"]):
+                problems.append(u"TXT de Keynote: {}".format(
+                    txt_info["msg"] or u"não gravado"))
+        except Exception:
+            pass
+        if skipped:
+            problems.append(u"{} item(ns) não gravado(s) no modelo (ver relatório HTML)."
+                            .format(len(skipped)))
+        if problems:
+            forms.alert(u"Comando finalizado com avisos:\n\n" + u"\n".join(problems))
+        try:
+            output.close()
+        except Exception:
+            pass
+
+
+def _finalize_report():
     global FIELD_LABEL, ISSUES, RESULT, XL_FIELD_LABEL, _ag, _name, agcat, aggrp
     global all_keys, build_result, c, cat_summary, cats, data, eff_en, eff_pt, excel_table
     global f, flags, h, holders, html, in_excel, in_model, inc_written, issue_count, it, k
