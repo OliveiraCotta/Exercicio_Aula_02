@@ -11,7 +11,7 @@
     --bg:#070C16; --panel:rgba(255,255,255,.028); --line:rgba(101,227,255,.22);
     --grid:rgba(101,227,255,.05); --ink:#D9E8F5; --dim:#7A8FA9;
     --cy:#65E3FF; --teal:#3DDCB4; --amber:#FFB454; --mag:#FF4F9A; --violet:#9D8CFF;
-    --green:#50D682; --red:#E84A4A; --orange:#FF8C00;
+    --green:#50D682; --red:#E84A4A; --orange:#FF8C00; --lilac:#C8A2C8; --pink:#FFB6C1;
   }
   *{box-sizing:border-box; margin:0; padding:0}
   body{
@@ -163,7 +163,7 @@
 <div id="resultWrap"></div>
 
 <!-- 4. destaques no modelo -->
-<h2>Destaque no modelo <small>(laranja: sem Keynote, Descrição ou Descrição IN - vista ativa)</small></h2>
+<h2>Situação dos tipos na vista ativa <small>(após gravar)</small></h2>
 <div class="cards" id="h_cards"></div>
 <div id="h_wrap"></div>
 
@@ -381,24 +381,26 @@ function renderResult(){
   wrap.querySelectorAll(".rtabs button").forEach(b=>b.onclick=()=>{ rtab=b.dataset.t; renderResult(); });
 }
 
-/* ---- 4. destaque laranja ---- */
+/* ---- 4. situação dos tipos: vermelho / laranja / lilás / rosa ---- */
 (function(){
   const H = DATA.highlight, sum = l => l.reduce((s,x)=>s+x.count,0);
-  const miss = f => H.filter(x=>x.missing.includes(f));
-  $("h_cards").innerHTML = [
-    {v:sum(H), l:"Elementos em laranja", c:"var(--orange)"},
-    {v:H.length, l:"Tipos incompletos", c:"var(--orange)"},
-    {v:miss("Keynote").length, l:"Tipos sem Keynote", c:"var(--amber)"},
-    {v:miss("Descrição").length, l:"Tipos sem Descrição", c:"var(--amber)"},
-    {v:miss(DATA.inParam).length, l:"Tipos sem " + DATA.inParam, c:"var(--amber)"},
-  ].map(m=>`<div class="card" style="--c:${m.c}"><div class="v">${fmt(m.v)}</div><div class="l">${esc(m.l)}</div></div>`).join("");
-  if(DATA.highlightNote){ $("h_wrap").innerHTML = `<p class="muted">Destaque: ${esc(DATA.highlightNote)}</p>`; return; }
+  const CLS = [
+    {k:"red",    c:"var(--red)",    l:"Vermelho · falta tudo"},
+    {k:"orange", c:"var(--orange)", l:"Laranja · falta Keynote"},
+    {k:"lilac",  c:"var(--lilac)",  l:"Lilás · falta Descrição"},
+    {k:"pink",   c:"var(--pink)",   l:"Rosa claro · falta Descrição IN"},
+  ];
+  $("h_cards").innerHTML = CLS.map(m=>{ const l = H.filter(x=>x.color===m.k);
+    return `<div class="card" style="--c:${m.c}"><div class="v">${fmt(sum(l))}</div>
+      <div class="l">${esc(m.l)}</div><div class="h">${l.length} tipo(s)</div></div>`; }).join("");
+  if(DATA.highlightNote){ $("h_wrap").innerHTML = `<p class="muted">${esc(DATA.highlightNote)}</p>`; return; }
   if(!H.length){ $("h_wrap").innerHTML = `<div class="empty">✓ Todos os tipos visíveis têm Keynote, Descrição e ${esc(DATA.inParam)}</div>`; return; }
   const v = x => x ? esc(x) : '<span class="none">vazio</span>';
+  const colorOf = k => (CLS.find(c=>c.k===k)||CLS[1]).c;
   $("h_wrap").innerHTML = `<div class="scroll" style="max-height:50vh"><table><thead><tr><th></th><th>Família</th>
     <th>Tipo</th><th>Falta</th><th>Keynote</th><th>Descrição</th><th>Descrição IN</th><th>Elementos</th></tr></thead><tbody>${
     groupRows(H.slice().sort((a,b)=>a.category.localeCompare(b.category,"pt-BR")),"category",8,x=>`<tr>
-      <td><span class="dot" style="background:var(--orange)"></span></td><td>${esc(x.family)}</td>
+      <td><span class="dot" style="background:${colorOf(x.color)}" title="${esc(x.colorLabel||"")}"></span></td><td>${esc(x.family)}</td>
       <td>${esc(x.type)} <span class="muted mono">#${x.typeId}</span></td>
       <td class="warn">${x.missing.map(esc).join(", ")}</td><td class="key">${v(x.key)}</td><td>${v(x.desc)}</td>
       <td>${x.hasIn ? v(x.en) : '<span class="none">sem parâmetro</span>'}</td><td class="mono">${x.count}</td></tr>`)}</tbody></table></div>`;
