@@ -15,7 +15,7 @@ Uso num script (a lógica da janela não muda; só o XAML):
 
     forms.alert(u"Frase principal.", sub_msg=u"Detalhe.", title=ALERT_TITLE)
 
-build_xaml monta a janela inteira: tema (claro/escuro conforme o Revit),
+build_xaml monta a janela inteira: tema escuro OCA,
 cabeçalho com logo + nome do comando + descrição, corpo e rodapé. O corpo
 e o rodapé são o XAML do próprio comando, com os mesmos x:Name de antes.
 
@@ -136,7 +136,7 @@ def _fill(template, values):
 
 
 def build_xaml(title, body, footer_right, subtitle=u"", footer_left=u"",
-               size="S", height=None, dark=None):
+               size="S", height=None, dark=True):
     """XAML completo de uma janela no padrão OCA.
 
     title         nome do comando (aceita o __title__ com quebras de linha).
@@ -146,7 +146,7 @@ def build_xaml(title, body, footer_right, subtitle=u"", footer_left=u"",
     footer_left   ações auxiliares ou "Voltar" (opcional).
     size          "S" 460 px, "M" 580 px (altura pelo conteúdo, tamanho fixo)
                   ou "L" 1160 px (redimensionável; informe height).
-    dark          None = segue o tema do Revit.
+    dark          True (padrão OCA: sempre escuro); False só para testes.
     """
     name = command_name(title)
     if size == "L":

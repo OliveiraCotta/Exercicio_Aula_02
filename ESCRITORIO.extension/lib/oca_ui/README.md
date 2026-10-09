@@ -7,14 +7,14 @@ extensão, então qualquer comando pode usar `from oca_ui import ...`.
 ```
 lib/oca_ui/
 ├─ __init__.py          build_xaml(), alert_title(), command_name()
-├─ theme.py             paleta claro/escuro, larguras e estilos WPF (único lugar com cores)
+├─ theme.py             paleta escura (e clara, não usada), larguras e estilos WPF (único lugar com cores)
 └─ assets/logo/logo.png logo original da empresa (não editar; substituir pelo novo arquivo, mesmo nome)
 ```
 
 ## O que o padrão faz
 
-- **Tema:** lê o tema do Revit (`UIThemeManager`, Revit 2024+) ao abrir a
-  janela e aplica a paleta clara ou escura. Se a leitura falhar, usa o tema claro.
+- **Tema:** sempre escuro, independente do tema do Revit (decisão de padrão).
+  A paleta clara existe em `theme.LIGHT` mas não é usada pelos comandos.
 - **Cabeçalho:** logo, nome do comando (`__title__`) e descrição (`__doc__`).
   O logo também vira o ícone da janela.
 - **Rodapé:** botão principal primeiro, depois Cancelar; ações auxiliares à esquerda.

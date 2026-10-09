@@ -27,8 +27,11 @@ import re
 import math
 
 from pyrevit import revit, DB, script, forms
+from oca_ui import build_xaml, alert_title
 from Autodesk.Revit.DB.Architecture import Room
 from Autodesk.Revit.UI.Selection import ISelectionFilter, ObjectType
+
+ALERT_TITLE = alert_title(__title__)
 
 doc = revit.doc
 uidoc = revit.uidoc
@@ -710,93 +713,108 @@ def room_sort_key(g):
 
 
 # ------------------------------------------------------------------
-# 8. Diálogo (mesmo tema dos outros botões)
+# 8. Diálogo (padrão visual OCA - lib/oca_ui)
 # ------------------------------------------------------------------
-CROP_XAML = u"""
-<Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
-        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="Crop View Offset" Height="Auto" Width="480"
-        SizeToContent="Height" WindowStartupLocation="CenterScreen"
-        ResizeMode="NoResize" Background="#0E1526">
-  <Window.Resources>
-    <Style TargetType="TextBlock">
-      <Setter Property="Foreground" Value="#CFE3FF"/>
-      <Setter Property="FontFamily" Value="Segoe UI"/>
-      <Setter Property="Margin" Value="0,10,0,3"/>
-    </Style>
-    <Style TargetType="ComboBox">
-      <Setter Property="Height" Value="26"/>
-      <Setter Property="Padding" Value="4,2,4,2"/>
-    </Style>
-    <Style TargetType="TextBox">
-      <Setter Property="Height" Value="26"/>
-      <Setter Property="Padding" Value="4,3,4,2"/>
-    </Style>
-    <Style TargetType="RadioButton">
-      <Setter Property="Foreground" Value="#CFE3FF"/>
-      <Setter Property="FontFamily" Value="Segoe UI"/>
-      <Setter Property="Margin" Value="0,5,0,0"/>
-    </Style>
-    <Style TargetType="CheckBox">
-      <Setter Property="Foreground" Value="#CFE3FF"/>
-      <Setter Property="FontFamily" Value="Segoe UI"/>
-      <Setter Property="Margin" Value="0,10,0,0"/>
-    </Style>
-  </Window.Resources>
-  <StackPanel Margin="18">
-    <TextBlock Text="RECORTE POR AMBIENTE  ·  MÚLTIPLAS VISTAS" FontSize="15" FontWeight="SemiBold"
-               Foreground="#65E3FF" Margin="0,0,0,4"/>
-    <TextBlock x:Name="info" TextWrapping="Wrap" FontSize="11"
-               Foreground="#7A8FA9" Margin="0,0,0,6"/>
+CROP_BODY = u"""
+  <StackPanel>
+    <TextBlock x:Name="info" Style="{StaticResource oca.Hint}" Margin="0,0,0,12"/>
 
-    <TextBlock Text="Margem ao redor de cada ambiente (m)"/>
-    <TextBox x:Name="margin"/>
+    <HeaderedContentControl Header="RECORTE" Style="{StaticResource oca.Section}">
+      <Grid>
+        <Grid.ColumnDefinitions>
+          <ColumnDefinition Width="{StaticResource oca.LabelWidth}"/>
+          <ColumnDefinition Width="*"/>
+        </Grid.ColumnDefinitions>
+        <TextBlock Text="Margem" Style="{StaticResource oca.Label}"/>
+        <StackPanel Grid.Column="1" Orientation="Horizontal">
+          <TextBox x:Name="margin" Width="72"/>
+          <TextBlock Text="m ao redor de cada ambiente" Style="{StaticResource oca.Hint}"
+                     VerticalAlignment="Center" Margin="8,0,0,0"/>
+        </StackPanel>
+      </Grid>
+    </HeaderedContentControl>
 
-    <TextBlock Text="O que fazer (uma vista por ambiente)" Margin="0,14,0,0"/>
-    <RadioButton x:Name="rb_plans" GroupName="mode"
-                 Content="Criar nova vista de planta (Piso, Forro, Estrutural, Área)"/>
-    <RadioButton x:Name="rb_callout" GroupName="mode"
-                 Content="Criar vista de chamada (Callout) na vista ativa"/>
-    <TextBlock x:Name="reasons" TextWrapping="Wrap" FontSize="11"
-               Foreground="#FFB454" Margin="0,8,0,0"/>
-
-    <TextBlock x:Name="vtype_lbl" Text="Tipo de vista"/>
-    <ComboBox x:Name="vtype"/>
-
-    <TextBlock Text="VIEW NAME" FontSize="12" FontWeight="SemiBold"
-               Foreground="#65E3FF" Margin="0,18,0,3"/>
-    <ComboBox x:Name="vname"/>
-    <TextBlock x:Name="suffix_lbl" Text="Complemento"/>
-    <ComboBox x:Name="vsuffix"/>
-    <TextBlock x:Name="manual_lbl"
-               Text="Nome manual (vazio = mantém o nome do Revit;  # = sequência 01, 02...)"/>
-    <TextBox x:Name="manual"/>
-
-    <Border Background="#131D33" BorderBrush="#26405F" BorderThickness="1"
-            Padding="10,6,10,8" Margin="0,12,0,0">
+    <HeaderedContentControl Header="O QUE FAZER (UMA VISTA POR AMBIENTE)" Style="{StaticResource oca.Section}">
       <StackPanel>
-        <TextBlock x:Name="pv_lbl" Text="VIEW NAME" FontSize="10" Foreground="#7A8FA9"
-                   TextWrapping="Wrap" Margin="0"/>
-        <TextBlock x:Name="pv_pt" FontWeight="SemiBold" TextWrapping="Wrap" Margin="0,2,0,8"/>
-        <TextBlock Text="TITLE ON SHEET - ENGLISH  (automático)" FontSize="10"
-                   Foreground="#7A8FA9" Margin="0"/>
-        <TextBlock x:Name="pv_en" FontWeight="SemiBold" TextWrapping="Wrap" Margin="0,2,0,0"/>
+        <RadioButton x:Name="rb_plans" GroupName="mode"
+                     Content="Criar nova vista de planta (Piso, Forro, Estrutural, Área)"/>
+        <RadioButton x:Name="rb_callout" GroupName="mode"
+                     Content="Criar vista de chamada (Callout) na vista ativa"/>
+        <Border Style="{StaticResource oca.Msg.Warn}" Margin="0,2,0,0"
+                Visibility="{Binding Visibility, ElementName=reasons}">
+          <TextBlock x:Name="reasons" Style="{StaticResource oca.MsgText}"/>
+        </Border>
+        <Grid Margin="0,10,0,0">
+          <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="{StaticResource oca.LabelWidth}"/>
+            <ColumnDefinition Width="*"/>
+          </Grid.ColumnDefinitions>
+          <TextBlock x:Name="vtype_lbl" Text="Tipo de vista" Style="{StaticResource oca.Label}"/>
+          <ComboBox x:Name="vtype" Grid.Column="1"/>
+        </Grid>
       </StackPanel>
+    </HeaderedContentControl>
+
+    <HeaderedContentControl Header="VIEW NAME" Style="{StaticResource oca.Section}">
+      <StackPanel>
+        <Grid Margin="0,0,0,8">
+          <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="{StaticResource oca.LabelWidth}"/>
+            <ColumnDefinition Width="*"/>
+          </Grid.ColumnDefinitions>
+          <TextBlock Text="Nome" Style="{StaticResource oca.Label}"/>
+          <ComboBox x:Name="vname" Grid.Column="1"/>
+        </Grid>
+        <Grid Margin="0,0,0,8">
+          <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="{StaticResource oca.LabelWidth}"/>
+            <ColumnDefinition Width="*"/>
+          </Grid.ColumnDefinitions>
+          <TextBlock x:Name="suffix_lbl" Text="Complemento" Style="{StaticResource oca.Label}"/>
+          <ComboBox x:Name="vsuffix" Grid.Column="1"/>
+        </Grid>
+        <Grid Margin="0,0,0,8">
+          <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="{StaticResource oca.LabelWidth}"/>
+            <ColumnDefinition Width="*"/>
+          </Grid.ColumnDefinitions>
+          <TextBlock x:Name="manual_lbl" Text="Nome manual" Style="{StaticResource oca.Label}"
+                     VerticalAlignment="Top" Margin="0,4,8,0"/>
+          <StackPanel Grid.Column="1">
+            <TextBox x:Name="manual"/>
+            <TextBlock Text="Vazio = mantém o nome do Revit; # = sequência 01, 02..." Style="{StaticResource oca.Hint}"
+                       Margin="0,3,0,0" Opacity="{Binding Opacity, ElementName=manual_lbl}"/>
+          </StackPanel>
+        </Grid>
+
+        <Border Style="{StaticResource oca.Card}">
+          <StackPanel>
+            <TextBlock x:Name="pv_lbl" Text="VIEW NAME" Style="{StaticResource oca.Caption}"/>
+            <TextBlock x:Name="pv_pt" Style="{StaticResource oca.Value}" Margin="0,2,0,8"/>
+            <TextBlock Text="TITLE ON SHEET - ENGLISH  (automático)" Style="{StaticResource oca.Caption}"/>
+            <TextBlock x:Name="pv_en" Style="{StaticResource oca.Value}" Margin="0,2,0,0"/>
+          </StackPanel>
+        </Border>
+        <Border Style="{StaticResource oca.Msg.Warn}" Visibility="{Binding Visibility, ElementName=name_hint}">
+          <TextBlock x:Name="name_hint" Style="{StaticResource oca.MsgText}"/>
+        </Border>
+      </StackPanel>
+    </HeaderedContentControl>
+
+    <CheckBox x:Name="open_views" Content="Abrir as vistas criadas ao final" Margin="0,0,0,12"/>
+
+    <Border Style="{StaticResource oca.Msg.Err}" Margin="0,0,0,12"
+            Visibility="{Binding Visibility, ElementName=error}">
+      <TextBlock x:Name="error" Style="{StaticResource oca.MsgText}"/>
     </Border>
-    <TextBlock x:Name="name_hint" TextWrapping="Wrap" FontSize="11"
-               Foreground="#FFB454" Margin="0,6,0,0"/>
+  </StackPanel>"""
 
-    <CheckBox x:Name="open_views" Content="Abrir as vistas criadas ao final"/>
+CROP_FOOTER = u"""
+  <Button x:Name="ok" Content="Aplicar" Style="{StaticResource oca.Primary}"/>
+  <Button x:Name="cancel" Content="Cancelar" Margin="8,0,0,0"/>"""
 
-    <TextBlock x:Name="error" TextWrapping="Wrap" FontSize="11"
-               Foreground="#FF4F9A" Margin="0,10,0,0"/>
-    <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,14,0,0">
-      <Button x:Name="cancel" Content="Cancelar" Width="80" Height="28" Margin="0,0,10,0"/>
-      <Button x:Name="ok" Content="Aplicar" Width="110" Height="28"/>
-    </StackPanel>
-  </StackPanel>
-</Window>
-"""
+CROP_XAML = build_xaml(title=__title__, subtitle=__doc__, body=CROP_BODY,
+                       footer_right=CROP_FOOTER, size="S")
 
 
 class CropWindow(forms.WPFWindow):
@@ -953,8 +971,9 @@ def skipped_lines(items):
 
 
 if not geoms:
-    forms.alert(u"Nenhum ambiente válido selecionado.\n\n"
-                + u"\n".join(skipped_lines(skipped) + warnings), exitscript=True)
+    forms.alert(u"Nenhum ambiente válido selecionado.",
+                sub_msg=u"\n".join(skipped_lines(skipped) + warnings) or None,
+                title=ALERT_TITLE, exitscript=True)
 
 geoms.sort(key=room_sort_key)
 room_levels = [pick_plan_level([g])[0] for g in geoms]   # cada planta no nível do seu ambiente
@@ -964,7 +983,8 @@ plan_items = plan_type_items()
 callout_items = callout_type_items(active_view)
 reasons = check_modes(plan_items, callout_items, plan_level)
 if len(reasons) == len(MODES):
-    forms.alert(u"Nenhuma ação disponível:\n\n" + u"\n".join(reasons.values()), exitscript=True)
+    forms.alert(u"Nenhuma ação disponível para a seleção.", sub_msg=u"\n".join(reasons.values()),
+                title=ALERT_TITLE, exitscript=True)
 
 name_hints = []
 level_ids = set(eid_int(l.Id) for l in room_levels if l is not None)
@@ -1122,8 +1142,8 @@ if warnings or notes:
     report.extend(u"- " + w for w in warnings + notes)
 
 if not created:
-    forms.alert(u"Nenhuma vista criada.", sub_msg=u"\n".join(report) or None)
+    forms.alert(u"Nenhuma vista criada.", sub_msg=u"\n".join(report) or None, title=ALERT_TITLE)
 elif report:
     forms.alert(u"{} de {} ambiente(s) com vista criada, com avisos:".format(
                     len(created), len(elements)),
-                sub_msg=u"\n".join(report))
+                sub_msg=u"\n".join(report), title=ALERT_TITLE)

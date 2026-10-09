@@ -1,5 +1,8 @@
 # -*- coding: utf-8 -*-
-"""Paleta e estilos WPF do padrão visual OCA (tema claro e escuro do Revit).
+"""Paleta e estilos WPF do padrão visual OCA.
+
+As janelas usam sempre o tema escuro (DARK), independente do tema do Revit.
+LIGHT fica disponível para uso explícito (build_xaml(..., dark=False)).
 
 As cores ficam só aqui. As janelas referenciam os pincéis pelas chaves
 "oca.*" ({StaticResource oca.Ink2}, {StaticResource oca.Warn}...), nunca
@@ -58,21 +61,7 @@ SIZES = {"S": 460, "M": 580, "L": 1160}
 LABEL_WIDTH = 120
 
 
-def is_dark():
-    """True quando o Revit está no tema escuro (UIThemeManager, Revit 2024+).
-
-    Em qualquer falha (versão sem a API, fora do Revit) assume o tema claro.
-    """
-    try:
-        from Autodesk.Revit.UI import UIThemeManager, UITheme
-        return UIThemeManager.CurrentTheme == UITheme.Dark
-    except Exception:
-        return False
-
-
-def palette(dark=None):
-    if dark is None:
-        dark = is_dark()
+def palette(dark=True):
     return DARK if dark else LIGHT
 
 
@@ -399,7 +388,7 @@ STYLES = u"""
 """
 
 
-def resources(dark=None):
+def resources(dark=True):
     """Conteúdo de <Window.Resources>: pincéis oca.* + estilos."""
     colors = palette(dark)
     brushes = u"".join(
