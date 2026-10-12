@@ -1,9 +1,9 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="pt-BR">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>IFC HUD Viewer</title>
+<title>Visualizador IFC HUD</title>
 <script type="importmap">
 {
   "imports": {
@@ -205,7 +205,7 @@ body.plan2d #hud{display:none}
 .bar .fill{position:absolute;left:0;top:0;bottom:0;background:var(--acc);opacity:.85}
 .bar .fill.ok{background:var(--teal)}.bar .fill.over{background:var(--amb)}.bar .fill.under{background:var(--mag)}.bar .fill.nob{background:#3E5A78}
 .bar .mark{position:absolute;top:-4px;bottom:-4px;width:2px;background:#fff;box-shadow:0 0 6px #fff}
-.bar .mark::after{content:"brief";position:absolute;top:-13px;left:3px;font:9px var(--mono);color:var(--mut)}
+.bar .mark::after{content:"meta";position:absolute;top:-13px;left:3px;font:9px var(--mono);color:var(--mut)}
 .bar .val{text-align:right;color:var(--tx2);font-variant-numeric:tabular-nums}
 table.at{width:100%;border-collapse:collapse;font:12px/1.3 var(--mono);background:var(--panel);border:1px solid var(--line)}
 table.at th{background:#0C1627;color:var(--mut);font-weight:400;text-align:left;padding:8px;border-bottom:1px solid var(--line2);white-space:nowrap}
@@ -283,7 +283,7 @@ body.dragging #dropZone{border-color:var(--acc);background:var(--acc-d)}
 </style>
 </head>
 <body data-tab="model">
-<div id="errbar" role="alert"><div id="errlist"></div><button id="errclose" title="Dismiss">DISMISS ✕</button></div>
+<div id="errbar" role="alert"><div id="errlist"></div><button id="errclose" title="Fechar">FECHAR ✕</button></div>
 
 <header id="rail">
   <div class="brand">
@@ -291,61 +291,61 @@ body.dragging #dropZone{border-color:var(--acc);background:var(--acc-d)}
     <div><div class="t">IFC<span>//</span>HUD</div><div class="s">web-ifc 0.0.57 · three r160</div></div>
   </div>
   <nav id="tabs" role="tablist">
-    <button role="tab" data-tab="model" aria-selected="true" disabled><span class="k">01</span>3D MODEL</button>
-    <button role="tab" data-tab="rooms" aria-selected="false" disabled><span class="k">02</span>ROOM MODEL</button>
-    <button role="tab" data-tab="areas" aria-selected="false" disabled><span class="k">03</span>ROOM AREAS</button>
+    <button role="tab" data-tab="model" aria-selected="true" disabled><span class="k">01</span>MODELO 3D</button>
+    <button role="tab" data-tab="rooms" aria-selected="false" disabled><span class="k">02</span>AMBIENTES</button>
+    <button role="tab" data-tab="areas" aria-selected="false" disabled><span class="k">03</span>QUADRO DE ÁREAS</button>
   </nav>
   <div class="rail-fill"></div>
   <div class="rail-right">
-    <span class="chip acc" id="fileChip">NO MODEL</span>
+    <span class="chip acc" id="fileChip">SEM MODELO</span>
     <span class="chip" id="infoChip" hidden></span>
     <div class="menu" id="expMenu">
-      <button class="btn" id="expBtn" disabled>Export ▾</button>
+      <button class="btn" id="expBtn" disabled>Exportar ▾</button>
       <div class="pop">
-        <button data-exp="roomsCsv">Rooms → CSV<span class="lbl">schedule with all parameters</span></button>
-        <button data-exp="roomsXlsx">Rooms → XLSX<span class="lbl">styled workbook</span></button>
-        <button data-exp="elemCsv">Selected element → CSV<span class="lbl">all property &amp; quantity sets</span></button>
-        <button data-exp="qtyCsv">All quantities → CSV<span class="lbl">every quantity of every element</span></button>
+        <button data-exp="roomsCsv">Ambientes → CSV<span class="lbl">tabela com todos os parâmetros</span></button>
+        <button data-exp="roomsXlsx">Ambientes → XLSX<span class="lbl">planilha formatada</span></button>
+        <button data-exp="elemCsv">Elemento selecionado → CSV<span class="lbl">todos os conjuntos de propriedades e quantidades</span></button>
+        <button data-exp="qtyCsv">Todas as quantidades → CSV<span class="lbl">todas as quantidades de todos os elementos</span></button>
       </div>
     </div>
-    <button class="btn pri" id="openBtn">Open IFC</button>
+    <button class="btn pri" id="openBtn">Abrir IFC</button>
   </div>
 </header>
 
 <main id="shell">
   <aside id="left">
     <div class="pane on" data-pane="model">
-      <div class="phead"><h2>MODEL TREE</h2><div class="lbl" id="treeSub">Level → Category</div></div>
-      <div class="search"><input class="inp" id="treeSearch" placeholder="Filter name / class / #id" spellcheck="false"></div>
+      <div class="phead"><h2>ÁRVORE DO MODELO</h2><div class="lbl" id="treeSub">Nível → Categoria</div></div>
+      <div class="search"><input class="inp" id="treeSearch" placeholder="Filtrar nome / classe / #id" spellcheck="false"></div>
       <div class="pbody" id="tree"></div>
     </div>
     <div class="pane" data-pane="rooms">
-      <div class="phead"><h2>ROOM SCHEDULE</h2><div class="lbl" id="schedSub"></div></div>
+      <div class="phead"><h2>TABELA DE AMBIENTES</h2><div class="lbl" id="schedSub"></div></div>
       <div class="search" style="flex-direction:column">
-        <input class="inp" id="roomSearch" placeholder="Search no. / room / level" spellcheck="false">
+        <input class="inp" id="roomSearch" placeholder="Buscar nº / ambiente / nível" spellcheck="false">
         <div style="display:flex;gap:6px">
-          <select class="inp" id="roomParam" style="flex:1;width:50%"><option value="">Filter by parameter…</option></select>
-          <input class="inp" id="roomParamVal" placeholder="contains…" spellcheck="false">
+          <select class="inp" id="roomParam" style="flex:1;width:50%"><option value="">Filtrar por parâmetro…</option></select>
+          <input class="inp" id="roomParamVal" placeholder="contém…" spellcheck="false">
         </div>
       </div>
       <div class="pbody"><table class="grid" id="sched"><thead><tr>
-        <th data-k="no">No.</th><th data-k="name">Room</th><th data-k="level">Level</th><th data-k="area" class="num">Area m²</th>
+        <th data-k="no">Nº</th><th data-k="name">Ambiente</th><th data-k="level">Nível</th><th data-k="area" class="num">Área m²</th>
       </tr></thead><tbody></tbody></table></div>
       <div class="pfoot"><span class="lbl" id="schedTot" style="flex:1"></span>
         <button class="btn sm" data-exp="roomsCsv">CSV</button><button class="btn sm" data-exp="roomsXlsx">XLSX</button></div>
     </div>
     <div class="pane" data-pane="areas">
-      <div class="phead"><h2>CATEGORY MAPPING</h2><div class="lbl">Room parameter → hierarchy level</div></div>
+      <div class="phead"><h2>MAPEAMENTO DE CATEGORIAS</h2><div class="lbl">Parâmetro do ambiente → nível da hierarquia</div></div>
       <div class="pbody">
-        <div class="maprow"><div class="lbl"><b>L1</b> · top category</div><select class="inp" id="map0"></select></div>
-        <div class="maprow"><div class="lbl"><b>L2</b> · sub-category</div><select class="inp" id="map1"></select></div>
-        <div class="maprow"><div class="lbl"><b>L3</b> · detail</div><select class="inp" id="map2"></select></div>
-        <div class="maprow"><div class="lbl">Tolerance ± %</div><input class="inp" id="tol" type="number" min="0" max="100" step="0.5" value="5"></div>
-        <div class="maprow"><div class="lbl">Brief template</div>
+        <div class="maprow"><div class="lbl"><b>L1</b> · categoria principal</div><select class="inp" id="map0"></select></div>
+        <div class="maprow"><div class="lbl"><b>L2</b> · subcategoria</div><select class="inp" id="map1"></select></div>
+        <div class="maprow"><div class="lbl"><b>L3</b> · detalhe</div><select class="inp" id="map2"></select></div>
+        <div class="maprow"><div class="lbl">Tolerância ± %</div><input class="inp" id="tol" type="number" min="0" max="100" step="0.5" value="5"></div>
+        <div class="maprow"><div class="lbl">Modelo de programa</div>
           <div style="display:flex;gap:6px;flex-wrap:wrap">
-            <button class="btn sm" id="briefExport">Export .xlsx</button>
-            <button class="btn sm" id="briefImport">Import .xlsx</button>
-            <button class="btn sm" id="briefClear">Clear brief</button>
+            <button class="btn sm" id="briefExport">Exportar .xlsx</button>
+            <button class="btn sm" id="briefImport">Importar .xlsx</button>
+            <button class="btn sm" id="briefClear">Limpar programa</button>
           </div>
           <input type="file" id="briefFile" accept=".xlsx" hidden>
         </div>
@@ -353,65 +353,65 @@ body.dragging #dropZone{border-color:var(--acc);background:var(--acc-d)}
       </div>
     </div>
   </aside>
-  <div class="split" id="splitL" role="separator" aria-orientation="vertical" aria-label="Resize left panel"></div>
+  <div class="split" id="splitL" role="separator" aria-orientation="vertical" aria-label="Redimensionar painel esquerdo"></div>
 
   <section id="center">
     <div id="vpTools">
       <div class="grp" data-show="model rooms">
-        <span class="lbl">LEVEL</span><select class="inp" id="levelSel"><option value="">All levels</option></select>
+        <span class="lbl">NÍVEL</span><select class="inp" id="levelSel"><option value="">Todos os níveis</option></select>
       </div>
       <div class="grp" data-show="model">
-        <span class="lbl">PICK</span>
-        <div class="seg" id="pickSeg"><button data-v="elements" aria-pressed="true">Elements</button><button data-v="rooms" aria-pressed="false">Rooms</button></div>
+        <span class="lbl">SELECIONAR</span>
+        <div class="seg" id="pickSeg"><button data-v="elements" aria-pressed="true">Elementos</button><button data-v="rooms" aria-pressed="false">Ambientes</button></div>
       </div>
       <div class="grp" data-show="rooms">
         <div class="seg" id="viewSeg"><button data-v="3d" aria-pressed="true">3D</button><button data-v="2d" aria-pressed="false">2D</button></div>
-        <span class="lbl">COLOR BY</span>
-        <select class="inp" id="colorBy"><option value="name">Name</option><option value="no">Number</option><option value="param">Parameter…</option></select>
+        <span class="lbl">COLORIR POR</span>
+        <select class="inp" id="colorBy"><option value="name">Nome</option><option value="no">Número</option><option value="param">Parâmetro…</option></select>
         <select class="inp" id="colorParam" hidden></select>
       </div>
       <div class="grp" data-show="model rooms">
-        <button class="tog" id="miniTog" aria-pressed="false">Minimap</button>
-        <button class="tog" id="annoTog" aria-pressed="false">Annotations</button>
-        <button class="tog" id="fitBtn">Fit ⌖</button>
+        <button class="tog" id="miniTog" aria-pressed="false">Minimapa</button>
+        <button class="tog" id="annoTog" aria-pressed="false">Anotações</button>
+        <button class="tog" id="fitBtn">Enquadrar ⌖</button>
       </div>
-      <div class="grp" data-show="areas"><span class="lbl" id="dashSub">Area comparison · project vs brief</span></div>
+      <div class="grp" data-show="areas"><span class="lbl" id="dashSub">Comparação de áreas · projeto × programa</span></div>
     </div>
     <div id="viewport">
       <div id="canvasHost"></div>
       <div id="labels"></div>
-      <div id="miniBg"></div><canvas id="miniCanvas" width="200" height="200"></canvas><div id="miniTag" class="lbl">PLAN</div>
+      <div id="miniBg"></div><canvas id="miniCanvas" width="200" height="200"></canvas><div id="miniTag" class="lbl">PLANTA</div>
       <div id="plan"></div>
       <div id="planInfo" class="lbl"></div>
       <div id="legend"></div>
       <div id="hud"></div>
-      <div id="help">L-DRAG orbit · R/M-DRAG pan · WHEEL zoom to cursor<br>CLICK select · DBL-CLICK focus · F fit · ESC clear</div>
-      <div id="vpMsg"><div class="card"><h3 id="vpMsgT"></h3><p id="vpMsgP"></p><button class="btn pri" id="vpMsgB">Load geometry</button></div></div>
+      <div id="help">ARRASTAR-E orbitar · ARRASTAR-D/M deslocar · RODA zoom no cursor<br>CLIQUE selecionar · CLIQUE DUPLO focar · F enquadrar · ESC limpar</div>
+      <div id="vpMsg"><div class="card"><h3 id="vpMsgT"></h3><p id="vpMsgP"></p><button class="btn pri" id="vpMsgB">Carregar geometria</button></div></div>
     </div>
     <div id="dash"></div>
   </section>
 
-  <div class="split" id="splitR" role="separator" aria-orientation="vertical" aria-label="Resize inspector"></div>
+  <div class="split" id="splitR" role="separator" aria-orientation="vertical" aria-label="Redimensionar inspetor"></div>
   <aside id="right">
-    <div class="phead"><h2>INSPECTOR</h2><div class="lbl" id="inspSub">No selection</div></div>
-    <div class="pbody" id="insp"><div id="inspEmpty">Select an element in the 3D view, plan, model tree or room schedule to see all of its IFC data.</div></div>
+    <div class="phead"><h2>INSPETOR</h2><div class="lbl" id="inspSub">Nenhuma seleção</div></div>
+    <div class="pbody" id="insp"><div id="inspEmpty">Selecione um elemento na vista 3D, na planta, na árvore do modelo ou na tabela de ambientes para ver todos os seus dados IFC.</div></div>
   </aside>
 </main>
 
 <div id="drop" class="on">
   <div class="dcard">
-    <div class="dtop"><span class="lbl">LOAD MODEL</span><button class="btn sm" id="dropClose" hidden>Close ✕</button></div>
+    <div class="dtop"><span class="lbl">CARREGAR MODELO</span><button class="btn sm" id="dropClose" hidden>Fechar ✕</button></div>
     <div id="dropZone">
-      <h1>DROP .IFC FILE</h1>
-      <p>Parsed locally in your browser. Nothing is uploaded.</p>
-      <button class="btn pri" id="browseBtn">Browse…</button>
+      <h1>ARRASTE O ARQUIVO .IFC</h1>
+      <p>Lido localmente no seu navegador. Nada é enviado.</p>
+      <button class="btn pri" id="browseBtn">Procurar…</button>
       <input type="file" id="fileIn" accept=".ifc" hidden>
     </div>
-    <div class="modes" role="radiogroup" aria-label="Load mode">
-      <label class="mode"><input type="radio" name="mode" value="full" checked><div class="h">3D + DATA</div><div class="d">Geometry, room model, 2D plans, section cuts and all IFC data.</div></label>
-      <label class="mode"><input type="radio" name="mode" value="fast"><div class="h">FAST MODE</div><div class="d">Data only — tree, inspector, schedule, areas. No geometry. Much faster on big files.</div></label>
+    <div class="modes" role="radiogroup" aria-label="Modo de carregamento">
+      <label class="mode"><input type="radio" name="mode" value="full" checked><div class="h">3D + DADOS</div><div class="d">Geometria, modelo de ambientes, plantas 2D, cortes e todos os dados IFC.</div></label>
+      <label class="mode"><input type="radio" name="mode" value="fast"><div class="h">MODO RÁPIDO</div><div class="d">Somente dados — árvore, inspetor, tabela, áreas. Sem geometria. Muito mais rápido em arquivos grandes.</div></label>
     </div>
-    <div id="prog"><div class="prow"><div class="spin"></div><div id="progText">Starting…</div><div id="progPct">0%</div></div><div class="ptrack"><div id="progBar"></div></div></div>
+    <div id="prog"><div class="prow"><div class="spin"></div><div id="progText">Iniciando…</div><div id="progPct">0%</div></div><div class="ptrack"><div id="progBar"></div></div></div>
   </div>
 </div>
 <div id="toast"></div>
@@ -425,7 +425,7 @@ body.dragging #dropZone{border-color:var(--acc);background:var(--acc-d)}
     push(msg,level){ level=level||'e'; msg=String(msg);
       const k=level+msg; if(seen.has(k)){ const n=seen.get(k); n.count++; n.el.querySelector('b').textContent=n.count+'×'; bar.classList.add('on'); return; }
       const d=document.createElement('div'); d.className=level; const b=document.createElement('b');
-      b.textContent={e:'ERROR',w:'WARN',i:'INFO'}[level]||'ERROR'; d.append(b,document.createTextNode(msg));
+      b.textContent={e:'ERRO',w:'AVISO',i:'INFO'}[level]||'ERRO'; d.append(b,document.createTextNode(msg));
       list.append(d); seen.set(k,{count:1,el:d}); bar.classList.add('on');
       if(level==='e') console.error(msg);
     },
@@ -433,16 +433,16 @@ body.dragging #dropZone{border-color:var(--acc);background:var(--acc-d)}
   };
   document.getElementById('errclose').onclick=()=>HUDErr.clear();
   window.addEventListener('error',e=>{ if(e.message) HUDErr.push(e.message+(e.filename?` (${e.filename.split('/').pop()}:${e.lineno})`:'')); });
-  window.addEventListener('unhandledrejection',e=>{ const r=e.reason; HUDErr.push('Unhandled: '+(r&&r.message||r)); });
+  window.addEventListener('unhandledrejection',e=>{ const r=e.reason; HUDErr.push('Não tratado: '+(r&&r.message||r)); });
   /* capture files dropped/picked before the module (CDN libraries) has finished loading */
   window.__hudPending=null;
   addEventListener('dragover',e=>{ if(!window.__hudReady) e.preventDefault(); });
-  addEventListener('drop',e=>{ if(window.__hudReady) return; e.preventDefault(); const f=e.dataTransfer&&e.dataTransfer.files[0]; if(f){ window.__hudPending=f; document.getElementById('progText').textContent='Queued '+f.name+' — waiting for libraries…'; } });
-  document.getElementById('fileIn').addEventListener('change',e=>{ if(window.__hudReady) return; const f=e.target.files[0]; if(f){ window.__hudPending=f; document.getElementById('progText').textContent='Queued '+f.name+' — waiting for libraries…'; } });
+  addEventListener('drop',e=>{ if(window.__hudReady) return; e.preventDefault(); const f=e.dataTransfer&&e.dataTransfer.files[0]; if(f){ window.__hudPending=f; document.getElementById('progText').textContent='Na fila: '+f.name+' — aguardando bibliotecas…'; } });
+  document.getElementById('fileIn').addEventListener('change',e=>{ if(window.__hudReady) return; const f=e.target.files[0]; if(f){ window.__hudPending=f; document.getElementById('progText').textContent='Na fila: '+f.name+' — aguardando bibliotecas…'; } });
   document.getElementById('browseBtn').addEventListener('click',()=>{ if(!window.__hudReady) document.getElementById('fileIn').click(); });
   document.getElementById('prog').classList.add('on');
-  document.getElementById('progText').textContent='Loading three.js + web-ifc from jsDelivr…';
-  if(!HTMLScriptElement.supports||!HTMLScriptElement.supports('importmap')) HUDErr.push('This browser does not support import maps. Use a current Chrome, Edge, Firefox or Safari.');
+  document.getElementById('progText').textContent='Carregando three.js + web-ifc do jsDelivr…';
+  if(!HTMLScriptElement.supports||!HTMLScriptElement.supports('importmap')) HUDErr.push('Este navegador não suporta import maps. Use uma versão atual do Chrome, Edge, Firefox ou Safari.');
 })();
 </script>
 <script type="module">
@@ -459,7 +459,7 @@ try {
   ({ CSS2DRenderer, CSS2DObject } = await import('three/addons/renderers/CSS2DRenderer.js'));
   WebIFC = await import('web-ifc');
 } catch (e) {
-  Err.push(`Could not load libraries from cdn.jsdelivr.net (${e.message}). This viewer needs internet access to jsDelivr; check your connection, proxy or firewall.`);
+  Err.push(`Não foi possível carregar as bibliotecas de cdn.jsdelivr.net (${e.message}). Este visualizador precisa de acesso à internet ao jsDelivr; verifique a conexão, o proxy ou o firewall.`);
   throw e;
 }
 
@@ -483,10 +483,11 @@ function h(tag, attrs, ...kids) {
 const sleep = (ms = 0) => new Promise(r => setTimeout(r, ms));
 const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
 const median = arr => { if (!arr.length) return null; const a = [...arr].sort((x, y) => x - y); const m = a.length >> 1; return a.length % 2 ? a[m] : (a[m - 1] + a[m]) / 2; };
-const nf2 = new Intl.NumberFormat('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-const nf0 = new Intl.NumberFormat('en-US', { maximumFractionDigits: 0 });
+const nf2 = new Intl.NumberFormat('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+const nf0 = new Intl.NumberFormat('pt-BR', { maximumFractionDigits: 0 });
 const fmtA = v => v == null || !isFinite(v) ? '—' : nf2.format(v);
-function fmtNum(v) { if (!isFinite(v)) return String(v); if (Number.isInteger(v)) return nf0.format(v); const a = Math.abs(v); return v.toLocaleString('en-US', { maximumFractionDigits: a >= 100 ? 2 : a >= 1 ? 3 : 5 }); }
+const fmtP = v => v.toLocaleString('pt-BR', { minimumFractionDigits: 1, maximumFractionDigits: 1 });
+function fmtNum(v) { if (!isFinite(v)) return String(v); if (Number.isInteger(v)) return nf0.format(v); const a = Math.abs(v); return v.toLocaleString('pt-BR', { maximumFractionDigits: a >= 100 ? 2 : a >= 1 ? 3 : 5 }); }
 function esc(s) { return String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c])); }
 let toastT; function toast(msg, ms = 3500) { const t = $('#toast'); t.textContent = msg; t.classList.add('on'); clearTimeout(toastT); toastT = setTimeout(() => t.classList.remove('on'), ms); }
 function download(blob, name) { const a = h('a', { href: URL.createObjectURL(blob), download: name }); document.body.append(a); a.click(); setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 2000); }
@@ -532,19 +533,19 @@ function zipStore(files) {
 async function unzip(buf) {
   const u8 = new Uint8Array(buf), dv = new DataView(buf); let eo = -1;
   for (let i = u8.length - 22; i >= Math.max(0, u8.length - 70000); i--) if (dv.getUint32(i, true) === 0x06054b50) { eo = i; break; }
-  if (eo < 0) throw new Error('not a ZIP/XLSX file');
+  if (eo < 0) throw new Error('não é um arquivo ZIP/XLSX');
   const n = dv.getUint16(eo + 10, true); let p = dv.getUint32(eo + 16, true); const out = {}; const td = new TextDecoder();
   for (let k = 0; k < n; k++) {
-    if (dv.getUint32(p, true) !== 0x02014b50) throw new Error('corrupt ZIP directory');
+    if (dv.getUint32(p, true) !== 0x02014b50) throw new Error('diretório ZIP corrompido');
     const method = dv.getUint16(p + 10, true), csize = dv.getUint32(p + 20, true), nl = dv.getUint16(p + 28, true), xl = dv.getUint16(p + 30, true), cl = dv.getUint16(p + 32, true), lo = dv.getUint32(p + 42, true);
     const name = td.decode(u8.subarray(p + 46, p + 46 + nl));
     const ds = lo + 30 + dv.getUint16(lo + 26, true) + dv.getUint16(lo + 28, true);
     const raw = u8.subarray(ds, ds + csize);
     if (method === 0) out[name] = raw;
     else if (method === 8) {
-      if (typeof DecompressionStream === 'undefined') throw new Error('this browser lacks DecompressionStream (needed to read .xlsx)');
+      if (typeof DecompressionStream === 'undefined') throw new Error('este navegador não tem DecompressionStream (necessário para ler .xlsx)');
       out[name] = new Uint8Array(await new Response(new Blob([raw]).stream().pipeThrough(new DecompressionStream('deflate-raw'))).arrayBuffer());
-    } else throw new Error(`unsupported ZIP compression method ${method}`);
+    } else throw new Error(`método de compressão ZIP não suportado: ${method}`);
     p += 46 + nl + xl + cl;
   }
   return out;
@@ -601,7 +602,7 @@ function buildXlsx(sheets) {
   const sName = s => xEsc(String(s).replace(/[\\\/\?\*\[\]:]/g, ' ').slice(0, 31));
   files.push({ name: '[Content_Types].xml', data: `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/><Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/>${sheets.map((s, i) => `<Override PartName="/xl/worksheets/sheet${i + 1}.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>`).join('')}<Override PartName="/docProps/core.xml" ContentType="application/vnd.openxmlformats-package.core-properties+xml"/></Types>` });
   files.push({ name: '_rels/.rels', data: `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/><Relationship Id="rId2" Type="http://schemas.openxmlformats.org/package/2006/relationships/metadata/core-properties" Target="docProps/core.xml"/></Relationships>` });
-  files.push({ name: 'docProps/core.xml', data: `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n<cp:coreProperties xmlns:cp="http://schemas.openxmlformats.org/package/2006/metadata/core-properties" xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:dcterms="http://purl.org/dc/terms/" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"><dc:creator>IFC HUD Viewer</dc:creator><dcterms:created xsi:type="dcterms:W3CDTF">${new Date().toISOString().slice(0, 19)}Z</dcterms:created></cp:coreProperties>` });
+  files.push({ name: 'docProps/core.xml', data: `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n<cp:coreProperties xmlns:cp="http://schemas.openxmlformats.org/package/2006/metadata/core-properties" xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:dcterms="http://purl.org/dc/terms/" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"><dc:creator>Visualizador IFC HUD</dc:creator><dcterms:created xsi:type="dcterms:W3CDTF">${new Date().toISOString().slice(0, 19)}Z</dcterms:created></cp:coreProperties>` });
   const defs = sheets.map((s, i) => s.filterRows ? `<definedName name="_xlnm._FilterDatabase" localSheetId="${i}" hidden="1">'${sName(s.name).replace(/'/g, "''")}'!$A$${(s.headerRow ?? 0) + 1}:$${colL(Math.max(...s.rows.map(r => r.length)) - 1)}$${(s.headerRow ?? 0) + s.filterRows + 1}</definedName>` : '').join('');
   files.push({ name: 'xl/workbook.xml', data: `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><bookViews><workbookView/></bookViews><sheets>${sheets.map((s, i) => `<sheet name="${sName(s.name)}" sheetId="${i + 1}" r:id="rId${i + 1}"/>`).join('')}</sheets>${defs ? `<definedNames>${defs}</definedNames>` : ''}</workbook>` });
   files.push({ name: 'xl/_rels/workbook.xml.rels', data: `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">${sheets.map((s, i) => `<Relationship Id="rId${i + 1}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet${i + 1}.xml"/>`).join('')}<Relationship Id="rId${sheets.length + 1}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/></Relationships>` });
@@ -622,7 +623,7 @@ async function readXlsx(buf) {
     for (const r of rels.getElementsByTagName('Relationship')) if (r.getAttribute('Id') === rid) { let t = r.getAttribute('Target'); t = t.startsWith('/') ? t.slice(1) : 'xl/' + t; sheetPath = t.replace(/\/[^/]+\/\.\.\//g, '/'); }
   }
   if (!sheetPath || !files[sheetPath]) sheetPath = Object.keys(files).filter(n => /^xl\/worksheets\/sheet\d+\.xml$/.test(n)).sort()[0];
-  if (!sheetPath) throw new Error('no worksheet found in workbook');
+  if (!sheetPath) throw new Error('nenhuma planilha encontrada na pasta de trabalho');
   const ss = []; const sst = xml('xl/sharedStrings.xml');
   if (sst) for (const si of sst.getElementsByTagName('si')) ss.push([...si.getElementsByTagName('t')].map(t => t.textContent).join(''));
   const doc = xml(sheetPath); const rows = [];
@@ -697,7 +698,7 @@ function unitFactor(u, depth = 0) {
     const mw = line(refId(u.ConversionFactor));
     if (mw) { const vc = Number(V(mw.ValueComponent)); const f = unitFactor(line(refId(mw.UnitComponent)), depth + 1); if (isFinite(vc) && vc > 0) return vc * f; }
     const nm = String(V(u.Name) || '').toUpperCase().trim(); if (NAMED[nm]) return NAMED[nm];
-    Err.push(`Unrecognised conversion-based unit "${V(u.Name)}" — assuming factor 1.`, 'w');
+    Err.push(`Unidade de conversão não reconhecida "${V(u.Name)}" — assumindo fator 1.`, 'w');
   }
   return 1;
 }
@@ -707,13 +708,13 @@ function unitLabel(u) {
   return String(V(u.Name) || '?').toLowerCase();
 }
 function readUnits() {
-  const U = { len: 1, area: null, vol: null, lenName: 'm (assumed)' };
+  const U = { len: 1, area: null, vol: null, lenName: 'm (presumido)' };
   const pid = idsOf(T('IFCPROJECT'))[0];
   const proj = line(pid);
-  if (!proj) { Err.push('No IfcProject found — assuming metres.', 'w'); return U; }
+  if (!proj) { Err.push('Nenhum IfcProject encontrado — assumindo metros.', 'w'); return U; }
   S.projectGid = VS(proj.GlobalId); S.projectName = VS(proj.LongName) || VS(proj.Name);
   const ua = line(refId(proj.UnitsInContext));
-  if (!ua) { Err.push('IfcProject has no UnitsInContext — assuming metres.', 'w'); return U; }
+  if (!ua) { Err.push('IfcProject sem UnitsInContext — assumindo metros.', 'w'); return U; }
   let found = false;
   for (const uid of refs(ua.Units)) {
     const u = line(uid); if (!u) continue; const t = String(V(u.UnitType) || '');
@@ -721,7 +722,7 @@ function readUnits() {
     else if (t === 'AREAUNIT') U.area = unitFactor(u);
     else if (t === 'VOLUMEUNIT') U.vol = unitFactor(u);
   }
-  if (!found) Err.push('No LENGTHUNIT in IfcUnitAssignment — assuming metres.', 'w');
+  if (!found) Err.push('Nenhuma LENGTHUNIT em IfcUnitAssignment — assumindo metros.', 'w');
   if (U.area == null) U.area = U.len * U.len;
   if (U.vol == null) U.vol = U.len ** 3;
   return U;
@@ -745,7 +746,7 @@ function valText(x) {
     if ('value' in x) {
       const v = x.value; if (v == null) return '';
       if (typeof v === 'number') { const c = convMeasure(v, x.name); return fmtNum(c.num) + (c.unit ? ' ' + c.unit : ''); }
-      if (v === 'T' || v === true) return 'True'; if (v === 'F' || v === false) return 'False'; if (v === 'U') return 'Unknown';
+      if (v === 'T' || v === true) return 'Verdadeiro'; if (v === 'F' || v === false) return 'Falso'; if (v === 'U') return 'Desconhecido';
       return dec(String(v));
     }
   }
@@ -756,12 +757,12 @@ function propRow(p, prefix) {
   if (cls === 'IFCPROPERTYSINGLEVALUE') {
     const nv = p.NominalValue; let num = null, unit = '';
     if (nv && typeof nv === 'object' && typeof nv.value === 'number') ({ num, unit } = convMeasure(nv.value, nv.name));
-    if (nv && (nv.value === 'T' || nv.value === 'F')) return [{ k, v: nv.value === 'T' ? 'True' : 'False', num: null, unit: '' }];
+    if (nv && (nv.value === 'T' || nv.value === 'F')) return [{ k, v: nv.value === 'T' ? 'Verdadeiro' : 'Falso', num: null, unit: '' }];
     return [{ k, v: valText(nv), num, unit }];
   }
   if (cls === 'IFCPROPERTYENUMERATEDVALUE') return [{ k, v: valText(p.EnumerationValues), num: null, unit: '' }];
   if (cls === 'IFCPROPERTYLISTVALUE') return [{ k, v: valText(p.ListValues), num: null, unit: '' }];
-  if (cls === 'IFCPROPERTYBOUNDEDVALUE') return [{ k, v: [p.LowerBoundValue && 'min ' + valText(p.LowerBoundValue), p.UpperBoundValue && 'max ' + valText(p.UpperBoundValue), p.SetPointValue && 'set ' + valText(p.SetPointValue)].filter(Boolean).join(' · '), num: null, unit: '' }];
+  if (cls === 'IFCPROPERTYBOUNDEDVALUE') return [{ k, v: [p.LowerBoundValue && 'mín ' + valText(p.LowerBoundValue), p.UpperBoundValue && 'máx ' + valText(p.UpperBoundValue), p.SetPointValue && 'ajuste ' + valText(p.SetPointValue)].filter(Boolean).join(' · '), num: null, unit: '' }];
   if (cls === 'IFCPROPERTYTABLEVALUE') { const d = p.DefiningValues || [], f = p.DefinedValues || []; return [{ k, v: d.map((x, i) => valText(x) + '→' + valText(f[i])).join('; '), num: null, unit: '' }]; }
   if (cls === 'IFCPROPERTYREFERENCEVALUE') return [{ k, v: valText(p.PropertyReference), num: null, unit: '' }];
   if (cls === 'IFCCOMPLEXPROPERTY') return refs(p.HasProperties).flatMap(id => { const c = line(id); return c ? propRow(c, k) : []; });
@@ -787,9 +788,9 @@ function readSetLine(psid, fromType) {
 function readSets(id) {
   if (S.setsCache.has(id)) return S.setsCache.get(id);
   const out = [];
-  for (const ps of S.psetsOf.get(id) || []) { try { const s = readSetLine(ps, false); if (s) out.push(s); } catch (e) { Err.push(`Property set #${ps}: ${e.message}`, 'w'); } }
+  for (const ps of S.psetsOf.get(id) || []) { try { const s = readSetLine(ps, false); if (s) out.push(s); } catch (e) { Err.push(`Conjunto de propriedades #${ps}: ${e.message}`, 'w'); } }
   const tid = S.typeOf.get(id);
-  if (tid != null) { const tl = line(tid); for (const ps of refs(tl && tl.HasPropertySets)) { try { const s = readSetLine(ps, true); if (s) out.push(s); } catch (e) { Err.push(`Type property set #${ps}: ${e.message}`, 'w'); } } }
+  if (tid != null) { const tl = line(tid); for (const ps of refs(tl && tl.HasPropertySets)) { try { const s = readSetLine(ps, true); if (s) out.push(s); } catch (e) { Err.push(`Conjunto de propriedades do tipo #${ps}: ${e.message}`, 'w'); } } }
   if (S.setsCache.size > 4000) S.setsCache.clear();
   S.setsCache.set(id, out);
   return out;
@@ -803,7 +804,7 @@ async function initApi() {
   const api = new WebIFC.IfcAPI();
   api.SetWasmPath(WASM_PATH, true);
   try { await api.Init(); }
-  catch (e) { throw new Error(`web-ifc WASM failed to initialise from ${WASM_PATH} (${e.message}). Check network access to jsDelivr.`); }
+  catch (e) { throw new Error(`Falha ao inicializar o WASM do web-ifc a partir de ${WASM_PATH} (${e.message}). Verifique o acesso à rede ao jsDelivr.`); }
   try { api.SetLogLevel(WebIFC.LogLevel ? WebIFC.LogLevel.LOG_LEVEL_OFF : 6); } catch (e) { }
   S.api = api; return api;
 }
@@ -817,40 +818,40 @@ function resetModel() {
 
 async function loadFile(file, mode) {
   if (!file) return;
-  if (!/\.ifc$/i.test(file.name)) { Err.push(/\.ifc(zip|xml)$/i.test(file.name) ? `${file.name}: .ifcZIP / .ifcXML are not supported — export or extract a plain .ifc (STEP) file.` : `${file.name} is not an .ifc file.`); return; }
+  if (!/\.ifc$/i.test(file.name)) { Err.push(/\.ifc(zip|xml)$/i.test(file.name) ? `${file.name}: .ifcZIP / .ifcXML não são suportados — exporte ou extraia um arquivo .ifc (STEP) simples.` : `${file.name} não é um arquivo .ifc.`); return; }
   const bytes = new Uint8Array(await file.arrayBuffer());
   await loadBytes(bytes, file.name, mode);
 }
 
 async function loadBytes(bytes, name, mode) {
   const head = new TextDecoder().decode(bytes.subarray(0, 64));
-  if (!/ISO-10303-21/.test(head)) { Err.push(`${name}: missing ISO-10303-21 header — this is not a STEP/IFC file.`); return; }
-  $('#prog').classList.add('on'); $('#dropClose').hidden = true; progress(1, 'Initialising web-ifc…');
+  if (!/ISO-10303-21/.test(head)) { Err.push(`${name}: cabeçalho ISO-10303-21 ausente — este não é um arquivo STEP/IFC.`); return; }
+  $('#prog').classList.add('on'); $('#dropClose').hidden = true; progress(1, 'Inicializando web-ifc…');
   const t0 = performance.now();
   try {
     await ensureApi(); await sleep(10);
     resetModel();
     S.mode = mode; S.fileName = name; S.fileBytes = bytes;
-    progress(4, `Opening ${name} (${(bytes.length / 1048576).toFixed(1)} MB)…`); await sleep(20);
+    progress(4, `Abrindo ${name} (${fmtP(bytes.length / 1048576)} MB)…`); await sleep(20);
     S.mid = S.api.OpenModel(bytes, { COORDINATE_TO_ORIGIN: true, USE_FAST_BOOLS: true });
-    if (S.mid == null || S.mid < 0) throw new Error('web-ifc could not open the file (corrupt or unsupported schema)');
+    if (S.mid == null || S.mid < 0) throw new Error('o web-ifc não conseguiu abrir o arquivo (corrompido ou com esquema não suportado)');
     try { S.schema = S.api.GetModelSchema(S.mid); } catch (e) { S.schema = '?'; }
 
-    progress(8, 'Reading units…'); S.unit = readUnits();
-    progress(10, 'Indexing relationships…'); await sleep();
+    progress(8, 'Lendo unidades…'); S.unit = readUnits();
+    progress(10, 'Indexando relações…'); await sleep();
     await buildIndex();
     if (mode === 'full') await loadGeometry();
-    progress(92, 'Resolving levels & rooms…'); await sleep();
+    progress(92, 'Resolvendo níveis e ambientes…'); await sleep();
     computeLevels();
     buildRooms();
-    if (mode === 'full') { progress(96, 'Tracing room outlines…'); await sleep(); Plan.traceAll(); }
+    if (mode === 'full') { progress(96, 'Traçando contornos dos ambientes…'); await sleep(); Plan.traceAll(); }
     S.modelKey = 'ifchud:v1:' + (S.projectGid || (name + ':' + bytes.length));
     Areas.load();
-    progress(100, 'Done'); await sleep(60);
+    progress(100, 'Concluído'); await sleep(60);
     UI.onModelLoaded((performance.now() - t0) / 1000);
     $('#drop').classList.remove('on');
   } catch (e) {
-    console.error(e); Err.push(`Loading ${name} failed: ${e.message || e}`);
+    console.error(e); Err.push(`Falha ao carregar ${name}: ${e.message || e}`);
     resetModel(); UI.onModelCleared();
   } finally {
     $('#prog').classList.remove('on'); $('#dropClose').hidden = S.mid == null;
@@ -862,19 +863,19 @@ function storeyName(l, id) {
   const n = VS(l.Name), ln = VS(l.LongName);
   const idLike = s => /^[A-Z0-9]{3,}[-_][A-Z0-9-_]{8,}$/i.test(s) || /^[0-9A-Za-z_$]{22}$/.test(s);
   if (n && ln && ln !== n && !idLike(ln) && ln.length <= 40) return `${n} · ${ln}`;
-  return n || (!idLike(ln) && ln) || `Storey #${id}`;
+  return n || (!idLike(ln) && ln) || `Pavimento #${id}`;
 }
 async function buildIndex() {
   const rel = (code, fn, label) => {
     let ids = []; try { ids = idsOf(T(code)); } catch (e) { Err.push(`${label}: ${e.message}`, 'w'); return; }
     for (const id of ids) { const l = line(id); if (l) { try { fn(l); } catch (e) { } } }
   };
-  rel('IFCRELCONTAINEDINSPATIALSTRUCTURE', l => { const s = refId(l.RelatingStructure); for (const e of refs(l.RelatedElements)) S.containerOf.set(e, s); }, 'Spatial containment');
-  rel('IFCRELAGGREGATES', l => { const p = refId(l.RelatingObject); for (const c of refs(l.RelatedObjects)) S.parentOf.set(c, p); }, 'Aggregation');
-  if (T('IFCRELNESTS')) rel('IFCRELNESTS', l => { const p = refId(l.RelatingObject); for (const c of refs(l.RelatedObjects)) if (!S.parentOf.has(c)) S.parentOf.set(c, p); }, 'Nesting');
-  progress(14, 'Indexing property sets…'); await sleep();
-  rel('IFCRELDEFINESBYPROPERTIES', l => { const defs = refs(l.RelatingPropertyDefinition); for (const o of refs(l.RelatedObjects)) { let a = S.psetsOf.get(o); if (!a) S.psetsOf.set(o, a = []); a.push(...defs); } }, 'Property relations');
-  rel('IFCRELDEFINESBYTYPE', l => { const t = refId(l.RelatingType); for (const o of refs(l.RelatedObjects)) S.typeOf.set(o, t); }, 'Type relations');
+  rel('IFCRELCONTAINEDINSPATIALSTRUCTURE', l => { const s = refId(l.RelatingStructure); for (const e of refs(l.RelatedElements)) S.containerOf.set(e, s); }, 'Contenção espacial');
+  rel('IFCRELAGGREGATES', l => { const p = refId(l.RelatingObject); for (const c of refs(l.RelatedObjects)) S.parentOf.set(c, p); }, 'Agregação');
+  if (T('IFCRELNESTS')) rel('IFCRELNESTS', l => { const p = refId(l.RelatingObject); for (const c of refs(l.RelatedObjects)) if (!S.parentOf.has(c)) S.parentOf.set(c, p); }, 'Aninhamento');
+  progress(14, 'Indexando conjuntos de propriedades…'); await sleep();
+  rel('IFCRELDEFINESBYPROPERTIES', l => { const defs = refs(l.RelatingPropertyDefinition); for (const o of refs(l.RelatedObjects)) { let a = S.psetsOf.get(o); if (!a) S.psetsOf.set(o, a = []); a.push(...defs); } }, 'Relações de propriedades');
+  rel('IFCRELDEFINESBYTYPE', l => { const t = refId(l.RelatingType); for (const o of refs(l.RelatedObjects)) S.typeOf.set(o, t); }, 'Relações de tipo');
 
   // storeys
   for (const id of idsOf(T('IFCBUILDINGSTOREY'))) {
@@ -883,9 +884,9 @@ async function buildIndex() {
     S.storeys.push(st); S.storeyById.set(id, st);
   }
   // products
-  progress(20, 'Reading products…'); await sleep();
+  progress(20, 'Lendo produtos…'); await sleep();
   let prods = [];
-  try { prods = idsOf(T('IFCPRODUCT'), true); } catch (e) { Err.push('Inherited type query failed; falling back to relationship scan.', 'w'); }
+  try { prods = idsOf(T('IFCPRODUCT'), true); } catch (e) { Err.push('Falha na consulta por tipo herdado; usando a varredura de relações.', 'w'); }
   if (!prods.length) { const s = new Set([...S.containerOf.keys(), ...S.parentOf.keys()]); try { idsOf(T('IFCSPACE')).forEach(i => s.add(i)); } catch (e) { } prods = [...s]; }
   const memo = new Map();
   const lvlOf = (id, d = 0) => {
@@ -901,10 +902,10 @@ async function buildIndex() {
     const ent = { id, cls, name: VS(l.Name) || VS(l.LongName) || '', gid: VS(l.GlobalId), lvl: lvlOf(id) };
     S.ents.set(id, ent);
     if (ent.lvl != null) S.storeyById.get(ent.lvl).ids.push(id);
-    if (i % 3000 === 2999) { progress(20 + 10 * i / prods.length, `Reading products… ${i + 1}/${prods.length}`); await sleep(); }
+    if (i % 3000 === 2999) { progress(20 + 10 * i / prods.length, `Lendo produtos… ${i + 1}/${prods.length}`); await sleep(); }
   }
-  if (!S.ents.size) Err.push('The file contains no IfcProduct entities.', 'w');
-  if (!S.storeys.length) Err.push('No IfcBuildingStorey found — everything is listed under "Unassigned".', 'w');
+  if (!S.ents.size) Err.push('O arquivo não contém entidades IfcProduct.', 'w');
+  if (!S.storeys.length) Err.push('Nenhum IfcBuildingStorey encontrado — tudo aparece em "Sem nível".', 'w');
 }
 
 async function loadGeometry() {
@@ -916,11 +917,11 @@ async function loadGeometry() {
     try { S.api.StreamMeshes(S.mid, batch, cb); }
     catch (e) { for (const id of batch) { try { S.api.StreamMeshes(S.mid, [id], cb); } catch (e2) { S.geomFailed++; } } }
     done += batch.length;
-    progress(30 + 60 * done / ids.length, `Generating geometry… ${done}/${ids.length}`);
+    progress(30 + 60 * done / ids.length, `Gerando geometria… ${done}/${ids.length}`);
     await sleep();
   }
-  if (S.geomFailed) Err.push(`${S.geomFailed} element(s) failed to generate geometry and are missing from the 3D view (data still available).`, 'w');
-  if (!meshCount) Err.push('No geometry was produced for this file. Data is still available; the 3D tabs will be empty.', 'w');
+  if (S.geomFailed) Err.push(`${S.geomFailed} elemento(s) não geraram geometria e não aparecem na vista 3D (os dados continuam disponíveis).`, 'w');
+  if (!meshCount) Err.push('Nenhuma geometria foi gerada para este arquivo. Os dados continuam disponíveis; as abas 3D ficarão vazias.', 'w');
   Viewer.finalize();
 }
 
@@ -942,14 +943,14 @@ function computeLevels() {
     const minE = Math.min(...withElev.map(s => s.elevM)), maxE = Math.max(...withElev.map(s => s.elevM));
     const y0 = S.modelBox.min.y, y1 = S.modelBox.max.y;
     for (const st of withElev) st.floorY = maxE > minE ? y0 + (st.elevM - minE) / (maxE - minE) * (y1 - y0) * 0.85 : y0;
-    Err.push('Level heights could not be derived from geometry — mapped proportionally from Elevation attributes.', 'i');
+    Err.push('Não foi possível obter as alturas dos níveis pela geometria — mapeadas proporcionalmente pelos atributos Elevation.', 'i');
   }
   for (const st of S.storeys) if (st.floorY == null) st.floorY = st.elevM ?? 0;
   S.storeys.sort((a, b) => (a.floorY - b.floorY) || ((a.elevM ?? 0) - (b.elevM ?? 0)));
   // sanity: large disagreement between derived and nominal spacing
   if (known.length >= 2 && withElev.length >= 2) {
     const a = S.storeys[0], b = S.storeys[S.storeys.length - 1];
-    if (a.elevM != null && b.elevM != null) { const dn = b.elevM - a.elevM, dg = b.floorY - a.floorY; if (dn > 1 && (dg / dn > 3 || dg / dn < 0.33)) Err.push(`Storey elevations (${fmtNum(dn)} m span) disagree with geometry (${fmtNum(dg)} m span) — check the file's length unit (${S.unit.lenName}).`, 'w'); }
+    if (a.elevM != null && b.elevM != null) { const dn = b.elevM - a.elevM, dg = b.floorY - a.floorY; if (dn > 1 && (dg / dn > 3 || dg / dn < 0.33)) Err.push(`As elevações dos pavimentos (amplitude de ${fmtNum(dn)} m) não batem com a geometria (amplitude de ${fmtNum(dg)} m) — verifique a unidade de comprimento do arquivo (${S.unit.lenName}).`, 'w'); }
   }
 }
 
@@ -960,13 +961,13 @@ function buildRooms() {
     const l = line(id); const ent = S.ents.get(id);
     const no = VS(l?.Name), long = VS(l?.LongName);
     const st = ent.lvl != null ? S.storeyById.get(ent.lvl) : null;
-    const r = { id, no, name: long || no || `Space #${id}`, level: st ? st.name : 'Unassigned', levelId: ent.lvl, area: null, areaSrc: '', params: {}, loops: null, label: null, geomArea: null };
+    const r = { id, no, name: long || no || `Ambiente #${id}`, level: st ? st.name : 'Sem nível', levelId: ent.lvl, area: null, areaSrc: '', params: {}, loops: null, label: null, geomArea: null };
     const params = r.params;
     params['@no'] = no; params['@name'] = r.name; params['@level'] = r.level;
     if (VS(l?.ObjectType)) params['ObjectType'] = VS(l.ObjectType);
     if (VS(l?.Description)) params['Description'] = VS(l.Description);
     let sets = [];
-    try { sets = readSets(id); } catch (e) { Err.push(`Room #${id} properties: ${e.message}`, 'w'); }
+    try { sets = readSets(id); } catch (e) { Err.push(`Propriedades do ambiente #${id}: ${e.message}`, 'w'); }
     for (const s of sets) for (const row of s.rows) { const key = `${s.name}.${row.k}`; if (!(key in params)) params[key] = row.num != null && !row.unit ? row.num : row.v; }
     // area priority: Qto Net/Gross → any qset *Area → pset Area/NetFloorArea/GrossFloorArea → geometry
     const qs = sets.filter(s => s.kind === 'qset'), ps = sets.filter(s => s.kind === 'pset');
@@ -985,7 +986,7 @@ function roomParamKeys() {
   const keys = new Set(); for (const r of S.rooms) for (const k in r.params) if (!k.startsWith('@')) keys.add(k);
   return [...keys].sort((a, b) => a.localeCompare(b));
 }
-const PARAM_LABEL = { '@level': 'Level', '@name': 'Room name', '@no': 'Room number' };
+const PARAM_LABEL = { '@level': 'Nível', '@name': 'Nome do ambiente', '@no': 'Número do ambiente' };
 const paramLabel = k => PARAM_LABEL[k] || k;
 const paramVal = (r, k) => { const v = r.params[k]; return v == null || v === '' ? '' : typeof v === 'number' ? fmtNum(v) : String(v); };
 
@@ -998,7 +999,7 @@ const Viewer = (() => {
   renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
   renderer.setClearColor(0x000000, 0);
   host.append(renderer.domElement);
-  renderer.domElement.addEventListener('webglcontextlost', e => { e.preventDefault(); Err.push('WebGL context lost (GPU out of memory?). Reload the page or use Fast Mode for this file.'); });
+  renderer.domElement.addEventListener('webglcontextlost', e => { e.preventDefault(); Err.push('Contexto WebGL perdido (falta de memória na GPU?). Recarregue a página ou use o Modo rápido para este arquivo.'); });
   const labelR = new CSS2DRenderer({ element: $('#labels') });
 
   const scene = new THREE.Scene();
@@ -1310,7 +1311,7 @@ const Viewer = (() => {
         renderer.render(scene, miniCam); labelG.visible = lv; renderer.setScissorTest(false);
         drawMiniOverlay();
       }
-    } catch (e) { Err.push('Render error: ' + e.message); dirty = false; }
+    } catch (e) { Err.push('Erro de renderização: ' + e.message); dirty = false; }
   }
   requestAnimationFrame(frame);
 
@@ -1436,12 +1437,12 @@ const Plan = (() => {
     let fb = 0;
     for (const r of S.rooms) {
       if (!S.meshes.has(r.id)) continue;
-      try { traceRoom(r); r.geomArea = upArea(r.id); } catch (e) { Err.push(`Outline for room ${r.no || r.id}: ${e.message}`, 'w'); }
-      if (r.area == null && r.geomArea > 0) { r.area = r.geomArea; r.areaSrc = 'geometry (footprint)'; fb++; }
+      try { traceRoom(r); r.geomArea = upArea(r.id); } catch (e) { Err.push(`Contorno do ambiente ${r.no || r.id}: ${e.message}`, 'w'); }
+      if (r.area == null && r.geomArea > 0) { r.area = r.geomArea; r.areaSrc = 'geometria (projeção)'; fb++; }
     }
-    if (fb) Err.push(`${fb} room(s) have no area quantity/property — area computed from geometry footprint.`, 'i');
+    if (fb) Err.push(`${fb} ambiente(s) sem quantidade/propriedade de área — área calculada pela projeção da geometria.`, 'i');
     const noArea = S.rooms.filter(r => r.area == null).length;
-    if (noArea) Err.push(`${noArea} room(s) have no area (no quantity, property or geometry).`, 'w');
+    if (noArea) Err.push(`${noArea} ambiente(s) sem área (sem quantidade, propriedade ou geometria).`, 'w');
   }
   const wallCache = new Map();
   const WALL_RX = /^Ifc(Wall|WallStandardCase|WallElementedCase|Column|ColumnStandardCase|CurtainWall|Plate|Member)$/;
@@ -1469,13 +1470,13 @@ const Plan = (() => {
   function render() {
     host.innerHTML = ''; svg = null; const lid = planLevel(); cur = lid;
     const info = $('#planInfo');
-    if (lid == null) { info.textContent = 'No rooms with geometry to draw.'; return; }
+    if (lid == null) { info.textContent = 'Nenhum ambiente com geometria para desenhar.'; return; }
     const st = S.storeyById.get(lid); const rooms = S.rooms.filter(r => r.levelId === lid && r.loops && r.loops.outer.length);
-    let wl = { outer: [], holes: [] }; try { wl = walls(lid); } catch (e) { Err.push('Wall footprint: ' + e.message, 'w'); }
+    let wl = { outer: [], holes: [] }; try { wl = walls(lid); } catch (e) { Err.push('Projeção das paredes: ' + e.message, 'w'); }
     let x0 = Infinity, z0 = Infinity, x1 = -Infinity, z1 = -Infinity;
     const ext = l => l.forEach(p => { x0 = Math.min(x0, p[0]); x1 = Math.max(x1, p[0]); z0 = Math.min(z0, p[1]); z1 = Math.max(z1, p[1]); });
     rooms.forEach(r => r.loops.outer.forEach(ext)); wl.outer.forEach(ext);
-    if (!isFinite(x0)) { info.textContent = `${st.name}: nothing to draw.`; return; }
+    if (!isFinite(x0)) { info.textContent = `${st.name}: nada para desenhar.`; return; }
     const span = Math.max(x1 - x0, z1 - z0), m = span * 0.06;
     vb = { x: x0 - m, y: z0 - m, w: x1 - x0 + 2 * m, h: z1 - z0 + 2 * m };
     svg = sv('svg', { preserveAspectRatio: 'xMidYMid meet' }); setVB();
@@ -1498,7 +1499,7 @@ const Plan = (() => {
     }
     if (wl.outer.length) gw.append(sv('path', { d: pathD(wl.outer) + pathD(wl.holes), 'fill-rule': 'evenodd', class: 'wall-poly' }));
     svg.append(gr, gw, gt); host.append(svg);
-    info.textContent = `PLAN · ${st.name} · ${rooms.length} rooms · cut +1.9 m`;
+    info.textContent = `PLANTA · ${st.name} · ${rooms.length} ambientes · corte +1,9 m`;
   }
   function setVB() { svg && svg.setAttribute('viewBox', `${vb.x} ${vb.y} ${vb.w} ${vb.h}`); }
   function toSvg(cx, cy) { const pt = svg.createSVGPoint(); pt.x = cx; pt.y = cy; return pt.matrixTransform(svg.getScreenCTM().inverse()); }
@@ -1520,7 +1521,7 @@ const Plan = (() => {
    ===================================================================== */
 const Rooms = (() => {
   let colors = new Map(); let sort = { k: 'no', d: 1 };
-  const keyOf = r => S.colorBy === 'no' ? (r.no || '(no number)') : S.colorBy === 'param' ? (paramVal(r, S.colorParam) || '(empty)') : r.name;
+  const keyOf = r => S.colorBy === 'no' ? (r.no || '(sem número)') : S.colorBy === 'param' ? (paramVal(r, S.colorParam) || '(vazio)') : r.name;
   function recolor() {
     const vals = [...new Set(S.rooms.map(keyOf))].sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
     colors = new Map(); const c = new THREE.Color();
@@ -1530,8 +1531,8 @@ const Rooms = (() => {
   const colorOf = r => r ? (colors.get(keyOf(r)) ?? 0x65E3FF) : 0x65E3FF;
   function renderLegend() {
     const lg = $('#legend'); lg.innerHTML = '';
-    lg.append(h('div', { class: 'h', text: `COLOR · ${S.colorBy === 'param' ? S.colorParam || '—' : S.colorBy === 'no' ? 'Number' : 'Name'} (${colors.size})` }));
-    let n = 0; for (const [v, col] of colors) { if (n++ >= 40) { lg.append(h('div', { class: 'r', style: 'color:var(--mut)' }, `+ ${colors.size - 40} more`)); break; }
+    lg.append(h('div', { class: 'h', text: `COR · ${S.colorBy === 'param' ? S.colorParam || '—' : S.colorBy === 'no' ? 'Número' : 'Nome'} (${colors.size})` }));
+    let n = 0; for (const [v, col] of colors) { if (n++ >= 40) { lg.append(h('div', { class: 'r', style: 'color:var(--mut)' }, `+ ${colors.size - 40} outros`)); break; }
       lg.append(h('div', { class: 'r' }, h('i', { style: `background:#${col.toString(16).padStart(6, '0')}` }), h('span', { text: v, title: v }))); }
   }
   function filtered() {
@@ -1550,7 +1551,7 @@ const Rooms = (() => {
         h('td', { text: r.name, title: r.name }), h('td', { text: r.level, title: r.level }), h('td', { class: 'num', text: fmtA(r.area), title: r.areaSrc }));
       frag.append(tr); }
     tb.append(frag);
-    $('#schedTot').textContent = `${list.length}/${S.rooms.length} rooms · ${fmtA(tot)} m²`;
+    $('#schedTot').textContent = `${list.length}/${S.rooms.length} ambientes · ${fmtA(tot)} m²`;
     $$('#sched th').forEach(th => th.textContent = th.textContent.replace(/ [▲▼]$/, '') + (th.dataset.k === sort.k ? (sort.d > 0 ? ' ▲' : ' ▼') : ''));
   }
   $$('#sched th').forEach(th => th.addEventListener('click', () => { sort = { k: th.dataset.k, d: sort.k === th.dataset.k ? -sort.d : 1 }; renderSched(); }));
@@ -1559,7 +1560,7 @@ const Rooms = (() => {
   function init() {
     const keys = roomParamKeys();
     const fill = (sel, first) => { sel.innerHTML = ''; if (first) sel.append(h('option', { value: '', text: first })); keys.forEach(k => sel.append(h('option', { value: k, text: k }))); };
-    fill($('#roomParam'), 'Filter by parameter…'); fill($('#colorParam'));
+    fill($('#roomParam'), 'Filtrar por parâmetro…'); fill($('#colorParam'));
     S.colorParam = keys.find(k => /department|departamento|occupancy|ocupa|zone|zona|category|categoria/i.test(k)) || keys[0] || '';
     $('#colorParam').value = S.colorParam;
     $('#schedSub').textContent = `${S.rooms.length} IfcSpace`;
@@ -1575,36 +1576,36 @@ const Rooms = (() => {
 const Tree = (() => {
   const box = $('#tree'); let data = []; const open = new Set(); const limit = new Map();
   function build() {
-    const by = new Map(); const un = { id: 'u', name: 'Unassigned', cats: new Map(), n: 0 };
+    const by = new Map(); const un = { id: 'u', name: 'Sem nível', cats: new Map(), n: 0 };
     for (const st of S.storeys) by.set(st.id, { id: st.id, name: st.name, st, cats: new Map(), n: 0 });
     for (const e of S.ents.values()) { const L = e.lvl != null && by.get(e.lvl) || un; let c = L.cats.get(e.cls); if (!c) L.cats.set(e.cls, c = []); c.push(e.id); L.n++; }
     data = [...by.values()]; if (un.n) data.push(un);
     for (const L of data) for (const [k, arr] of L.cats) arr.sort((a, b) => (S.ents.get(a).name || '').localeCompare(S.ents.get(b).name || '', undefined, { numeric: true }));
     open.clear(); limit.clear(); if (data.length <= 3) data.forEach(L => open.add('L' + L.id));
-    $('#treeSub').textContent = `${S.ents.size} entities · ${S.storeys.length} levels`;
+    $('#treeSub').textContent = `${S.ents.size} entidades · ${S.storeys.length} níveis`;
     render();
   }
   function itemRow(id, extra) { const e = S.ents.get(id);
-    return h('div', { class: 'tr it' + (S.sel === id ? ' sel' : ''), 'data-id': id, title: `${e.cls} #${id}` }, h('span', { class: 'nm', text: e.name || '(unnamed)' }), h('span', { class: 'ct', text: extra || '#' + id })); }
+    return h('div', { class: 'tr it' + (S.sel === id ? ' sel' : ''), 'data-id': id, title: `${e.cls} #${id}` }, h('span', { class: 'nm', text: e.name || '(sem nome)' }), h('span', { class: 'ct', text: extra || '#' + id })); }
   function render() {
     const q = $('#treeSearch').value.trim().toLowerCase(); box.innerHTML = ''; const frag = document.createDocumentFragment();
     if (q) {
       let n = 0; for (const e of S.ents.values()) { if (n >= 400) break; if (`${e.name} ${e.cls} #${e.id} ${e.gid}`.toLowerCase().includes(q)) { frag.append(itemRow(e.id, e.cls.replace(/^Ifc/, ''))); n++; } }
-      if (!n) frag.append(h('div', { class: 'note', text: 'No matches.' })); else if (n >= 400) frag.append(h('div', { class: 'note', text: 'Showing first 400 matches — refine the filter.' }));
+      if (!n) frag.append(h('div', { class: 'note', text: 'Nenhum resultado.' })); else if (n >= 400) frag.append(h('div', { class: 'note', text: 'Mostrando os 400 primeiros resultados — refine o filtro.' }));
       box.append(frag); return;
     }
     for (const L of data) {
       const lk = 'L' + L.id, lo = open.has(lk);
       const act = L.st && S.level === L.id;
       frag.append(h('div', { class: 'tr lv' + (act ? ' act' : ''), 'data-lk': lk }, h('span', { class: 'car', text: lo ? '▾' : '▸' }), h('span', { class: 'nm', text: L.name }), h('span', { class: 'ct', text: L.n }),
-        L.st ? h('span', { class: 'cut', 'data-cut': L.id, title: 'Section cut at this level', text: act ? 'CUT ✓' : 'CUT' }) : null));
+        L.st ? h('span', { class: 'cut', 'data-cut': L.id, title: 'Corte neste nível', text: act ? 'CORTE ✓' : 'CORTE' }) : null));
       if (!lo) continue;
       for (const [cls, arr] of [...L.cats].sort((a, b) => a[0].localeCompare(b[0]))) {
         const ck = lk + '|' + cls, co = open.has(ck);
         frag.append(h('div', { class: 'tr cat', 'data-ck': ck }, h('span', { class: 'car', text: co ? '▾' : '▸' }), h('span', { class: 'nm', text: cls }), h('span', { class: 'ct', text: arr.length })));
         if (!co) continue; const lim = limit.get(ck) || 300;
         arr.slice(0, lim).forEach(id => frag.append(itemRow(id)));
-        if (arr.length > lim) frag.append(h('div', { class: 'more', 'data-more': ck, text: `Show ${Math.min(300, arr.length - lim)} more of ${arr.length - lim}…` }));
+        if (arr.length > lim) frag.append(h('div', { class: 'more', 'data-more': ck, text: `Mostrar mais ${Math.min(300, arr.length - lim)} de ${arr.length - lim}…` }));
       }
     }
     box.append(frag);
@@ -1632,48 +1633,48 @@ const Inspector = (() => {
   const box = $('#insp'); let groups = []; let curId = null;
   function attrGroup(id) {
     const l = line(id); const rows = [];
-    if (!l) return { name: 'Attributes', kind: 'attr', rows };
+    if (!l) return { name: 'Atributos', kind: 'attr', rows };
     for (const k in l) {
       if (k === 'expressID' || k === 'type' || k === 'OwnerHistory') continue;
       const v = l[k]; if (v == null) continue;
-      if (Array.isArray(v) && v.length && v.every(x => x && x.type === 5)) { rows.push({ k, v: v.length > 6 ? `${v.length} references` : v.map(x => '#' + x.value).join(', ') }); continue; }
+      if (Array.isArray(v) && v.length && v.every(x => x && x.type === 5)) { rows.push({ k, v: v.length > 6 ? `${v.length} referências` : v.map(x => '#' + x.value).join(', ') }); continue; }
       if (typeof v === 'object' && !Array.isArray(v) && v.type === 5) { const r = line(v.value); rows.push({ k, v: `${r ? tn(r.type) : ''} #${v.value}${r && VS(r.Name) ? ' · ' + VS(r.Name) : ''}` }); continue; }
       const t = valText(v); if (t !== '') rows.push({ k, v: t });
     }
-    return { name: 'Attributes', kind: 'attr', rows };
+    return { name: 'Atributos', kind: 'attr', rows };
   }
   function relGroup(id) {
     const e = S.ents.get(id); const rows = [];
-    rows.push({ k: 'Express ID', v: '#' + id }, { k: 'IFC class', v: e?.cls || '' });
+    rows.push({ k: 'ID Express', v: '#' + id }, { k: 'Classe IFC', v: e?.cls || '' });
     const st = e?.lvl != null ? S.storeyById.get(e.lvl) : null;
-    rows.push({ k: 'Level', v: st ? st.name : 'Unassigned' });
-    if (st) rows.push({ k: 'Level floor (derived)', v: fmtNum(st.floorY) + ' m' }, { k: 'Level Elevation attr', v: st.elevRaw != null ? `${fmtNum(st.elevRaw)} ${S.unit.lenName}` : '—' });
-    const tid = S.typeOf.get(id); if (tid != null) { const t = line(tid); rows.push({ k: 'Type object', v: `${t ? tn(t.type) : ''} #${tid}${t && VS(t.Name) ? ' · ' + VS(t.Name) : ''}` }); }
-    const c = S.containerOf.get(id); if (c != null) { const cl = line(c); rows.push({ k: 'Contained in', v: `${cl ? tn(cl.type) : ''} #${c}${cl && VS(cl.Name) ? ' · ' + VS(cl.Name) : ''}` }); }
-    const p = S.parentOf.get(id); if (p != null) { const pl = line(p); rows.push({ k: 'Part of', v: `${pl ? tn(pl.type) : ''} #${p}${pl && VS(pl.Name) ? ' · ' + VS(pl.Name) : ''}` }); }
-    const bb = S.bbox.get(id); if (bb) { const s = bb.getSize(new THREE.Vector3()); rows.push({ k: 'Bounding box (m)', v: `${fmtNum(s.x)} × ${fmtNum(s.z)} × ${fmtNum(s.y)} (h)` }); }
-    const r = S.roomById.get(id); if (r) rows.push({ k: 'Room area (used)', v: `${fmtA(r.area)} m²` }, { k: 'Area source', v: r.areaSrc || '—' });
-    return { name: 'Relations & derived', kind: 'rel', rows };
+    rows.push({ k: 'Nível', v: st ? st.name : 'Sem nível' });
+    if (st) rows.push({ k: 'Piso do nível (derivado)', v: fmtNum(st.floorY) + ' m' }, { k: 'Atributo Elevation do nível', v: st.elevRaw != null ? `${fmtNum(st.elevRaw)} ${S.unit.lenName}` : '—' });
+    const tid = S.typeOf.get(id); if (tid != null) { const t = line(tid); rows.push({ k: 'Objeto de tipo', v: `${t ? tn(t.type) : ''} #${tid}${t && VS(t.Name) ? ' · ' + VS(t.Name) : ''}` }); }
+    const c = S.containerOf.get(id); if (c != null) { const cl = line(c); rows.push({ k: 'Contido em', v: `${cl ? tn(cl.type) : ''} #${c}${cl && VS(cl.Name) ? ' · ' + VS(cl.Name) : ''}` }); }
+    const p = S.parentOf.get(id); if (p != null) { const pl = line(p); rows.push({ k: 'Parte de', v: `${pl ? tn(pl.type) : ''} #${p}${pl && VS(pl.Name) ? ' · ' + VS(pl.Name) : ''}` }); }
+    const bb = S.bbox.get(id); if (bb) { const s = bb.getSize(new THREE.Vector3()); rows.push({ k: 'Caixa delimitadora (m)', v: `${fmtNum(s.x)} × ${fmtNum(s.z)} × ${fmtNum(s.y)} (alt.)` }); }
+    const r = S.roomById.get(id); if (r) rows.push({ k: 'Área do ambiente (usada)', v: `${fmtA(r.area)} m²` }, { k: 'Origem da área', v: r.areaSrc || '—' });
+    return { name: 'Relações e derivados', kind: 'rel', rows };
   }
   function collect(id) { return [relGroup(id), attrGroup(id), ...readSets(id)]; }
   function render(id) {
     curId = id; box.innerHTML = '';
-    if (id == null) { $('#inspSub').textContent = 'No selection'; box.append(h('div', { id: 'inspEmpty', text: 'Select an element in the 3D view, plan, model tree or room schedule to see all of its IFC data.' })); return; }
+    if (id == null) { $('#inspSub').textContent = 'Nenhuma seleção'; box.append(h('div', { id: 'inspEmpty', text: 'Selecione um elemento na vista 3D, na planta, na árvore do modelo ou na tabela de ambientes para ver todos os seus dados IFC.' })); return; }
     const e = S.ents.get(id); const l = line(id);
-    try { groups = collect(id); } catch (err) { Err.push(`Inspector #${id}: ${err.message}`); groups = []; }
+    try { groups = collect(id); } catch (err) { Err.push(`Inspetor #${id}: ${err.message}`); groups = []; }
     $('#inspSub').textContent = `#${id} · ${groups.filter(g => g.kind === 'pset').length} psets · ${groups.filter(g => g.kind === 'qset').length} qsets`;
     const head = h('div', { class: 'ihead' },
       h('span', { class: 'cls', text: e?.cls || (l ? tn(l.type) : '?') }),
-      h('div', { class: 'nm', text: e?.name || '(unnamed)' }),
-      h('div', { class: 'meta' }, h('span', { text: 'GUID ' }), e?.gid || '', h('br'), h('span', { text: 'LEVEL ' }), e?.lvl != null ? S.storeyById.get(e.lvl)?.name : 'Unassigned'),
+      h('div', { class: 'nm', text: e?.name || '(sem nome)' }),
+      h('div', { class: 'meta' }, h('span', { text: 'GUID ' }), e?.gid || '', h('br'), h('span', { text: 'NÍVEL ' }), e?.lvl != null ? S.storeyById.get(e.lvl)?.name : 'Sem nível'),
       h('div', { class: 'acts' },
-        h('button', { class: 'btn sm', onclick: () => Viewer.focusId(id), disabled: !S.bbox.has(id) }, 'Focus'),
+        h('button', { class: 'btn sm', onclick: () => Viewer.focusId(id), disabled: !S.bbox.has(id) }, 'Focar'),
         h('button', { class: 'btn sm', onclick: () => Exports.elemCsv() }, 'CSV'),
-        h('button', { class: 'btn sm', onclick: () => { navigator.clipboard?.writeText(e?.gid || '').then(() => toast('GlobalId copied'), () => toast('Clipboard unavailable')); } }, 'Copy GUID')));
-    const sel = h('select', { class: 'inp' }, h('option', { value: '', text: `All groups (${groups.length})` }),
-      h('option', { value: '#pset', text: 'Property sets only' }), h('option', { value: '#qset', text: 'Quantity sets only' }),
-      groups.map((g, i) => h('option', { value: String(i), text: (g.fromType ? '[Type] ' : '') + g.name })));
-    const q = h('input', { class: 'inp', placeholder: 'Search properties / values', spellcheck: 'false' });
+        h('button', { class: 'btn sm', onclick: () => { navigator.clipboard?.writeText(e?.gid || '').then(() => toast('GlobalId copiado'), () => toast('Área de transferência indisponível')); } }, 'Copiar GUID')));
+    const sel = h('select', { class: 'inp' }, h('option', { value: '', text: `Todos os grupos (${groups.length})` }),
+      h('option', { value: '#pset', text: 'Somente conjuntos de propriedades' }), h('option', { value: '#qset', text: 'Somente conjuntos de quantidades' }),
+      groups.map((g, i) => h('option', { value: String(i), text: (g.fromType ? '[Tipo] ' : '') + g.name })));
+    const q = h('input', { class: 'inp', placeholder: 'Buscar propriedades / valores', spellcheck: 'false' });
     const body = h('div');
     const draw = () => {
       body.innerHTML = ''; const qq = q.value.trim().toLowerCase(); const gf = sel.value; let shown = 0;
@@ -1684,12 +1685,12 @@ const Inspector = (() => {
         const kv = h('div', { class: 'kv' });
         const mk = s => { s = String(s); if (!qq) return s; const ix = s.toLowerCase().indexOf(qq); if (ix < 0) return s; const f = document.createDocumentFragment(); f.append(s.slice(0, ix), h('mark', { text: s.slice(ix, ix + qq.length) }), s.slice(ix + qq.length)); return f; };
         rows.forEach(r => kv.append(h('div', null, mk(r.k)), h('div', null, mk(r.v === '' ? '—' : r.v))));
-        if (!rows.length) kv.append(h('div', { text: '(empty)' }), h('div'));
+        if (!rows.length) kv.append(h('div', { text: '(vazio)' }), h('div'));
         body.append(h('details', { class: 'g', open: (qq || gf || i < 6) ? true : null },
-          h('summary', null, h('span', { text: g.name }), g.kind === 'qset' ? h('span', { class: 'tag q', text: 'QTO' }) : g.kind === 'pset' ? h('span', { class: 'tag', text: 'PSET' }) : null, g.fromType ? h('span', { class: 'tag t', text: 'TYPE' }) : null, h('span', { class: 'ct', text: rows.length })), kv));
+          h('summary', null, h('span', { text: g.name }), g.kind === 'qset' ? h('span', { class: 'tag q', text: 'QTO' }) : g.kind === 'pset' ? h('span', { class: 'tag', text: 'PSET' }) : null, g.fromType ? h('span', { class: 'tag t', text: 'TIPO' }) : null, h('span', { class: 'ct', text: rows.length })), kv));
         shown++;
       });
-      if (!shown) body.append(h('div', { class: 'note', text: 'Nothing matches.' }));
+      if (!shown) body.append(h('div', { class: 'note', text: 'Nenhum resultado.' }));
     };
     q.addEventListener('input', draw); sel.addEventListener('change', draw);
     box.append(head, h('div', { class: 'ifilter' }, q, sel), body); draw();
@@ -1703,24 +1704,24 @@ const Inspector = (() => {
 const Areas = (() => {
   const SEP = '\u241F';
   function load() {
-    let saved = null; try { saved = JSON.parse(localStorage.getItem(S.modelKey) || 'null'); } catch (e) { Err.push('Could not read saved brief from localStorage: ' + e.message, 'w'); }
+    let saved = null; try { saved = JSON.parse(localStorage.getItem(S.modelKey) || 'null'); } catch (e) { Err.push('Não foi possível ler o programa salvo no localStorage: ' + e.message, 'w'); }
     const keys = new Set(['@level', '@name', '@no', ...roomParamKeys()]);
     const dept = [...keys].find(k => /department|departamento|occupancy|ocupa|zone|zona|category|categoria|programa/i.test(k));
     S.map = dept ? [dept, '@level', '@name'] : ['@level', '', '@name'];
     S.brief = {}; S.tol = 5;
     if (saved) {
-      if (Array.isArray(saved.map)) { const m = saved.map.map(k => keys.has(k) || k === '' ? k : null); if (m.every(k => k != null)) S.map = m; else Err.push('Saved area mapping references parameters missing from this model — using defaults.', 'w'); }
+      if (Array.isArray(saved.map)) { const m = saved.map.map(k => keys.has(k) || k === '' ? k : null); if (m.every(k => k != null)) S.map = m; else Err.push('O mapeamento de áreas salvo usa parâmetros que não existem neste modelo — usando o padrão.', 'w'); }
       if (saved.brief && typeof saved.brief === 'object') S.brief = saved.brief;
       if (isFinite(saved.tol)) S.tol = saved.tol;
     }
   }
-  function save() { try { localStorage.setItem(S.modelKey, JSON.stringify({ map: S.map, brief: S.brief, tol: S.tol, saved: new Date().toISOString(), file: S.fileName })); } catch (e) { Err.push('Could not save brief to localStorage: ' + e.message, 'w'); } }
+  function save() { try { localStorage.setItem(S.modelKey, JSON.stringify({ map: S.map, brief: S.brief, tol: S.tol, saved: new Date().toISOString(), file: S.fileName })); } catch (e) { Err.push('Não foi possível salvar o programa no localStorage: ' + e.message, 'w'); } }
   const levels = () => S.map.filter(k => k);
   function tree() {
     const root = { key: '', label: 'Total', depth: 0, rooms: 0, area: 0, children: new Map() }; const L = levels();
     for (const r of S.rooms) {
       let node = root; root.rooms++; root.area += r.area || 0; const path = [];
-      L.forEach((k, d) => { const lab = paramVal(r, k) || '(empty)'; path.push(lab); const key = path.join(SEP);
+      L.forEach((k, d) => { const lab = paramVal(r, k) || '(vazio)'; path.push(lab); const key = path.join(SEP);
         let c = node.children.get(lab); if (!c) node.children.set(lab, c = { key, label: lab, depth: d + 1, rooms: 0, area: 0, children: new Map() });
         c.rooms++; c.area += r.area || 0; node = c; });
     }
@@ -1733,13 +1734,13 @@ const Areas = (() => {
   const sorted = m => [...m.values()].sort((a, b) => a.label.localeCompare(b.label, undefined, { numeric: true }));
   function fillMapSelects() {
     const keys = ['@level', '@name', '@no', ...roomParamKeys()];
-    [0, 1, 2].forEach(i => { const s = $('#map' + i); s.innerHTML = ''; s.append(h('option', { value: '', text: '(none)' })); keys.forEach(k => s.append(h('option', { value: k, text: paramLabel(k) }))); s.value = S.map[i] || ''; });
+    [0, 1, 2].forEach(i => { const s = $('#map' + i); s.innerHTML = ''; s.append(h('option', { value: '', text: '(nenhum)' })); keys.forEach(k => s.append(h('option', { value: k, text: paramLabel(k) }))); s.value = S.map[i] || ''; });
     $('#tol').value = S.tol;
   }
   function render() {
     fillMapSelects();
     const dash = $('#dash'); dash.innerHTML = '';
-    if (!S.rooms.length) { dash.append(h('div', { class: 'card' }, h('h3', { text: 'NO ROOMS' }), h('p', { text: 'This model has no IfcSpace entities, so there is nothing to compare.' }))); return; }
+    if (!S.rooms.length) { dash.append(h('div', { class: 'card' }, h('h3', { text: 'SEM AMBIENTES' }), h('p', { text: 'Este modelo não tem entidades IfcSpace, então não há o que comparar.' }))); return; }
     const root = tree(); const tops = sorted(root.children);
     const noArea = S.rooms.filter(r => r.area == null).length;
     const cnt = { ok: 0, over: 0, under: 0, nob: 0 }; tops.forEach(n => cnt[status(n)]++);
@@ -1747,12 +1748,12 @@ const Areas = (() => {
     const stT = root.brief ? status(root) : 'nob';
     const kpi = (lbl, v, unit, d, cls) => h('div', { class: 'kpi' }, h('div', { class: 'lbl', text: lbl }), h('div', { class: 'v ' + (cls || '') }, v, unit ? h('small', { text: unit }) : null), d ? h('div', { class: 'd', text: d }) : null);
     dash.append(h('div', { class: 'kpis' },
-      kpi('PROJECT AREA', fmtA(root.area), 'm²', `${S.rooms.length} rooms${noArea ? ` · ${noArea} without area` : ''}`),
-      kpi('BRIEF TARGET', root.brief != null ? fmtA(root.brief) : '—', root.brief != null ? 'm²' : '', root.brief != null ? 'sum of top-level targets' : 'enter targets below or import .xlsx'),
-      kpi('DIFFERENCE', dT != null ? (dT > 0 ? '+' : '') + fmtA(dT) : '—', dT != null ? 'm²' : '', pT != null ? `${pT > 0 ? '+' : ''}${pT.toFixed(1)} % vs brief` : '', stT === 'nob' ? '' : stT),
-      kpi('CATEGORIES', `${cnt.ok}/${tops.length - cnt.nob}`, 'on target', `${cnt.over} over · ${cnt.under} under · ${cnt.nob} no brief`)));
+      kpi('ÁREA DO PROJETO', fmtA(root.area), 'm²', `${S.rooms.length} ambientes${noArea ? ` · ${noArea} sem área` : ''}`),
+      kpi('META DO PROGRAMA', root.brief != null ? fmtA(root.brief) : '—', root.brief != null ? 'm²' : '', root.brief != null ? 'soma das metas do nível superior' : 'informe as metas abaixo ou importe um .xlsx'),
+      kpi('DIFERENÇA', dT != null ? (dT > 0 ? '+' : '') + fmtA(dT) : '—', dT != null ? 'm²' : '', pT != null ? `${pT > 0 ? '+' : ''}${fmtP(pT)} % vs. programa` : '', stT === 'nob' ? '' : stT),
+      kpi('CATEGORIAS', `${cnt.ok}/${tops.length - cnt.nob}`, 'na meta', `${cnt.over} acima · ${cnt.under} abaixo · ${cnt.nob} sem programa`)));
     // bars
-    dash.append(h('div', { class: 'sec' }, h('h3', { text: `BY ${paramLabel(levels()[0] || '—').toUpperCase()}` }), h('span', { class: 'legend-line' }, h('span', { class: 'ok', text: `■ within ±${S.tol}%` }), h('span', { class: 'over', text: '■ over' }), h('span', { class: 'under', text: '■ under' }), h('span', { text: '| brief target' }))));
+    dash.append(h('div', { class: 'sec' }, h('h3', { text: `POR ${paramLabel(levels()[0] || '—').toUpperCase()}` }), h('span', { class: 'legend-line' }, h('span', { class: 'ok', text: `■ dentro de ±${S.tol}%` }), h('span', { class: 'over', text: '■ acima' }), h('span', { class: 'under', text: '■ abaixo' }), h('span', { text: '| meta do programa' }))));
     const max = Math.max(1, ...tops.map(n => Math.max(n.area, n.brief || 0)));
     const bars = h('div', { class: 'bars' });
     tops.forEach(n => { const st = status(n);
@@ -1761,50 +1762,50 @@ const Areas = (() => {
         h('div', { class: 'val' }, fmtA(n.area), n.brief != null ? h('span', { class: st, text: ` / ${fmtA(n.brief)}` }) : null))); });
     dash.append(bars);
     // table
-    dash.append(h('div', { class: 'sec' }, h('h3', { text: 'COMPARISON TABLE' }), h('span', { class: 'legend-line', text: 'Type a brief value at any level; empty parents sum their children (shown in italics). Values save automatically.' })));
+    dash.append(h('div', { class: 'sec' }, h('h3', { text: 'TABELA COMPARATIVA' }), h('span', { class: 'legend-line', text: 'Digite uma meta de programa em qualquer nível; níveis superiores vazios somam os inferiores (em itálico). Os valores são salvos automaticamente.' })));
     const tb = h('tbody');
     const walk = n => { const st = status(n); const has = n.children.size > 0; const collapsed = S.collapsed.has(n.key);
       const d = n.brief != null ? n.area - n.brief : null, p = n.brief ? d / n.brief * 100 : null;
-      const inp = h('input', { type: 'number', step: '0.01', min: '0', value: S.brief[n.key] ?? '', placeholder: n.derived && n.brief != null ? fmtA(n.brief) : '', 'data-key': n.key, 'aria-label': 'Brief area for ' + n.label });
+      const inp = h('input', { type: 'number', step: '0.01', min: '0', value: S.brief[n.key] ?? '', placeholder: n.derived && n.brief != null ? fmtA(n.brief) : '', 'data-key': n.key, 'aria-label': 'Área de programa para ' + n.label });
       tb.append(h('tr', { class: 'd' + n.depth },
         h('td', { style: `padding-left:${8 + (n.depth - 1) * 18}px` }, h('span', { class: 'car', 'data-tog': has ? n.key : null, text: has ? (collapsed ? '▸' : '▾') : '' }), n.label),
         h('td', { class: 'num', text: n.rooms }), h('td', { class: 'num', text: fmtA(n.area) }), h('td', { class: 'num' }, inp),
-        h('td', { class: 'num ' + st, text: d != null ? (d > 0 ? '+' : '') + fmtA(d) : '—' }), h('td', { class: 'num ' + st, text: p != null ? (p > 0 ? '+' : '') + p.toFixed(1) + ' %' : '—' })));
+        h('td', { class: 'num ' + st, text: d != null ? (d > 0 ? '+' : '') + fmtA(d) : '—' }), h('td', { class: 'num ' + st, text: p != null ? (p > 0 ? '+' : '') + fmtP(p) + ' %' : '—' })));
       if (!collapsed) sorted(n.children).forEach(walk); };
     tops.forEach(walk);
     tb.append(h('tr', { class: 'd1' }, h('td', { text: 'TOTAL' }), h('td', { class: 'num', text: root.rooms }), h('td', { class: 'num', text: fmtA(root.area) }), h('td', { class: 'num', text: root.brief != null ? fmtA(root.brief) : '—' }),
-      h('td', { class: 'num ' + stT, text: dT != null ? (dT > 0 ? '+' : '') + fmtA(dT) : '—' }), h('td', { class: 'num ' + stT, text: pT != null ? (pT > 0 ? '+' : '') + pT.toFixed(1) + ' %' : '—' })));
-    const tbl = h('table', { class: 'at' }, h('thead', null, h('tr', null, h('th', { text: levels().map(paramLabel).join(' › ') || 'Category' }), h('th', { class: 'num', text: 'Rooms' }), h('th', { class: 'num', text: 'Project m²' }), h('th', { class: 'num', text: 'Brief m²' }), h('th', { class: 'num', text: 'Δ m²' }), h('th', { class: 'num', text: 'Δ %' }))), tb);
-    tbl.addEventListener('change', e => { const k = e.target.dataset.key; if (k == null) return; const v = e.target.value.trim(); if (v === '') delete S.brief[k]; else if (isFinite(+v) && +v >= 0) S.brief[k] = +v; else { toast('Brief must be a positive number'); return; } save(); render(); });
+      h('td', { class: 'num ' + stT, text: dT != null ? (dT > 0 ? '+' : '') + fmtA(dT) : '—' }), h('td', { class: 'num ' + stT, text: pT != null ? (pT > 0 ? '+' : '') + fmtP(pT) + ' %' : '—' })));
+    const tbl = h('table', { class: 'at' }, h('thead', null, h('tr', null, h('th', { text: levels().map(paramLabel).join(' › ') || 'Categoria' }), h('th', { class: 'num', text: 'Ambientes' }), h('th', { class: 'num', text: 'Projeto m²' }), h('th', { class: 'num', text: 'Programa m²' }), h('th', { class: 'num', text: 'Δ m²' }), h('th', { class: 'num', text: 'Δ %' }))), tb);
+    tbl.addEventListener('change', e => { const k = e.target.dataset.key; if (k == null) return; const v = e.target.value.trim(); if (v === '') delete S.brief[k]; else if (isFinite(+v) && +v >= 0) S.brief[k] = +v; else { toast('A meta deve ser um número positivo'); return; } save(); render(); });
     tbl.addEventListener('keydown', e => { if (e.key === 'Enter' && e.target.dataset.key != null) e.target.blur(); });
     tbl.addEventListener('click', e => { const k = e.target.dataset?.tog; if (k == null) return; S.collapsed.has(k) ? S.collapsed.delete(k) : S.collapsed.add(k); render(); });
     dash.append(h('div', { style: 'overflow-x:auto' }, tbl));
-    const srcs = {}; S.rooms.forEach(r => { const s = r.areaSrc ? r.areaSrc.replace(/^[^.]*\./, '') : 'none'; srcs[s] = (srcs[s] || 0) + 1; });
-    $('#areaNote').textContent = 'Area sources: ' + Object.entries(srcs).map(([k, v]) => `${k} (${v})`).join(', ') + `. Saved per project in this browser (key ${S.modelKey.slice(0, 40)}…).`;
+    const srcs = {}; S.rooms.forEach(r => { const s = r.areaSrc ? r.areaSrc.replace(/^[^.]*\./, '') : 'nenhuma'; srcs[s] = (srcs[s] || 0) + 1; });
+    $('#areaNote').textContent = 'Origens da área: ' + Object.entries(srcs).map(([k, v]) => `${k} (${v})`).join(', ') + `. Salvo por projeto neste navegador (chave ${S.modelKey.slice(0, 40)}…).`;
   }
   [0, 1, 2].forEach(i => $('#map' + i).addEventListener('change', e => { S.map[i] = e.target.value; S.collapsed.clear(); save(); render(); }));
   $('#tol').addEventListener('change', e => { const v = +e.target.value; S.tol = isFinite(v) && v >= 0 ? v : 5; save(); render(); });
-  $('#briefClear').addEventListener('click', () => { if (!Object.keys(S.brief).length) return; if (!confirm('Clear all brief targets for this project?')) return; S.brief = {}; save(); render(); });
+  $('#briefClear').addEventListener('click', () => { if (!Object.keys(S.brief).length) return; if (!confirm('Limpar todas as metas de programa deste projeto?')) return; S.brief = {}; save(); render(); });
   $('#briefExport').addEventListener('click', guard(() => {
     const root = tree(); const L = levels(); const rows = [];
-    rows.push([{ v: `Brief template — ${S.projectName || S.fileName}`, s: 8 }]);
-    rows.push([{ v: `Mapping: ${L.map(paramLabel).join(' › ')} · Fill column "Brief m²" (yellow). Empty lower-level cells mark a parent row. Do not edit the Level columns.`, s: 0 }]);
-    rows.push([...[0, 1, 2].map(i => ({ v: `Level ${i + 1}${L[i] ? ': ' + paramLabel(L[i]) : ''}`, s: 1 })), { v: 'Rooms', s: 1 }, { v: 'Project m²', s: 1 }, { v: 'Brief m²', s: 1 }]);
+    rows.push([{ v: `Modelo de programa — ${S.projectName || S.fileName}`, s: 8 }]);
+    rows.push([{ v: `Mapeamento: ${L.map(paramLabel).join(' › ')} · Preencha a coluna "Programa m²" (amarela). Células vazias nos níveis inferiores indicam uma linha de nível superior. Não edite as colunas de Nível.`, s: 0 }]);
+    rows.push([...[0, 1, 2].map(i => ({ v: `Nível ${i + 1}${L[i] ? ': ' + paramLabel(L[i]) : ''}`, s: 1 })), { v: 'Ambientes', s: 1 }, { v: 'Projeto m²', s: 1 }, { v: 'Programa m²', s: 1 }]);
     let n = 0;
     const walk = node => { const parts = node.key.split(SEP); rows.push([0, 1, 2].map(i => ({ v: parts[i] ?? '', s: 2 })).concat([{ v: node.rooms, s: 7 }, { v: +node.area.toFixed(2), s: 3 }, { v: S.brief[node.key] ?? '', s: 4 }])); n++; sorted(node.children).forEach(walk); };
     sorted(root.children).forEach(walk);
     rows.push([{ v: 'TOTAL', s: 5 }, { v: '', s: 5 }, { v: '', s: 5 }, { v: root.rooms, s: 5 }, { v: +root.area.toFixed(2), s: 6 }, { v: '', s: 6 }]);
-    download(buildXlsx([{ name: 'Brief', cols: [28, 28, 28, 9, 14, 14], rows, headerRow: 2, filterRows: n }]), `${safeName(S.fileName)}_brief.xlsx`);
-  }, 'Brief export'));
+    download(buildXlsx([{ name: 'Programa', cols: [28, 28, 28, 9, 14, 14], rows, headerRow: 2, filterRows: n }]), `${safeName(S.fileName)}_programa.xlsx`);
+  }, 'Exportação do programa'));
   $('#briefImport').addEventListener('click', () => $('#briefFile').click());
   $('#briefFile').addEventListener('change', guard(async e => {
     const f = e.target.files[0]; e.target.value = ''; if (!f) return;
     const rows = await readXlsx(await f.arrayBuffer());
-    let hr = rows.findIndex(r => r.some(c => /^brief\s*m/i.test(String(c ?? '').trim())) && r.some(c => /^level\s*1/i.test(String(c ?? '').trim())));
-    if (hr < 0) hr = rows.findIndex(r => r.some(c => /^brief\s*m/i.test(String(c ?? '').trim())));
-    if (hr < 0) throw new Error('no "Brief m²" header found — use the exported template');
+    let hr = rows.findIndex(r => r.some(c => /^(brief|programa)\s*m/i.test(String(c ?? '').trim())) && r.some(c => /^(level|n[ií]vel)\s*1/i.test(String(c ?? '').trim())));
+    if (hr < 0) hr = rows.findIndex(r => r.some(c => /^(brief|programa)\s*m/i.test(String(c ?? '').trim())));
+    if (hr < 0) throw new Error('cabeçalho "Programa m²" não encontrado — use o modelo exportado');
     const hdr = rows[hr].map(c => String(c ?? '').trim());
-    const bi = hdr.findIndex(c => /^brief\s*m/i.test(c)); const li = [0, 1, 2].map(i => { const k = hdr.findIndex(c => new RegExp(`^level\\s*${i + 1}`, 'i').test(c)); return k >= 0 ? k : i; });
+    const bi = hdr.findIndex(c => /^(brief|programa)\s*m/i.test(c)); const li = [0, 1, 2].map(i => { const k = hdr.findIndex(c => new RegExp(`^(level|n[ií]vel)\\s*${i + 1}`, 'i').test(c)); return k >= 0 ? k : i; });
     const known = new Set(); (function w(n) { for (const c of n.children.values()) { known.add(c.key); w(c); } })(tree());
     let ok = 0, miss = 0; const nb = { ...S.brief };
     for (let r = hr + 1; r < rows.length; r++) {
@@ -1817,9 +1818,9 @@ const Areas = (() => {
       nb[key] = num; known.has(key) ? ok++ : miss++;
     }
     S.brief = nb; save(); render();
-    toast(`Imported ${ok + miss} brief values${miss ? ` — ${miss} don't match current categories (kept, check mapping)` : ''}.`, 6000);
-    if (miss) Err.push(`${miss} imported brief rows do not match any category of the current mapping.`, 'w');
-  }, 'Brief import'));
+    toast(`Importados ${ok + miss} valores de programa${miss ? ` — ${miss} não correspondem às categorias atuais (mantidos; verifique o mapeamento)` : ''}.`, 6000);
+    if (miss) Err.push(`${miss} linhas de programa importadas não correspondem a nenhuma categoria do mapeamento atual.`, 'w');
+  }, 'Importação do programa'));
   return { load, render, save };
 })();
 
@@ -1827,44 +1828,44 @@ const Areas = (() => {
    EXPORTS
    ===================================================================== */
 const Exports = (() => {
-  const need = c => { if (!c) { toast('Nothing to export'); return false; } return true; };
+  const need = c => { if (!c) { toast('Nada para exportar'); return false; } return true; };
   function roomsCsv() {
     if (!need(S.rooms.length)) return; const keys = roomParamKeys();
-    const rows = [['No.', 'Room', 'Level', 'Area m2', 'Area source', 'GlobalId', 'ExpressID', ...keys]];
+    const rows = [['Nº', 'Ambiente', 'Nível', 'Área m2', 'Origem da área', 'GlobalId', 'ExpressID', ...keys]];
     for (const r of S.rooms) rows.push([r.no, r.name, r.level, r.area != null ? +r.area.toFixed(3) : '', r.areaSrc, S.ents.get(r.id)?.gid, r.id, ...keys.map(k => r.params[k] ?? '')]);
-    download(csvBlob(rows), `${safeName(S.fileName)}_rooms.csv`);
+    download(csvBlob(rows), `${safeName(S.fileName)}_ambientes.csv`);
   }
   function roomsXlsx() {
     if (!need(S.rooms.length)) return; const keys = roomParamKeys();
-    const rows = [[{ v: `Room schedule — ${S.projectName || S.fileName}`, s: 8 }], [{ v: `${S.rooms.length} rooms · exported ${new Date().toLocaleString()} · length unit in file: ${S.unit.lenName}` }],
-      ['No.', 'Room', 'Level', 'Area m²', 'Area source', 'GlobalId'].map(v => ({ v, s: 1 }))];
+    const rows = [[{ v: `Tabela de ambientes — ${S.projectName || S.fileName}`, s: 8 }], [{ v: `${S.rooms.length} ambientes · exportado em ${new Date().toLocaleString('pt-BR')} · unidade de comprimento no arquivo: ${S.unit.lenName}` }],
+      ['Nº', 'Ambiente', 'Nível', 'Área m²', 'Origem da área', 'GlobalId'].map(v => ({ v, s: 1 }))];
     let tot = 0;
     for (const r of S.rooms) { tot += r.area || 0; rows.push([{ v: r.no, s: 2 }, { v: r.name, s: 2 }, { v: r.level, s: 2 }, { v: r.area != null ? +r.area.toFixed(3) : '', s: 3 }, { v: r.areaSrc, s: 2 }, { v: S.ents.get(r.id)?.gid || '', s: 2 }]); }
-    rows.push([{ v: 'TOTAL', s: 5 }, { v: `${S.rooms.length} rooms`, s: 5 }, { v: '', s: 5 }, { v: +tot.toFixed(3), s: 6 }, { v: '', s: 5 }, { v: '', s: 5 }]);
-    const prow = [['No.', 'Room', 'Level', ...keys].map(v => ({ v, s: 1 }))];
+    rows.push([{ v: 'TOTAL', s: 5 }, { v: `${S.rooms.length} ambientes`, s: 5 }, { v: '', s: 5 }, { v: +tot.toFixed(3), s: 6 }, { v: '', s: 5 }, { v: '', s: 5 }]);
+    const prow = [['Nº', 'Ambiente', 'Nível', ...keys].map(v => ({ v, s: 1 }))];
     for (const r of S.rooms) prow.push([r.no, r.name, r.level, ...keys.map(k => r.params[k] ?? '')].map(v => ({ v, s: typeof v === 'number' ? 3 : 2 })));
     download(buildXlsx([
-      { name: 'Rooms', cols: [12, 34, 24, 13, 34, 26], rows, headerRow: 2, filterRows: S.rooms.length },
-      { name: 'Room parameters', cols: [12, 30, 22, ...keys.map(() => 22)], rows: prow, headerRow: 0, filterRows: S.rooms.length }]), `${safeName(S.fileName)}_rooms.xlsx`);
+      { name: 'Ambientes', cols: [12, 34, 24, 13, 34, 26], rows, headerRow: 2, filterRows: S.rooms.length },
+      { name: 'Parâmetros dos ambientes', cols: [12, 30, 22, ...keys.map(() => 22)], rows: prow, headerRow: 0, filterRows: S.rooms.length }]), `${safeName(S.fileName)}_ambientes.xlsx`);
   }
   function elemCsv() {
-    if (S.sel == null) { toast('Select an element first'); return; }
-    const e = S.ents.get(S.sel); const rows = [['Group', 'Kind', 'From type', 'Property', 'Value', 'Numeric (SI)', 'Unit']];
-    for (const g of Inspector.id === S.sel ? Inspector.groups : [...readSets(S.sel)]) for (const r of g.rows) rows.push([g.name, g.kind, g.fromType ? 'yes' : '', r.k, r.v, r.num ?? '', r.unit || '']);
+    if (S.sel == null) { toast('Selecione um elemento primeiro'); return; }
+    const e = S.ents.get(S.sel); const rows = [['Grupo', 'Tipo de grupo', 'Do tipo', 'Propriedade', 'Valor', 'Numérico (SI)', 'Unidade']];
+    for (const g of Inspector.id === S.sel ? Inspector.groups : [...readSets(S.sel)]) for (const r of g.rows) rows.push([g.name, g.kind, g.fromType ? 'sim' : '', r.k, r.v, r.num ?? '', r.unit || '']);
     download(csvBlob(rows), `${safeName(S.fileName)}_${safeName(e?.name || '')}_${S.sel}.csv`);
   }
   async function qtyCsv() {
-    const rows = [['ExpressID', 'GlobalId', 'Class', 'Name', 'Level', 'Quantity set', 'Quantity', 'Value (SI)', 'Unit']];
+    const rows = [['ExpressID', 'GlobalId', 'Classe', 'Nome', 'Nível', 'Conjunto de quantidades', 'Quantidade', 'Valor (SI)', 'Unidade']];
     const ids = [...S.ents.keys()]; let i = 0;
     for (const id of ids) {
       const e = S.ents.get(id); const lv = e.lvl != null ? S.storeyById.get(e.lvl)?.name : '';
       for (const psid of S.psetsOf.get(id) || []) { const s = readSetLine(psid, false); if (!s || s.kind !== 'qset') continue; for (const r of s.rows) rows.push([id, e.gid, e.cls, e.name, lv, s.name, r.k, r.num ?? r.v, r.unit]); }
-      if (++i % 2000 === 0) { toast(`Collecting quantities… ${i}/${ids.length}`); await sleep(); }
+      if (++i % 2000 === 0) { toast(`Coletando quantidades… ${i}/${ids.length}`); await sleep(); }
     }
-    if (rows.length === 1) { toast('No quantity sets (IfcElementQuantity) in this model'); return; }
-    download(csvBlob(rows), `${safeName(S.fileName)}_quantities.csv`); toast(`${rows.length - 1} quantities exported`);
+    if (rows.length === 1) { toast('Nenhum conjunto de quantidades (IfcElementQuantity) neste modelo'); return; }
+    download(csvBlob(rows), `${safeName(S.fileName)}_quantidades.csv`); toast(`${rows.length - 1} quantidades exportadas`);
   }
-  const run = { roomsCsv: guard(roomsCsv, 'Rooms CSV'), roomsXlsx: guard(roomsXlsx, 'Rooms XLSX'), elemCsv: guard(elemCsv, 'Element CSV'), qtyCsv: guard(qtyCsv, 'Quantities CSV') };
+  const run = { roomsCsv: guard(roomsCsv, 'CSV de ambientes'), roomsXlsx: guard(roomsXlsx, 'XLSX de ambientes'), elemCsv: guard(elemCsv, 'CSV do elemento'), qtyCsv: guard(qtyCsv, 'CSV de quantidades') };
   document.addEventListener('click', e => { const b = e.target.closest('[data-exp]'); if (!b) return; $('#expMenu').classList.remove('open'); run[b.dataset.exp](); });
   return run;
 })();
@@ -1891,9 +1892,9 @@ const UI = (() => {
   function updateMsg() {
     const m = $('#vpMsg'); let show = false;
     if (S.mid != null && S.tab !== 'areas') {
-      if (S.mode === 'fast') { show = true; $('#vpMsgT').textContent = 'FAST MODE'; $('#vpMsgP').textContent = 'Geometry was not loaded. Tree, inspector, schedule and area comparison work; reload with geometry for the 3D model, room model and 2D plans.'; $('#vpMsgB').hidden = false; }
-      else if (!S.modelBox) { show = true; $('#vpMsgT').textContent = 'NO GEOMETRY'; $('#vpMsgP').textContent = 'web-ifc produced no meshes for this file. IFC data is still available in the tree and inspector.'; $('#vpMsgB').hidden = true; }
-      else if (S.tab === 'rooms' && !S.rooms.length) { show = true; $('#vpMsgT').textContent = 'NO ROOMS'; $('#vpMsgP').textContent = 'This model has no IfcSpace entities. Export rooms/spaces from your authoring tool (Revit: "Export rooms and areas").'; $('#vpMsgB').hidden = true; }
+      if (S.mode === 'fast') { show = true; $('#vpMsgT').textContent = 'MODO RÁPIDO'; $('#vpMsgP').textContent = 'A geometria não foi carregada. Árvore, inspetor, tabela e comparação de áreas funcionam; recarregue com geometria para ver o modelo 3D, os ambientes e as plantas 2D.'; $('#vpMsgB').hidden = false; }
+      else if (!S.modelBox) { show = true; $('#vpMsgT').textContent = 'SEM GEOMETRIA'; $('#vpMsgP').textContent = 'O web-ifc não gerou malhas para este arquivo. Os dados IFC continuam disponíveis na árvore e no inspetor.'; $('#vpMsgB').hidden = true; }
+      else if (S.tab === 'rooms' && !S.rooms.length) { show = true; $('#vpMsgT').textContent = 'SEM AMBIENTES'; $('#vpMsgP').textContent = 'Este modelo não tem entidades IfcSpace. Exporte os ambientes/espaços no software de autoria (no Revit, ative a exportação de ambientes nas opções de IFC).'; $('#vpMsgB').hidden = true; }
     }
     m.classList.toggle('on', show);
   }
@@ -1901,8 +1902,8 @@ const UI = (() => {
   function hud() {
     const el = $('#hud'); if (S.mid == null) { el.innerHTML = ''; return; }
     const st = S.level != null ? S.storeyById.get(S.level) : null; const parts = [];
-    if (S.tab === 'model') parts.push(st ? `SECTION <b>${esc(st.name)}</b> · cut @ ${fmtNum(st.floorY + 1.9)} m` : 'SECTION <b>off</b>');
-    if (S.tab === 'rooms') parts.push(st ? `LEVEL <b>${esc(st.name)}</b>` : 'LEVEL <b>all</b>');
+    if (S.tab === 'model') parts.push(st ? `CORTE <b>${esc(st.name)}</b> · em ${fmtNum(st.floorY + 1.9)} m` : 'CORTE <b>desligado</b>');
+    if (S.tab === 'rooms') parts.push(st ? `NÍVEL <b>${esc(st.name)}</b>` : 'NÍVEL <b>todos</b>');
     if (S.sel != null) { const e = S.ents.get(S.sel); parts.push(`SEL <b>${esc(e?.cls || '')}</b> ${esc(e?.name || '#' + S.sel)}`); }
     el.innerHTML = parts.join('<br>');
   }
@@ -1928,8 +1929,8 @@ const UI = (() => {
     $$('#tabs button').forEach(b => b.disabled = false); $('#expBtn').disabled = false;
     $('#fileChip').textContent = S.fileName; $('#fileChip').title = S.fileName;
     const ic = $('#infoChip'); ic.hidden = false;
-    ic.textContent = `${S.schema} · ${S.unit.lenName} · ${S.ents.size} ent · ${S.rooms.length} rooms · ${secs.toFixed(1)}s${S.mode === 'fast' ? ' · FAST' : ''}`;
-    const ls = $('#levelSel'); ls.innerHTML = ''; ls.append(h('option', { value: '', text: 'All levels' }));
+    ic.textContent = `${S.schema} · ${S.unit.lenName} · ${S.ents.size} ent · ${S.rooms.length} ambientes · ${fmtP(secs)} s${S.mode === 'fast' ? ' · RÁPIDO' : ''}`;
+    const ls = $('#levelSel'); ls.innerHTML = ''; ls.append(h('option', { value: '', text: 'Todos os níveis' }));
     S.storeys.forEach(st => ls.append(h('option', { value: st.id, text: `${st.name}  (${fmtNum(st.floorY)} m)` })));
     Plan.reset(); Tree.build(); Rooms.init(); Inspector.render(null);
     $('#expMenu [data-exp="elemCsv"]').disabled = true;
@@ -1937,7 +1938,7 @@ const UI = (() => {
     setTab('model'); if (S.modelBox) Viewer.frameBox(S.modelBox, false);
   }
   function onModelCleared() {
-    $$('#tabs button').forEach(b => b.disabled = true); $('#expBtn').disabled = true; $('#fileChip').textContent = 'NO MODEL'; $('#infoChip').hidden = true;
+    $$('#tabs button').forEach(b => b.disabled = true); $('#expBtn').disabled = true; $('#fileChip').textContent = 'SEM MODELO'; $('#infoChip').hidden = true;
     $('#tree').innerHTML = ''; $('#sched tbody').innerHTML = ''; $('#dash').innerHTML = ''; Inspector.render(null); Plan.reset(); updateMsg(); hud();
     $('#drop').classList.add('on');
   }
@@ -1981,8 +1982,8 @@ const UI = (() => {
   addEventListener('dragover', e => { e.preventDefault(); if (e.dataTransfer) e.dataTransfer.dropEffect = 'copy'; });
   addEventListener('dragleave', () => { dd = Math.max(0, dd - 1); if (!dd) { document.body.classList.remove('dragging'); if (S.mid != null && !$('#prog').classList.contains('on') && !$('#drop').matches(':hover')) {} } });
   addEventListener('drop', e => { e.preventDefault(); dd = 0; document.body.classList.remove('dragging');
-    if ($('#prog').classList.contains('on')) { toast('Already loading a model'); return; }
-    const files = [...(e.dataTransfer?.files || [])]; if (!files.length) return; if (files.length > 1) Err.push('Only one file at a time — loading the first.', 'i');
+    if ($('#prog').classList.contains('on')) { toast('Já há um modelo sendo carregado'); return; }
+    const files = [...(e.dataTransfer?.files || [])]; if (!files.length) return; if (files.length > 1) Err.push('Apenas um arquivo por vez — carregando o primeiro.', 'i');
     loadFile(files[0], mode()).catch(er => Err.push(er.message)); });
   Viewer.setCamCb(() => {});
   return { select, setLevel, onModelLoaded, onModelCleared, setTab };

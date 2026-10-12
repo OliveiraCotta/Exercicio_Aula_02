@@ -43,7 +43,7 @@ def abrir_no_navegador():
 
 if os.path.exists(caminho_html) and abrir_no_navegador():
     saida.print_md(u"## Visualizador de IFC")
-    saida.print_md(u"**Visualizador aberto** no navegador: arraste um arquivo `.ifc` para a página ou clique em **Browse…** (Procurar) para selecioná-lo.")
+    saida.print_md(u"**Visualizador aberto** no navegador: arraste um arquivo `.ifc` para a página ou clique em **Procurar…** para selecioná-lo.")
     saida.print_md(u"- O arquivo é lido localmente; nada é enviado para a internet.")
     saida.print_md(u"- É necessário acesso à internet (`cdn.jsdelivr.net`) para carregar as bibliotecas three.js e web-ifc.")
     saida.print_md(u"- Use o Chrome, o Edge ou o Firefox atualizado como navegador padrão.")
