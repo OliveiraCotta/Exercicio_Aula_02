@@ -469,6 +469,7 @@ def js_payload():
         "styles": styles_xml(),
         "s": {"header": S_HEADER, "text": S_TEXT, "mono": S_MONO, "wrap": S_WRAP},
         "font": tokens.EXCEL["font"],
+        "excel": tokens.EXCEL,               # cores ARGB e fontes, para gravadores com estilos próprios
         "brand": BRAND,
         "print": u'<pageMargins left="0.5" right="0.5" top="0.75" bottom="0.75" header="0.3" footer="0.3"/>'
                  u'<pageSetup paperSize="9" orientation="landscape" fitToWidth="1" fitToHeight="0"/>',
