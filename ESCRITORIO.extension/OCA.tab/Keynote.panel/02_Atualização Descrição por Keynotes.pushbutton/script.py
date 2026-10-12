@@ -34,7 +34,7 @@
 #   enquadra na vista ativa (sem transação, a janela continua aberta).
 #
 # Ao executar a 1ª aba, o TXT de Keynote é gerado do Excel e recarregado no
-# projeto (pede confirmação se o arquivo já existe; guarda backup).
+# projeto (arquivo existente é substituído; o anterior vira backup com data/hora).
 # Botões da 2ª aba: Voltar (1ª aba) · Dashboard HTML (qualidade dos dados,
 # offline) · Gravar marcados (pede confirmação, grava e atualiza as tabelas)
 # · Finalizar (só fecha - não grava nem gera nada).
@@ -229,7 +229,7 @@ KN_XAML = u"""
 
     <TextBlock Text="TXT de Keynote do Revit" FontWeight="SemiBold"/>
     <TextBlock TextWrapping="Wrap" FontSize="11" Foreground="#9FB3CC" Margin="0,0,0,6"
-               Text="Gerado a partir do Excel e recarregado no projeto ao clicar em Executar. Troque XXX (projeto) e XX (revisão) no nome. Se o arquivo já existir, o comando pede confirmação antes de substituir (e guarda um backup)."/>
+               Text="Gerado a partir do Excel e recarregado no projeto ao clicar em Executar. Troque XXX (projeto) e XX (revisão) no nome. Se o arquivo já existir, é substituído e o anterior vira um backup com data e hora na mesma pasta."/>
     <DockPanel LastChildFill="True">
       <Button x:Name="txt_browse" DockPanel.Dock="Right" Content="Salvar como..." Width="90"
               Height="26" Margin="8,0,0,0"/>
@@ -2817,8 +2817,9 @@ def cleanup_old_colors():
 
 def make_keynote_txt():
     """Ao executar a 1ª aba: gera o TXT de Keynote a partir do Excel (mesma
-    estrutura de sempre) e carrega no projeto. Se o arquivo já existe, pede
-    confirmação antes de substituir (e guarda backup). -> mensagem"""
+    estrutura de sempre) e carrega no projeto. Se o arquivo já existe, é
+    SEMPRE substituído, sem perguntar; antes, o atual é copiado para um backup
+    com data/hora na mesma pasta (write_keynote_txt). -> mensagem"""
     path = opts["txt_path"]
     try:
         text, warns = build_keynote_txt()
@@ -2826,11 +2827,6 @@ def make_keynote_txt():
         msg = u"TXT de Keynote não gerado: {}".format(to_unicode(ex))
         forms.alert(msg)
         return msg
-    if os.path.isfile(path) and not forms.alert(
-            u"O TXT de Keynote já existe:\n\n{}\n\nSubstituir pelo gerado a partir do Excel "
-            u"e recarregar no projeto?\n(um backup com data/hora é guardado na mesma pasta)"
-            .format(path), yes=True, no=True):
-        return u"TXT de Keynote mantido (não substituído): {}".format(path)
     try:
         backup, enc = write_keynote_txt(path, text)
     except Exception as ex:
