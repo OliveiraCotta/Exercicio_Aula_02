@@ -9,10 +9,29 @@ __title__ = "Visualizador\nde IFC"
 __doc__ = "Abre o visualizador de IFC (modelo 3D, ambientes, areas e dados IFC) no navegador. Depois arraste ou selecione um arquivo .ifc para carregar."
 
 import os
+import codecs
 from pyrevit import script
+from oca_ui import brand_report, output_header
 
 output = script.get_output()
-html_path = os.path.join(os.path.dirname(__file__), "ifc-hud-viewer.html")
+viewer_path = os.path.join(os.path.dirname(__file__), "ifc-hud-viewer.html")
+
+
+def branded_copy():
+    """Cópia do visualizador com as cores e o logo OCA (pasta de dados do pyRevit).
+    Se não der para gravar, abre o arquivo original, que usa as mesmas cores sem o logo."""
+    try:
+        with codecs.open(viewer_path, "r", encoding="utf-8") as f:
+            html = brand_report(f.read())
+        out = script.get_universal_data_file("ifc_hud_viewer", "html")
+        with codecs.open(out, "w", encoding="utf-8") as f:
+            f.write(html)
+        return out
+    except Exception:
+        return viewer_path
+
+
+html_path = branded_copy() if os.path.exists(viewer_path) else viewer_path
 url = "file:///" + html_path.replace("\\", "/")
 
 
@@ -41,6 +60,7 @@ def try_open():
         return False
 
 
+output_header(output, __title__, u"Visualizador web de arquivos IFC")
 if os.path.exists(html_path) and try_open():
     output.print_md("## Visualizador de IFC")
     output.print_md("**Visualizador aberto** no navegador - arraste um arquivo `.ifc` para a pagina ou clique em **Browse...** para carrega-lo.")
