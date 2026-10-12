@@ -33,10 +33,11 @@
 #   Clicar numa linha seleciona no Revit todas as instâncias do tipo e
 #   enquadra na vista ativa (sem transação, a janela continua aberta).
 #
-# Botões: Voltar (1ª aba) · Gerar TXT de Keynote (do Excel, carrega no projeto,
-# pede confirmação) · Dashboard HTML (qualidade dos dados, offline) · Gravar
-# marcados (pede confirmação, grava e atualiza as tabelas) · Finalizar (só
-# fecha - não grava nem gera nada).
+# Ao executar a 1ª aba, o TXT de Keynote é gerado do Excel e recarregado no
+# projeto (pede confirmação se o arquivo já existe; guarda backup).
+# Botões da 2ª aba: Voltar (1ª aba) · Dashboard HTML (qualidade dos dados,
+# offline) · Gravar marcados (pede confirmação, grava e atualiza as tabelas)
+# · Finalizar (só fecha - não grava nem gera nada).
 #
 # TXT de Keynote do Revit: mesma estrutura do arquivo do escritório -
 # CATEGORIA/prefixos, PREFIXO/GRUPO/CATEGORIA e KEYNOTE / "DESCRIÇÃO |
@@ -213,7 +214,7 @@ KN_XAML = u"""
 
     <TextBlock Text="Resumo" FontWeight="SemiBold"/>
     <TextBlock TextWrapping="Wrap" FontSize="11" Foreground="#9FB3CC" Margin="0,0,0,0"
-               Text="Lê a aba MATERIAIS da planilha de Keynote e atualiza a Descrição e a Descrição IN dos tipos do modelo pelo código de Keynote. Na próxima etapa você confere as tabelas e grava só o que marcar (com confirmação). O TXT de Keynote é gerado pelo botão 'Gerar TXT de Keynote'."/>
+               Text="Lê a aba MATERIAIS da planilha de Keynote e atualiza a Descrição e a Descrição IN dos tipos do modelo pelo código de Keynote. Na próxima etapa você confere as tabelas e grava só o que marcar (com confirmação). Ao executar, o TXT de Keynote é gerado a partir do Excel e recarregado no projeto."/>
 
     <TextBlock Text="Fluxo" FontWeight="SemiBold"/>
     <TextBlock Margin="0,0,0,0" FontSize="13" Foreground="#D9E8F5"
@@ -228,7 +229,7 @@ KN_XAML = u"""
 
     <TextBlock Text="TXT de Keynote do Revit" FontWeight="SemiBold"/>
     <TextBlock TextWrapping="Wrap" FontSize="11" Foreground="#9FB3CC" Margin="0,0,0,6"
-               Text="Gerado a partir do Excel e carregado no projeto pelo botão 'Gerar TXT de Keynote' da próxima etapa. Troque XXX (projeto) e XX (revisão) no nome. Se o arquivo já existir, o comando pede confirmação antes de substituir (e guarda um backup)."/>
+               Text="Gerado a partir do Excel e recarregado no projeto ao clicar em Executar. Troque XXX (projeto) e XX (revisão) no nome. Se o arquivo já existir, o comando pede confirmação antes de substituir (e guarda um backup)."/>
     <DockPanel LastChildFill="True">
       <Button x:Name="txt_browse" DockPanel.Dock="Right" Content="Salvar como..." Width="90"
               Height="26" Margin="8,0,0,0"/>
@@ -312,7 +313,7 @@ class KeynoteWindow(forms.WPFWindow):
             "mode": "to_model",            # fluxo único
             "scope": "model",              # sempre o modelo inteiro
             "materials": False,            # materiais não são lidos
-            "txt_on": True,                # TXT gerado pelo botão 'Gerar TXT de Keynote'
+            "txt_on": True,                # TXT gerado e recarregado ao executar
             "txt_path": txt,
         }
         self.confirmed = True
@@ -1643,21 +1644,17 @@ VERIFY_XAML = u"""
         <ColumnDefinition Width="Auto"/>
         <ColumnDefinition Width="Auto"/>
         <ColumnDefinition Width="Auto"/>
-        <ColumnDefinition Width="Auto"/>
       </Grid.ColumnDefinitions>
       <Button x:Name="b_back" Grid.Column="0" Content="←  Voltar" MinWidth="100"
               Margin="0,0,14,0" ToolTip="Volta para a primeira aba (planilha e TXT)"/>
       <TextBlock x:Name="counter" Grid.Column="1" VerticalAlignment="Center" Margin="0,0,12,0"
                  Foreground="#CFE3FF" FontFamily="Segoe UI" TextWrapping="Wrap"/>
-      <Button x:Name="b_txt" Grid.Column="2" Content="Gerar TXT de Keynote" MinWidth="150"
-              Margin="0,0,10,0"
-              ToolTip="Gera o TXT de Keynote a partir do Excel e carrega no projeto (pede confirmação)"/>
-      <Button x:Name="b_dash" Grid.Column="3" Content="Dashboard HTML" MinWidth="130"
+      <Button x:Name="b_dash" Grid.Column="2" Content="Dashboard HTML" MinWidth="130"
               Margin="0,0,10,0"
               ToolTip="Abre no navegador o painel de qualidade dos dados da última análise (não altera o modelo)"/>
-      <Button x:Name="b_apply" Grid.Column="4" Content="Gravar marcados" MinWidth="150"
+      <Button x:Name="b_apply" Grid.Column="3" Content="Gravar marcados" MinWidth="150"
               Margin="0,0,10,0" ToolTip="Grava no modelo as linhas marcadas (pede confirmação)"/>
-      <Button x:Name="b_finish" Grid.Column="5" Content="Finalizar" MinWidth="110"
+      <Button x:Name="b_finish" Grid.Column="4" Content="Finalizar" MinWidth="110"
               Margin="0" FontWeight="SemiBold" ToolTip="Fecha o comando sem gravar nada"/>
     </Grid>
     <ScrollViewer x:Name="scroll" VerticalScrollBarVisibility="Visible"
@@ -1857,7 +1854,6 @@ class VerifyWindow(forms.WPFWindow):
             g.PreviewMouseWheel += self._wheel
         self.b2_check.Click += self._verify_all
         self.b_back.Click += self._back
-        self.b_txt.Click += self._txt
         self.b_dash.Click += self._dashboard
         self.b_apply.Click += self._apply
         self.b_finish.Click += self._finish
@@ -2284,46 +2280,6 @@ class VerifyWindow(forms.WPFWindow):
         self.b_apply.IsEnabled = False
         self.viewinfo.Text = u"Gravando no modelo..."
         run_in_revit(lambda: save_run(sel1, sel2))
-
-    def _txt(self, sender, args):
-        """Gera o TXT de Keynote a partir do Excel e carrega no projeto (pede
-        confirmação; avisa se vai substituir um arquivo existente)."""
-        path = opts["txt_path"]
-        try:
-            text, warns = build_keynote_txt()
-        except Exception as ex:
-            _tell(self, u"Não foi possível montar o TXT:\n{}".format(to_unicode(ex)), warn=True)
-            return
-        n_lines = len(text.splitlines())
-        msg = (u"Gerar o TXT de Keynote a partir do Excel e carregar no projeto?\n\n{}\n\n"
-               u"{} linha(s) · texto do keynote = DESCRIÇÃO | DESCRIÇÃO IN".format(path, n_lines))
-        if os.path.isfile(path):
-            msg += (u"\n\nATENÇÃO: o arquivo já existe e será SUBSTITUÍDO "
-                    u"(um backup com data/hora é guardado na mesma pasta).")
-        if warns:
-            msg += u"\n\n{} aviso(s): {}".format(len(warns), u"; ".join(warns[:3]))
-        if not _ask(self, msg):
-            self.viewinfo.Text = u"TXT de Keynote não gerado (cancelado)."
-            return
-        win = self
-
-        def act():
-            try:
-                backup, enc = write_keynote_txt(path, text)
-            except Exception as ex:
-                win.viewinfo.Text = u"TXT não gravado: {}".format(to_unicode(ex))
-                _tell(win, win.viewinfo.Text, warn=True)
-                return
-            ok, info = load_keynote_txt(path)
-            if ok:
-                FILE_TEXT.clear()
-                FILE_TEXT.update(keynote_file_texts())
-            win.viewinfo.Text = u"TXT gravado ({}){} e {}.".format(
-                enc, u", backup: " + os.path.basename(backup) if backup else u"",
-                info if ok else u"NÃO carregado no projeto: " + info)
-            if not ok:
-                _tell(win, win.viewinfo.Text, warn=True)
-        run_in_revit(act)
 
     def _dashboard(self, sender, args):
         """Dashboard HTML com os dados da última análise (não lê nem grava o
@@ -2859,6 +2815,38 @@ def cleanup_old_colors():
                         u"(pergunta de novo na próxima execução).".format(n))
 
 
+def make_keynote_txt():
+    """Ao executar a 1ª aba: gera o TXT de Keynote a partir do Excel (mesma
+    estrutura de sempre) e carrega no projeto. Se o arquivo já existe, pede
+    confirmação antes de substituir (e guarda backup). -> mensagem"""
+    path = opts["txt_path"]
+    try:
+        text, warns = build_keynote_txt()
+    except Exception as ex:
+        msg = u"TXT de Keynote não gerado: {}".format(to_unicode(ex))
+        forms.alert(msg)
+        return msg
+    if os.path.isfile(path) and not forms.alert(
+            u"O TXT de Keynote já existe:\n\n{}\n\nSubstituir pelo gerado a partir do Excel "
+            u"e recarregar no projeto?\n(um backup com data/hora é guardado na mesma pasta)"
+            .format(path), yes=True, no=True):
+        return u"TXT de Keynote mantido (não substituído): {}".format(path)
+    try:
+        backup, enc = write_keynote_txt(path, text)
+    except Exception as ex:
+        msg = u"TXT de Keynote não gravado: {}".format(to_unicode(ex))
+        forms.alert(msg)
+        return msg
+    ok, info = load_keynote_txt(path)
+    msg = u"TXT de Keynote gravado ({}){} e {}.{}".format(
+        enc, u", backup: " + os.path.basename(backup) if backup else u"",
+        info if ok else u"NÃO carregado no projeto: " + info,
+        u"  {} aviso(s): {}".format(len(warns), u"; ".join(warns[:3])) if warns else u"")
+    if not ok:
+        forms.alert(msg)
+    return msg
+
+
 def start_session(new_opts):
     """Lê o Excel e o modelo com as opções da 1ª aba, analisa e abre a 2ª aba.
     Roda no início do comando e de novo pelo botão Voltar (via ExternalEvent).
@@ -2874,6 +2862,7 @@ def start_session(new_opts):
         forms.alert(u"Não foi possível ler a planilha:\n{}\n\n{}".format(
             XLSX_PATH, to_unicode(ex)))
         return False
+    txt_msg = make_keynote_txt()          # TXT do Excel -> carrega no projeto
     MODEL = collect_model(use_view, opts["materials"])
     FILE_TEXT = keynote_file_texts()
     offer_in_binding()
@@ -2885,6 +2874,7 @@ def start_session(new_opts):
     if not VROWS and not INC:
         info_text += u"  ·  Nada a atualizar: o modelo já coincide com o Excel."
     VW = VerifyWindow(VROWS, INC, NOTX, info_text)
+    VW.viewinfo.Text = txt_msg
     VW.Show()
     return True
 
