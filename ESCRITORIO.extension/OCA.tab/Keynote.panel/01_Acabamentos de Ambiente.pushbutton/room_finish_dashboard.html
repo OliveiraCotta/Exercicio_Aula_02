@@ -1,0 +1,361 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Acabamentos por Keynote</title>
+<style>
+  :root{
+    --bg:#070C16; --panel:rgba(255,255,255,.028); --line:rgba(101,227,255,.22);
+    --grid:rgba(101,227,255,.05); --ink:#D9E8F5; --dim:#7A8FA9;
+    --cy:#65E3FF; --teal:#3DDCB4; --amber:#FFB454; --mag:#FF4F9A; --violet:#9D8CFF;
+  }
+  *{box-sizing:border-box; margin:0; padding:0}
+  body{
+    background:
+      repeating-linear-gradient(0deg, var(--grid) 0 1px, transparent 1px 48px),
+      repeating-linear-gradient(90deg, var(--grid) 0 1px, transparent 1px 48px),
+      radial-gradient(1200px 600px at 15% -10%, #0D1B33 0%, var(--bg) 55%);
+    background-color:var(--bg);
+    color:var(--ink); font-family:"Bahnschrift","Segoe UI",system-ui,sans-serif;
+    padding:36px clamp(16px,4vw,56px) 80px; min-height:100vh;
+  }
+  .mono{font-family:Consolas,"Cascadia Mono",monospace}
+  header{display:flex; justify-content:space-between; align-items:flex-end; gap:16px; flex-wrap:wrap;
+    border-bottom:1px solid var(--line); padding-bottom:18px; margin-bottom:28px}
+  .eyebrow{font-size:11px; letter-spacing:.45em; color:var(--cy); text-transform:uppercase}
+  h1{font-size:clamp(22px,3vw,36px); font-weight:600; letter-spacing:.04em; margin-top:6px}
+  h1 span{color:var(--dim); font-weight:300}
+  .stamp{text-align:right; font-size:11px; color:var(--dim); letter-spacing:.12em; line-height:1.8}
+  .stamp b{color:var(--teal); font-weight:600}
+  h2{font-size:12px; letter-spacing:.4em; text-transform:uppercase; color:var(--dim);
+    margin:0 0 16px; display:flex; align-items:center; gap:12px}
+  h2::after{content:""; flex:1; height:1px; background:var(--line)}
+
+  .banner{border:1px solid rgba(255,79,154,.5); background:rgba(255,79,154,.07); color:var(--mag);
+    border-radius:4px; padding:12px 16px; margin-bottom:22px; font-size:13px; line-height:1.7}
+
+  /* stat cards - click to filter the table */
+  .cards{display:grid; grid-template-columns:repeat(auto-fit,minmax(150px,1fr)); gap:12px; margin-bottom:32px}
+  .card{background:var(--panel); border:1px solid var(--line); border-radius:4px; text-align:left;
+    padding:16px 14px 12px; position:relative; overflow:hidden; cursor:pointer; color:inherit;
+    font:inherit}
+  .card::before{content:""; position:absolute; top:0; left:0; width:100%; height:2px;
+    background:linear-gradient(90deg, var(--c,var(--cy)), transparent 70%)}
+  .card:hover{border-color:var(--cy)}
+  .card.on{border-color:var(--c,var(--cy)); background:rgba(101,227,255,.07)}
+  .card .v{font-size:30px; font-weight:600; color:var(--c,var(--cy)); font-variant-numeric:tabular-nums}
+  .card .l{font-size:10px; letter-spacing:.2em; text-transform:uppercase; color:var(--dim); margin-top:6px; line-height:1.5}
+
+  /* filters */
+  .filters{display:grid; grid-template-columns:repeat(auto-fill,minmax(160px,1fr)); gap:10px 12px; margin-bottom:12px}
+  .f label{display:block; font-size:10px; letter-spacing:.2em; text-transform:uppercase; color:var(--dim); margin-bottom:5px}
+  .f input, .f select{width:100%; background:#0C1424; border:1px solid var(--line); border-radius:3px;
+    color:var(--ink); padding:7px 9px; font-size:12px; font-family:inherit; outline:none}
+  .f input:focus, .f select:focus{border-color:var(--cy)}
+  .f.wide{grid-column:span 2}
+  .toolrow{display:flex; gap:12px; align-items:center; margin:4px 0 16px; flex-wrap:wrap}
+  .btn{background:transparent; border:1px solid var(--line); border-radius:3px; color:var(--cy);
+    font-family:inherit; font-size:11px; letter-spacing:.15em; text-transform:uppercase;
+    padding:8px 14px; cursor:pointer}
+  .btn:hover{border-color:var(--cy); background:rgba(101,227,255,.12)}
+  .count{font-size:11px; color:var(--dim); letter-spacing:.15em; margin-left:auto}
+
+  /* table */
+  .tablewrap{overflow-x:auto}
+  table{width:100%; border-collapse:collapse; font-size:13px; min-width:900px}
+  th{font-size:10px; letter-spacing:.22em; text-transform:uppercase; color:var(--cy);
+    text-align:left; padding:10px 10px; border-bottom:1px solid var(--line);
+    cursor:pointer; user-select:none; white-space:nowrap}
+  th .dir{color:var(--amber)}
+  td{padding:9px 10px; border-bottom:1px solid rgba(255,255,255,.05); vertical-align:top}
+  tbody tr.room{cursor:pointer}
+  tbody tr.room:hover td{background:rgba(101,227,255,.05)}
+  tbody tr.room.open td{background:rgba(101,227,255,.07)}
+  .tag{display:inline-block; padding:2px 8px; border:1px solid var(--line); border-radius:2px;
+    font-size:11px; color:var(--dim)}
+  .kn{display:inline-block; margin:1px 4px 1px 0; padding:1px 7px; border-radius:2px;
+    border:1px solid rgba(101,227,255,.35); background:rgba(101,227,255,.07);
+    font-family:Consolas,monospace; font-size:12px; color:var(--cy)}
+  .st{font-size:11px; letter-spacing:.05em}
+  .st.missing{color:var(--mag)}
+  .st.nd{color:var(--dim)}
+  .st.partial{color:var(--amber)}
+  .cur{display:block; font-size:10.5px; color:var(--dim); margin-top:3px; letter-spacing:.03em}
+  .cur.diff{color:var(--amber)}
+  .badge{display:inline-block; font-size:10px; letter-spacing:.15em; padding:3px 8px; border-radius:2px;
+    border:1px solid currentColor; text-transform:uppercase}
+  .badge.OK{color:var(--teal)} .badge.WARNING{color:var(--amber)} .badge.ERROR{color:var(--mag)}
+  .upd{display:inline-block; margin-left:6px; font-size:10px; color:var(--violet); letter-spacing:.1em}
+
+  /* detail row */
+  tr.detail td{background:rgba(0,0,0,.25); padding:16px 18px 18px}
+  .dgrid{display:grid; grid-template-columns:repeat(auto-fit,minmax(260px,1fr)); gap:16px}
+  .dbox h4{font-size:10px; letter-spacing:.3em; text-transform:uppercase; color:var(--cy); margin-bottom:8px; font-weight:600}
+  .dbox ul{list-style:none; font-size:12px; line-height:1.7}
+  .dbox li{color:var(--ink)}
+  .dbox li .id{font-family:Consolas,monospace; color:var(--dim)}
+  .dbox li .src{color:var(--dim); font-size:11px}
+  .dbox li.iss{color:var(--mag)}
+  .dbox li.warn{color:var(--amber)}
+  .dbox li.note{color:var(--dim)}
+  .dmsg{color:var(--mag); font-size:12px; margin-bottom:10px}
+
+  .empty{text-align:center; padding:50px 0; color:var(--dim); letter-spacing:.2em}
+  .meta{margin-top:40px; font-size:11px; color:var(--dim); line-height:1.9}
+  .meta b{color:var(--ink); font-weight:600}
+  footer{margin-top:40px; font-size:10px; letter-spacing:.3em; color:var(--dim);
+    text-transform:uppercase; text-align:center}
+</style>
+</head>
+<body>
+<header>
+  <div>
+    <div class="eyebrow">Acabamentos dos ambientes // Automação por Keynote</div>
+    <h1 id="proj"></h1>
+  </div>
+  <div class="stamp mono">GERADO EM <b id="stamp"></b><br>ORIGEM <b>REVIT · PYREVIT</b></div>
+</header>
+
+<div id="banner"></div>
+<div class="cards" id="cards"></div>
+
+<h2>Ambientes</h2>
+<div class="filters" id="filters">
+  <div class="f wide"><label for="q">Buscar</label><input id="q" type="search" placeholder="número, nome, keynote, id do elemento…" autocomplete="off"></div>
+  <div class="f"><label for="fNumber">Número do ambiente</label><input id="fNumber" type="text" placeholder="ex.: 101" autocomplete="off"></div>
+  <div class="f"><label for="fLevel">Pavimento</label><select id="fLevel"></select></div>
+  <div class="f"><label for="fStatus">Situação</label><select id="fStatus"></select></div>
+</div>
+<div class="toolrow">
+  <button class="btn" id="resetBtn">Limpar filtros</button>
+  <span class="count" id="count"></span>
+</div>
+<div class="tablewrap" id="tableWrap"></div>
+
+<div id="unassigned"></div>
+<div class="meta" id="meta"></div>
+<footer>Acabamentos por Keynote · gerado localmente · nenhum dado sai deste computador</footer>
+
+<script>
+const DATA = __DATA__;
+const ROOMS = DATA.rooms || [];
+// finishes come from the script: key, label, prefixes and numbered fields
+const GROUPS = DATA.groups || [];
+const FIN = GROUPS.map(g=>g.key);
+const FIN_LABEL = Object.fromEntries(GROUPS.map(g=>[g.key, g.label]));
+const FIN_PREFIX = Object.fromEntries(GROUPS.map(g=>[g.key, g.prefixes.join("/")]));
+const FIN_FIELDS = Object.fromEntries(GROUPS.map(g=>[g.key, g.slots.map(s=>s.name)]));
+const STATUS_PT = {OK:"OK", WARNING:"Atenção", ERROR:"Erro"};
+const KN = DATA.keynotes || {};
+const esc = s => String(s==null?"":s).replace(/[&<>"]/g,m=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[m]));
+const fmt = n => n.toLocaleString("pt-BR");
+const natural = (a,b) => String(a).localeCompare(String(b), undefined, {numeric:true, sensitivity:"base"});
+
+document.getElementById("proj").innerHTML =
+  esc(String(DATA.project||"").replace(/\.rvt$/i,"")) + " <span>/ acabamentos</span>";
+document.getElementById("stamp").textContent = DATA.generated || "";
+
+if((DATA.paramProblems||[]).length){
+  document.getElementById("banner").innerHTML = `<div class="banner">${DATA.paramProblems.map(esc).join("<br>")}
+    <br>Esses parâmetros aparecem no relatório, mas não foram gravados. Nada é criado automaticamente.</div>`;
+}
+
+/* ---- stats: each is also a filter ---- */
+const hasBounds = r => r.boundary === "ok";
+const missing = k => r => hasBounds(r) && r.finishes[k].state !== "ok";
+const STATS = [
+  {k:"total",   l:"Total de ambientes",                c:"var(--cy)",     f: r => true},
+  {k:"updated", l:"Ambientes atualizados",             c:"var(--violet)", f: r => r.updated},
+  {k:"nobound", l:"Ambientes sem contorno",            c:"var(--mag)",    f: r => !hasBounds(r)},
+  ...GROUPS.map(g=>({k:g.key, l:`Sem ${g.label.toLowerCase()} (${g.prefixes.join("/")})`, c:"var(--amber)", f: missing(g.key)})),
+  {k:"overflow",l:"Keynotes sem campo livre",          c:"var(--mag)",    f: r => hasBounds(r) && FIN.some(k=>(r.finishes[k].overflow||[]).length)},
+  {k:"nokn",    l:"Ambientes com elementos sem Keynote", c:"var(--mag)",  f: r => hasBounds(r) && (r.issues||[]).length > 0},
+  {k:"mismatch",l:"Inconsistências prefixo / categoria", c:"var(--mag)",  f: r => hasBounds(r) && FIN.some(k=>(r.finishes[k].mismatches||[]).length)},
+  {k:"complete",l:"Ambientes com informação completa", c:"var(--teal)",   f: r => r.status === "OK"},
+];
+let statFilter = null;
+function renderCards(){
+  document.getElementById("cards").innerHTML = STATS.map(s=>{
+    const n = ROOMS.filter(s.f).length;
+    return `<button class="card${statFilter===s.k?" on":""}" data-k="${s.k}" style="--c:${s.c}"
+      title="Clique para mostrar só estes ambientes"><div class="v">${fmt(n)}</div><div class="l">${esc(s.l)}</div></button>`;
+  }).join("");
+  document.querySelectorAll(".card").forEach(b=>b.onclick=()=>{
+    statFilter = (statFilter===b.dataset.k || b.dataset.k==="total") ? null : b.dataset.k;
+    renderCards(); renderTable();
+  });
+}
+
+// one dropdown per finish, after the fixed filters
+document.getElementById("filters").insertAdjacentHTML("beforeend", GROUPS.map(g=>
+  `<div class="f"><label for="f_${g.key}" title="${esc(g.slots.map(s=>s.name).join(", "))}">${esc(g.label)} (${esc(g.prefixes.join("/"))})</label><select id="f_${g.key}"></select></div>`).join(""));
+
+/* ---- filter dropdowns ---- */
+function fillSelect(id, options){
+  document.getElementById(id).innerHTML = options.map(([v,l])=>`<option value="${esc(v)}">${esc(l)}</option>`).join("");
+}
+const levels = [...new Set(ROOMS.map(r=>r.level))];         // rooms arrive sorted by elevation
+fillSelect("fLevel", [["","Todos os pavimentos"], ...levels.map(l=>[l,l])]);
+fillSelect("fStatus", [["","Todas"],["OK","OK"],["WARNING","Atenção"],["ERROR","Erro"]]);
+FIN.forEach(k=>{
+  const keys = [...new Set(ROOMS.flatMap(r=>hasBounds(r)?r.finishes[k].keys:[]))].sort(natural);
+  fillSelect("f_"+k, [["","Todos"],["__issue","Ausente"],["__diff","Diferente do valor no Revit"],
+    ...keys.map(x=>[x, x + (KN[x] ? " - " + KN[x] : "")])]);
+});
+
+function matches(r){
+  const q = document.getElementById("q").value.trim().toLowerCase();
+  const num = document.getElementById("fNumber").value.trim().toLowerCase();
+  const lv = document.getElementById("fLevel").value;
+  const st = document.getElementById("fStatus").value;
+  if(statFilter){ const s = STATS.find(x=>x.k===statFilter); if(s && !s.f(r)) return false; }
+  if(lv && r.level !== lv) return false;
+  if(st && r.status !== st) return false;
+  if(num && !String(r.number).toLowerCase().includes(num)) return false;
+  for(const k of FIN){
+    const v = document.getElementById("f_"+k).value;
+    if(!v) continue;
+    const f = r.finishes[k];
+    if(v === "__issue"){ if(!hasBounds(r) || f.state === "ok") return false; }
+    else if(v === "__diff"){ if(!f.value || f.value === f.current) return false; }
+    else if(!f.keys.includes(v)) return false;
+  }
+  if(q){
+    const hay = [r.number, r.name, r.level, STATUS_PT[r.status], r.id,
+      ...FIN.flatMap(k=>[r.finishes[k].value, r.finishes[k].current, ...r.finishes[k].items.map(i=>i.id)]),
+      ...(r.issues||[]).map(i=>i.id), ...(r.others||[]).flatMap(o=>[o.id, ...(o.kn||[])])]
+      .join(" ").toLowerCase();
+    if(!hay.includes(q)) return false;
+  }
+  return true;
+}
+
+/* ---- table ---- */
+let sortK = null, sortDir = 1;
+const openRows = new Set();
+function finishCell(r, k){
+  if(!hasBounds(r)) return `<span class="st nd">-</span>`;
+  const f = r.finishes[k];
+  let main = f.keys.length
+    ? f.keys.map(x=>`<span class="kn" title="${esc(KN[x]||"")}">${esc(x)}</span>`).join("")
+    : `<span class="st missing">Ausente</span>`;
+  const flags = [...(f.mismatches||[]), ...(f.warnings||[]),
+    ...((f.overflow||[]).length ? [`Sem campo livre para: ${f.overflow.join(", ")}`] : [])];
+  if(flags.length) main += ` <span class="st partial" title="${esc(flags.join("\n"))}">!</span>`;
+  let cur = "";
+  if(f.current && f.current !== f.value){
+    cur = f.value ? `<span class="cur diff">no Revit: ${esc(f.current)}</span>`
+                  : `<span class="cur">no Revit: ${esc(f.current)} (mantido)</span>`;
+  }
+  return main + cur;
+}
+const STATUS_RANK = {ERROR:0, WARNING:1, OK:2};
+function renderTable(){
+  let list = ROOMS.filter(matches);
+  if(sortK){
+    list = list.slice().sort((a,b)=>{
+      let x, y;
+      if(sortK === "status"){ x = STATUS_RANK[a.status]; y = STATUS_RANK[b.status]; return (x-y)*sortDir; }
+      if(FIN.includes(sortK)){ x = a.finishes[sortK].value; y = b.finishes[sortK].value; }
+      else { x = a[sortK]; y = b[sortK]; }
+      return natural(x||"", y||"") * sortDir;
+    });
+  }
+  document.getElementById("count").textContent = `${list.length} / ${ROOMS.length} AMBIENTES`;
+  const wrap = document.getElementById("tableWrap");
+  if(!list.length){ wrap.innerHTML = `<div class="empty">Nenhum ambiente corresponde aos filtros.</div>`; return; }
+  const arrow = k => sortK===k ? ` <span class="dir">${sortDir>0?"▲":"▼"}</span>` : "";
+  const cols = [["number","Número"],["name","Nome do ambiente"],["level","Pavimento"],
+    ...FIN.map(k=>[k, FIN_LABEL[k]]),["status","Situação"]];
+  const head = `<tr>${cols.map(([k,l])=>`<th data-k="${k}"${FIN_FIELDS[k]?` title="${esc(FIN_FIELDS[k].join(", "))}"`:""}>${l}${arrow(k)}</th>`).join("")}</tr>`;
+  const body = list.map(r=>{
+    const open = openRows.has(r.id);
+    const row = `<tr class="room${open?" open":""}" data-id="${r.id}">
+      <td class="mono">${esc(r.number)||"-"}</td>
+      <td>${esc(r.name)||"-"}</td>
+      <td><span class="tag">${esc(r.level)}</span></td>
+      ${FIN.map(k=>`<td>${finishCell(r,k)}</td>`).join("")}
+      <td><span class="badge ${r.status}">${STATUS_PT[r.status]||r.status}</span>${r.updated?`<span class="upd">ATUALIZADO</span>`:""}</td></tr>`;
+    return open ? row + detailRow(r, cols.length) : row;
+  }).join("");
+  wrap.innerHTML = `<table><thead>${head}</thead><tbody>${body}</tbody></table>`;
+  wrap.querySelectorAll("th[data-k]").forEach(th=>th.onclick=()=>{
+    const k = th.dataset.k; sortDir = (sortK===k) ? -sortDir : 1; sortK = k; renderTable();
+  });
+  wrap.querySelectorAll("tr.room").forEach(tr=>tr.onclick=()=>{
+    const id = +tr.dataset.id; openRows.has(id) ? openRows.delete(id) : openRows.add(id); renderTable();
+  });
+}
+function detailRow(r, span){
+  let msgs = "";
+  if(r.boundaryMsg) msgs += `<div class="dmsg">${esc(r.boundaryMsg)}</div>`;
+  if(r.writeError) msgs += `<div class="dmsg">Erro ao gravar - ${esc(r.writeError)}</div>`;
+  const elLine = (i, tail) => {
+    const link = i.link ? ` <span class="src">(vínculo: ${esc(i.link)})</span>` : "";
+    const rels = (i.rels||[]).length ? ` <span class="src">[${esc(i.rels.join(", "))}]</span>` : "";
+    return `${esc(i.cat)} <span class="id">${i.id}</span>${link}${rels} ${tail}`;
+  };
+  const boxes = hasBounds(r) ? FIN.map(k=>{
+    const f = r.finishes[k];
+    const items = f.items.map(i=>{
+      const kn = i.kn.map(x=>`<span class="kn">${esc(x)}</span>`).join("");
+      const src = i.src.length ? ` <span class="src">${esc(i.src.join(", "))}</span>` : "";
+      return `<li>${elLine(i, "→ " + kn + src)}</li>`;
+    });
+    const mism = (f.mismatches||[]).map(m=>`<li class="warn">${esc(m)}</li>`);
+    const warn = (f.warnings||[]).map(w=>`<li class="warn">${esc(w)}</li>`);
+    const notes = (f.notes||[]).map(n=>`<li class="note">${esc(n)}</li>`);
+    const over = (f.overflow||[]).length
+      ? [`<li class="warn">Sem campo livre para ${esc(f.overflow.join(", "))} - só há ${(FIN_FIELDS[k]||[]).length} campos.</li>`] : [];
+    const fields = (f.slots||[]).map(sl=>`<li class="note">${esc(sl.name)}: <b style="color:var(--ink)">${esc(sl.new||"-")}</b>`
+      + (sl.current && sl.current!==sl.new ? ` · no Revit: ${esc(sl.current)}` : "")
+      + (sl.change ? ` <span class="src">[${esc(sl.change)}]</span>` : "") + `</li>`);
+    return `<div class="dbox"><h4>${FIN_LABEL[k]} <span class="src">(${FIN_PREFIX[k]})</span></h4><ul>${[...items,...mism,...warn,...over,...notes,...fields].join("")}</ul></div>`;
+  }).join("") : "";
+  const iss = (r.issues||[]).map(i=>`<li class="iss">${elLine(i, "- " + esc(i.msg))}</li>`);
+  const oth = (r.others||[]).map(o=>`<li class="note">${elLine(o, (o.kn||[]).map(x=>`<span class="kn">${esc(x)}</span>`).join("") + " " + esc(o.msg))}</li>`);
+  const otherBox = (iss.length || oth.length)
+    ? `<div class="dbox"><h4>Outros elementos</h4><ul>${[...iss,...oth].join("")}</ul></div>` : "";
+  return `<tr class="detail"><td colspan="${span}">${msgs}<div class="dgrid">${boxes}${otherBox}</div>
+    <div class="cur">Id do ambiente ${r.id}${r.phase?" · fase "+esc(r.phase):""}</div></td></tr>`;
+}
+
+/* ---- wiring ---- */
+["q","fNumber"].forEach(id=>document.getElementById(id).addEventListener("input", renderTable));
+["fLevel","fStatus",...FIN.map(k=>"f_"+k)].forEach(id=>document.getElementById(id).addEventListener("change", renderTable));
+document.getElementById("resetBtn").onclick = ()=>{
+  document.querySelectorAll(".filters input, .filters select").forEach(el=>el.value="");
+  statFilter = null; renderCards(); renderTable();
+};
+
+/* ---- elements with a finish Keynote that no room claimed ---- */
+const UN = DATA.unassigned || [];
+if(UN.length){
+  document.getElementById("unassigned").innerHTML =
+    `<h2 style="margin-top:40px">Não atribuídos a nenhum ambiente · ${fmt(UN.length)}</h2>
+     <div class="tablewrap"><table><thead><tr><th>Categoria</th><th>Id do elemento</th><th>Keynote</th><th>Motivo</th></tr></thead><tbody>` +
+    UN.map(u=>`<tr><td>${esc(u.cat)}${u.link?` <span class="cur">vínculo: ${esc(u.link)}</span>`:""}</td>
+      <td class="mono">${u.id}</td>
+      <td>${u.kn?`<span class="kn">${esc(u.kn)}</span>`:`<span class="st missing">sem Keynote</span>`}</td>
+      <td class="st nd">${esc(u.reason)}</td></tr>`).join("") +
+    `</tbody></table></div>`;
+}
+const CS = DATA.containStats || {};
+
+const RULES = DATA.prefixRules || {};
+document.getElementById("meta").innerHTML =
+  `<b>Classificação (somente pelo prefixo da Keynote):</b> ` +
+    Object.keys(RULES).map(p=>`${esc(p)}… → ${esc(RULES[p])}`).join(" · ") + ` · outros prefixos são ignorados · cada Keynote diferente ocupa um campo, em ordem (01, 02, …) · moldura de parede sem prefixo RT/RD vai para o Rodapé<br>` +
+  `<b>Fonte da Keynote:</b> ${esc(DATA.keynoteSource)}<br>` +
+  `<b>Contorno do ambiente:</b> ${esc(DATA.boundaryLocation)} · <b>Margem de busca do forro:</b> ${esc(String((DATA.searchAboveM!=null?DATA.searchAboveM:1).toFixed(2)).replace(".", ","))} m · <b>Separador:</b> "${esc(DATA.separator)}"<br>` +
+  `<b>Campos:</b> ` + GROUPS.map(g=>{ const miss = g.slots.filter(x=>!x.found).map(x=>x.name);
+    return `${esc(g.label)}: ${g.slots.length - miss.length}/${g.slots.length}` + (miss.length ? ` <span style="color:var(--mag)">(faltando: ${esc(miss.join(", "))})</span>` : ""); }).join(" · ") +
+  `<br><b>Ambiente por ponto:</b> ${fmt(CS.tested||0)} elementos testados · molduras de parede: ${fmt(CS.sweeps||0)} no modelo, ${fmt(CS.sweeps_in_rooms||0)} dentro de um ambiente · ${fmt(UN.length)} fora de qualquer ambiente` +
+  `<br><b>Arquivo de Keynotes:</b> ${Object.keys(KN).length ? fmt(Object.keys(KN).length)+" chaves carregadas" : "não carregado - as chaves não são validadas"}`;
+
+renderCards();
+renderTable();
+</script>
+</body>
+</html>
