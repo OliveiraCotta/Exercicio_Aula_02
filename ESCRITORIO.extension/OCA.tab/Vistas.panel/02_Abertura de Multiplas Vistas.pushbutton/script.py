@@ -47,6 +47,7 @@ from pyrevit import revit, DB, script, forms
 from oca_ui import build_xaml, alert_title
 from Autodesk.Revit.DB.Architecture import Room
 from Autodesk.Revit.UI.Selection import ISelectionFilter, ObjectType
+from Autodesk.Revit.Exceptions import OperationCanceledException
 
 ALERT_TITLE = alert_title(__title__)
 
@@ -148,20 +149,32 @@ def _unique(elements):
     return out
 
 
+PICK_PROMPT = (u"Abertura de Múltiplas Vistas: selecione os ambientes (um ou vários) e clique "
+               u"em Concluir na Barra de opções  ·  Esc cancela")
+
+
 def get_target_elements():
-    """Seleção atual filtrada; se vazia, pede para o usuário selecionar."""
+    """Seleção atual filtrada; se vazia, abre a seleção de ambientes no modelo."""
     current = list(revit.get_selection().elements)
     picked = [el for el in current if elem_cat_int(el) in ALLOWED_CATS]
     ignored = len(current) - len(picked)
-    if picked:
+    if picked:   # já havia ambientes selecionados: segue exatamente como antes
         return _unique(picked), ignored
+
+    # sem seleção prévia: abre direto a seleção múltipla (orientação na barra
+    # de status; Concluir na Barra de opções; Esc cancela) - igual ao 01
     try:
-        refs = uidoc.Selection.PickObjects(
-            ObjectType.Element, AllowedFilter(),
-            u"Selecione os ambientes e clique em Concluir")
-    except Exception:
-        script.exit()   # Esc
-    return _unique([doc.GetElement(r) for r in refs]), ignored
+        refs = uidoc.Selection.PickObjects(ObjectType.Element, AllowedFilter(), PICK_PROMPT)
+    except OperationCanceledException:
+        script.exit()   # Esc: encerra sem mensagem, sem transação, sem alterar o modelo
+    except Exception as exc:   # vista que não permite seleção (folha, tabela...)
+        forms.alert(u"Não foi possível selecionar ambientes na vista ativa.",
+                    sub_msg=u"Abra uma planta, corte ou elevação e tente de novo.\n\n{}"
+                    .format(to_unicode(exc)), title=ALERT_TITLE, exitscript=True)
+    elements = _unique([doc.GetElement(r) for r in refs])
+    if not elements:   # Concluir sem nenhum ambiente = cancelar, sem mensagem
+        script.exit()
+    return elements, ignored
 
 
 def elem_label(el):
@@ -574,9 +587,18 @@ def callout_type_items(parent):
     return items
 
 
+VIEW_TYPE_PT = {"FloorPlan": u"Planta de Piso", "CeilingPlan": u"Planta de Forro",
+                "EngineeringPlan": u"Planta Estrutural", "AreaPlan": u"Planta de Área",
+                "Section": u"Corte", "Elevation": u"Elevação", "Detail": u"Detalhe",
+                "ThreeD": u"3D", "DrawingSheet": u"Folha", "Schedule": u"Tabela",
+                "DraftingView": u"Vista de Desenho", "Legend": u"Legenda"}
+
+
 def view_type_label(view):
+    """Tipo da vista em português; nome interno da API como reserva."""
     try:
-        return to_unicode(view.ViewType.ToString())
+        key = to_unicode(view.ViewType.ToString())
+        return VIEW_TYPE_PT.get(key, key)
     except Exception:
         return u""
 
@@ -587,6 +609,7 @@ def view_type_label(view):
 # ------------------------------------------------------------------
 EN_TITLE_PARAM = u"Title on Sheet - English"
 ROOM_EN_PARAM = u"Room Name English"
+LEVEL_EN_PARAM = u"Level Name English"   # nome do nível no Title on Sheet - English
 EN_SEP = u" - "   # separador do complemento no título em inglês (hífen, como no PT)
 
 # (chave, VIEW NAME, Title on Sheet - English, leva complemento PAV./AMPLIAÇÃO)
@@ -609,6 +632,9 @@ SUFFIXES = ((FREE_SUFFIX, u"", u""),
             ("pav", u"PAV.", u"LEVEL"),
             ("amp", u"AMPLIAÇÃO", u"ENLARGED"))
 MANUAL_KEY = "manual"
+KEEP_NAME_KEY = "keep"   # só na chamada: nomes da vista ativa + " - CHAMADA n"
+KEEP_NAME_OPT = {"key": KEEP_NAME_KEY, "label": u"Manter nomenclatura atual da vista",
+                 "pt": u"", "en": u"", "suffix": False, "room": False}
 
 
 def room_info(room):
@@ -627,13 +653,16 @@ ROOM_PREFIX_LABEL = u"<Nº> - <AMBIENTE> - "
 
 # chamada numa elevação/corte: só o próprio título (+ versão por ambiente)
 SIMPLE_KINDS = {"elevation": "elevacao", "section": "corte"}
-MANUAL_OPT = {"key": MANUAL_KEY, "label": u"Sem nome, manual ou sequência",
+MANUAL_OPT = {"key": MANUAL_KEY, "label": u"Sem nomenclatura definida ou manual",
               "pt": u"", "en": u"", "suffix": False, "room": False}
 
 
-def name_options(target):
-    """Nome principal na ordem do padrão do escritório para o tipo de vista;
-    'Sem nome, manual ou sequência' no topo (igual ao 01)."""
+def name_options(target, room=None):
+    """A - Principal, na ordem do 01: 'Sem nomenclatura definida ou manual', as
+    versões 'Nº - AMBIENTE - ...' e depois os títulos genéricos. O rótulo usa o
+    marcador <Nº> - <AMBIENTE>; com UM ambiente selecionado (room), mostra o
+    número e o nome reais. Na criação, cada vista usa o seu próprio ambiente.
+    'Manter nomenclatura atual da vista' entra antes de tudo só na chamada."""
     if target in SIMPLE_KINDS:
         base = [t for t in VERTICAL_TITLES if t[0] == SIMPLE_KINDS[target]]
         room_base = base
@@ -641,12 +670,15 @@ def name_options(target):
         base, room_base = PLAN_TITLES, PLAN_TITLES[1:]   # cobertura não tem versão por ambiente
     else:
         base, room_base = VERTICAL_TITLES, VERTICAL_TITLES
+    label_prefix = ROOM_PREFIX_LABEL
+    if room is not None:
+        number, name, _en = room_info(room)
+        label_prefix = u"{} - {} - ".format(number, name)
     opts = [dict(MANUAL_OPT)]
+    opts.extend({"key": "room_" + key, "label": label_prefix + pt, "pt": pt, "en": en,
+                 "suffix": suf, "room": True} for key, pt, en, suf in room_base)
     opts.extend({"key": key, "label": pt, "pt": pt, "en": en, "suffix": suf, "room": False}
                 for key, pt, en, suf in base)
-    # depois dos simples, as versões "Nº - AMBIENTE - ..."
-    opts.extend({"key": "room_" + key, "label": ROOM_PREFIX_LABEL + pt, "pt": pt, "en": en,
-                 "suffix": suf, "room": True} for key, pt, en, suf in room_base)
     return opts
 
 
@@ -657,11 +689,26 @@ def level_text(level):
     return re.sub(u"^PAV\\.?\\s*", u"", name)   # evita "PAV. PAV. TÉRREO"
 
 
+def level_text_en(level):
+    """Nome do nível só para o Title on Sheet - English: parâmetro compartilhado
+    'Level Name English' do Level; vazio ou inexistente = nome do nível (level_text).
+    level_text continua sendo o nome em português (Title on Sheet, View Name, combo)."""
+    if level is None:
+        return u""
+    try:
+        p = level.LookupParameter(LEVEL_EN_PARAM)
+        value = to_unicode(p.AsString()).strip() if p is not None and p.HasValue else u""
+    except Exception:
+        value = u""
+    return value.upper() if value else level_text(level)
+
+
 def suffix_labels(level):
-    """Itens do combo Complemento, já com o nome do nível."""
+    """Itens do combo Complemento, já com o nome do nível (sem hífen inicial:
+    o ' - ' só entra no nome composto)."""
     lv = level_text(level)
-    return [u"Sem complemento, manual ou sequência" if key == FREE_SUFFIX
-            else u" ".join(x for x in (u"-", pt, lv) if x)
+    return [u"Sem complemento ou manual" if key == FREE_SUFFIX
+            else u" ".join(x for x in (pt, lv) if x)
             for key, pt, _en in SUFFIXES]
 
 
@@ -691,10 +738,11 @@ def compose_names(opt, suffix_key, level, room, manual, suffix_text=u"", suffix_
         pt = _join(pt, free_suffix(suffix_text), u" - ")
         en = _join(en, free_suffix(suffix_text_en), EN_SEP)
     else:
-        lv = level_text(level)
+        lv = level_text(level)         # português: nome do nível no Revit
+        lv_en = level_text_en(level)   # inglês: 'Level Name English' (ou o nome do nível)
         _k, suf_pt, suf_en = next(s for s in SUFFIXES if s[0] == suffix_key)
         pt += u" - " + u" ".join(x for x in (suf_pt, lv) if x)
-        en += EN_SEP + u" ".join(x for x in (suf_en, lv) if x)
+        en += EN_SEP + u" ".join(x for x in (suf_en, lv_en) if x)
     if opt["room"] and room is not None:
         number, name, name_en = room_info(room)
         pt = u"{} - {} - {}".format(number, name, pt)
@@ -752,11 +800,35 @@ def letter_names(prefix, title, en):
             return vname, t, (en + EN_SEP + letter) if en else en
 
 
-def plan_names(opt, suffix_key, level, room, prefix, texts, simple_kind):
+def view_names(view):
+    """(View Name, Title on Sheet, Title on Sheet - English) atuais da vista."""
+    def text(p):
+        return to_unicode(p.AsString()).strip() if p is not None and p.HasValue else u""
+    return (to_unicode(view.Name), text(view.get_Parameter(BIP.VIEW_DESCRIPTION)),
+            text(view.LookupParameter(EN_TITLE_PARAM)))
+
+
+def keep_callout_names(parent_names):
+    """Chamada com 'Manter nomenclatura atual da vista' (igual ao 01): nomes da
+    vista ativa + ' - CHAMADA n' (EN ' - CALLOUT n'); n = primeiro com View Name
+    livre - a cada ambiente criado o número seguinte. Título vazio fica vazio."""
+    vname, title, en = parent_names
+    n = 1
+    while clean_name(u"{} - CHAMADA {}".format(vname, n)) in VIEW_NAMES:
+        n += 1
+    return (clean_name(u"{} - CHAMADA {}".format(vname, n)),
+            u"{} - CHAMADA {}".format(title, n) if title else u"",
+            u"{} - CALLOUT {}".format(en, n) if en else u"")
+
+
+def plan_names(opt, suffix_key, level, room, prefix, texts, simple_kind, parent_names=None):
     """(View Name, Title on Sheet, English) de uma planta/chamada. texts =
     (manual, manual_en, complemento, complemento_en). Chamada em elevação/
     corte com o título simples e sem complemento recebe a próxima letra livre;
-    a versão por ambiente já é única e fica sem letra."""
+    a versão por ambiente já é única e fica sem letra. 'Manter nomenclatura
+    atual da vista' (só chamada): nomes da vista ativa + ' - CHAMADA n'."""
+    if opt["key"] == KEEP_NAME_KEY:
+        return keep_callout_names(parent_names)
     manual, manual_en, suf, suf_en = texts
     title, en = compose_names(opt, suffix_key, level, room, manual, suf, suf_en, manual_en)
     if (simple_kind and suffix_key == FREE_SUFFIX and opt["key"] != MANUAL_KEY
@@ -808,7 +880,7 @@ def apply_title_on_sheet(view, title, notes):
         return
     p = view.get_Parameter(BIP.VIEW_DESCRIPTION)
     if p is None or p.IsReadOnly:
-        notes.append(u"Parâmetro 'Title on Sheet' indisponível na vista; título não gravado.")
+        notes.append(u"Título na folha (Title on Sheet) indisponível na vista; título não gravado.")
     else:
         p.Set(title)
 
@@ -912,14 +984,14 @@ class ProjectFolders(object):
         p = view.LookupParameter(FOLDER_PARAM)
         got = to_unicode(p.AsString()).strip() if p is not None and p.HasValue else u""
         if got != name:
-            notes.append(u"Pasta: ficou '{}' em vez de '{}' (controlada pelo View Template)."
+            notes.append(u"Pasta: ficou '{}' em vez de '{}' (definida pelo Modelo de Vista)."
                          .format(got, name))
 
 
 # ------------------------------------------------------------------
 # 6c. View Template
 # ------------------------------------------------------------------
-NO_TEMPLATE = u"Sem View Template"
+NO_TEMPLATE = u"Sem Modelo de Vista"
 VIEW_TEMPLATES = sorted((v for v in DB.FilteredElementCollector(doc).OfClass(DB.View)
                          if v.IsTemplate),
                         key=lambda v: natural_key(v.Name))
@@ -968,7 +1040,7 @@ def template_items(vt):
 
 def apply_template(view, template, notes):
     if not view.IsValidViewTemplate(template["id"]):
-        notes.append(u"View Template '{}' não é compatível com esta vista; criada sem template."
+        notes.append(u"Modelo de Vista '{}' não é compatível com esta vista; criada sem Modelo de Vista."
                      .format(template["label"]))
         return
     view.ViewTemplateId = template["id"]
@@ -1314,9 +1386,9 @@ FOLDER_BLOCK = u"""
               <ComboBox x:Name="@K@_list" Margin="22,0,0,8"/>
               <RadioButton x:Name="@K@_f_new" GroupName="@K@_folder" Content="Nova pasta"/>
               <TextBox x:Name="@K@_new" Margin="22,0,0,8"
-                       ToolTip="Ex.: D003_DETALHAMENTO - o texto antes do 1º '_' vira o prefixo do View Name"/>
+                       ToolTip="Ex.: D003_DETALHAMENTO - o texto antes do 1º '_' vira o prefixo do nome da vista (View Name)"/>
               <RadioButton x:Name="@K@_f_none" GroupName="@K@_folder"
-                           Content="Não definir pasta (View Name sem prefixo)"/>
+                           Content="Não definir pasta (nome da vista sem prefixo)"/>
             </StackPanel>
             <Border Style="{StaticResource oca.Msg.Warn}" Visibility="{Binding Visibility, ElementName=@K@_lock}">
               <TextBlock x:Name="@K@_lock" Style="{StaticResource oca.MsgText}"/>
@@ -1403,12 +1475,12 @@ CROP_BODY = u"""
             <ComboBox x:Name="template"/>
             <TextBlock x:Name="etemplate_lbl" Text="Elevações" Style="{StaticResource FieldLabel}"/>
             <ComboBox x:Name="etemplate"/>
-            <TextBlock Text="Só aparecem os templates que o Revit aceita para cada tipo de vista."
+            <TextBlock Text="Só aparecem os Modelos de Vista que o Revit aceita para cada tipo de vista."
                        Style="{StaticResource oca.Hint}" Margin="0,6,0,0"/>
           </StackPanel>
         </HeaderedContentControl>
 
-        <HeaderedContentControl Header="DESTINO DAS VISTAS  ·  NAVEGADOR DE PROJETO" Style="{StaticResource oca.Section}">
+        <HeaderedContentControl Header="DESTINO DAS VISTAS  ·  NAVEGADOR DE PROJETO (PROJECT BROWSER)" Style="{StaticResource oca.Section}">
           <StackPanel>
             <TextBlock x:Name="folder_src" Style="{StaticResource oca.Hint}" Margin="0,0,0,6"/>
             <Border Style="{StaticResource oca.Msg.Warn}" Margin="0,0,0,8"
@@ -1427,23 +1499,23 @@ CROP_BODY = u"""
       <StackPanel Grid.Column="4">
         <HeaderedContentControl Header="NOMENCLATURA" Style="{StaticResource oca.Section}">
           <StackPanel x:Name="name_panel">
-            <TextBlock Text="Plantas: vale para View Name, Title on Sheet e Title on Sheet - English. Elevações: Nº - AMBIENTE - ELEVAÇÃO (automático)."
+            <TextBlock Text="Plantas: vale para o nome da vista (View Name), o título na folha (Title on Sheet) e o título em inglês (Title on Sheet - English). Elevações: Nº - AMBIENTE - ELEVAÇÃO 01..04 (automático)."
                        Style="{StaticResource oca.Hint}"/>
             <TextBlock Text="A - Principal" Style="{StaticResource FieldLabel}"/>
             <ComboBox x:Name="vname"/>
             <TextBlock x:Name="manual_lbl" Style="{StaticResource FieldLabel}"
-                       Text="Nome manual - View Name e Title on Sheet (vazio = mantém o nome do Revit;  # = sequência 01, 02...)"/>
+                       Text="Nome manual - Nome da vista (View Name) e Título na folha (Title on Sheet). Vazio = mantém o nome do Revit;  # = sequência 01, 02..."/>
             <TextBox x:Name="manual"/>
             <TextBlock x:Name="manual_en_lbl" Style="{StaticResource FieldLabel}"
-                       Text="Nome manual - Title on Sheet - English (vazio = sem título em inglês)"/>
+                       Text="Nome manual - Título em inglês (Title on Sheet - English). Vazio = sem título em inglês."/>
             <TextBox x:Name="manual_en"/>
             <TextBlock x:Name="suffix_lbl" Text="B - Complemento" Style="{StaticResource FieldLabel}"/>
             <ComboBox x:Name="vsuffix"/>
             <TextBlock x:Name="suffix_text_lbl" Style="{StaticResource FieldLabel}"
-                       Text="Complemento manual - View Name e Title on Sheet (vazio = sem complemento;  # = sequência 01, 02...)"/>
+                       Text="Complemento manual - Nome da vista (View Name) e Título na folha (Title on Sheet). Vazio = sem complemento;  # = sequência 01, 02..."/>
             <TextBox x:Name="suffix_text"/>
             <TextBlock x:Name="suffix_text_en_lbl" Style="{StaticResource FieldLabel}"
-                       Text="Complemento manual - Title on Sheet - English (vazio = sem complemento)"/>
+                       Text="Complemento manual - Título em inglês (Title on Sheet - English). Vazio = sem complemento."/>
             <TextBox x:Name="suffix_text_en"/>
           </StackPanel>
         </HeaderedContentControl>
@@ -1454,24 +1526,24 @@ CROP_BODY = u"""
               <StackPanel>
                 <TextBlock x:Name="pv_lbl" Text="PRÉ-VISUALIZAÇÃO" Style="{StaticResource oca.Caption}" Margin="0,0,0,8"/>
                 <StackPanel x:Name="pv_plan">
-                  <TextBlock Text="PLANTA  ·  VIEW NAME  (prefixo da pasta + _ + nome)" Style="{StaticResource oca.Caption}"/>
+                  <TextBlock Text="PLANTA  ·  NOME DA VISTA (VIEW NAME)  ·  prefixo da pasta + _ + nome" Style="{StaticResource oca.Caption}"/>
                   <TextBlock x:Name="pv_name" Style="{StaticResource oca.Value}" Margin="0,2,0,8"/>
-                  <TextBlock Text="TITLE ON SHEET" Style="{StaticResource oca.Caption}"/>
+                  <TextBlock Text="TÍTULO NA FOLHA (TITLE ON SHEET)" Style="{StaticResource oca.Caption}"/>
                   <TextBlock x:Name="pv_title" Style="{StaticResource oca.Value}" Margin="0,2,0,8"/>
-                  <TextBlock Text="TITLE ON SHEET - ENGLISH  (automático)" Style="{StaticResource oca.Caption}"/>
+                  <TextBlock Text="TÍTULO EM INGLÊS (TITLE ON SHEET - ENGLISH)  ·  automático" Style="{StaticResource oca.Caption}"/>
                   <TextBlock x:Name="pv_en" Style="{StaticResource oca.Value}" Margin="0,2,0,8"/>
                 </StackPanel>
                 <StackPanel x:Name="pv_elev">
-                  <TextBlock x:Name="pv_e_lbl" Text="ELEVAÇÃO  ·  VIEW NAME" Style="{StaticResource oca.Caption}"/>
+                  <TextBlock x:Name="pv_e_lbl" Text="ELEVAÇÃO  ·  NOME DA VISTA (VIEW NAME)" Style="{StaticResource oca.Caption}"/>
                   <TextBlock x:Name="pv_e_name" Style="{StaticResource oca.Value}" Margin="0,2,0,8"/>
-                  <TextBlock Text="TITLE ON SHEET" Style="{StaticResource oca.Caption}"/>
+                  <TextBlock Text="TÍTULO NA FOLHA (TITLE ON SHEET)" Style="{StaticResource oca.Caption}"/>
                   <TextBlock x:Name="pv_e_title" Style="{StaticResource oca.Value}" Margin="0,2,0,8"/>
-                  <TextBlock Text="TITLE ON SHEET - ENGLISH  (automático)" Style="{StaticResource oca.Caption}"/>
+                  <TextBlock Text="TÍTULO EM INGLÊS (TITLE ON SHEET - ENGLISH)  ·  automático" Style="{StaticResource oca.Caption}"/>
                   <TextBlock x:Name="pv_e_en" Style="{StaticResource oca.Value}" Margin="0,2,0,8"/>
                 </StackPanel>
                 <TextBlock Text="PASTA DE DESTINO" Style="{StaticResource oca.Caption}"/>
                 <TextBlock x:Name="pv_folder" Style="{StaticResource oca.Value}" Margin="0,2,0,8"/>
-                <TextBlock Text="VIEW TEMPLATE" Style="{StaticResource oca.Caption}"/>
+                <TextBlock Text="MODELO DE VISTA (VIEW TEMPLATE)" Style="{StaticResource oca.Caption}"/>
                 <TextBlock x:Name="pv_template" Style="{StaticResource oca.Value}" Margin="0,2,0,0"/>
               </StackPanel>
             </Border>
@@ -1499,7 +1571,9 @@ CROP_FOOTER = u"""
   <Button x:Name="ok" Content="Aplicar" Style="{StaticResource oca.Primary}"/>
   <Button x:Name="cancel" Content="Cancelar" Margin="8,0,0,0"/>"""
 
-CROP_XAML = build_xaml(title=__title__, subtitle=__doc__, body=CROP_BODY,
+# subtítulo da janela = tooltip (__doc__, que não muda), com o termo em português
+WINDOW_SUBTITLE = __doc__.replace(u"View Template", u"Modelo de Vista (View Template)")
+CROP_XAML = build_xaml(title=__title__, subtitle=WINDOW_SUBTITLE, body=CROP_BODY,
                        footer_right=CROP_FOOTER, size="M", width=1240)
 
 FOLDER_MODES = ("existing", "new", "none")
@@ -1564,11 +1638,10 @@ class FolderPicker(object):
         if not c["locked"]:
             self.list.IsEnabled = c["mode"] == "existing"
             self.new.IsEnabled = c["mode"] == "new"
-        self.lock_txt.Text = (u"Travado: o View Template '{}' define a pasta ('{}' = '{}')."
-                              .format(template["label"], FOLDER_PARAM, c["name"] or u"vazio → ???")
-                              if c["locked"] else u"")
+        self.lock_txt.Text = (u"Atenção, o Modelo de Vista (View Template) selecionado já "
+                              u"prevê uma pasta no navegador de projeto." if c["locked"] else u"")
         prefix = name_prefix(c)
-        self.prefix_txt.Text = u"Prefixo do View Name:  {}".format(prefix or u"(nenhum)")
+        self.prefix_txt.Text = u"Prefixo do nome da vista:  {}".format(prefix or u"(nenhum)")
         return c
 
     def saved_values(self):
@@ -1688,7 +1761,7 @@ class CropWindow(forms.WPFWindow):
             box.Checked += self._on_name
             box.Unchecked += self._on_name
         if not self.ctx["elev_templates"]:
-            self.etemplate_lbl.Text = u"Elevações  (nenhum template de elevação/corte no modelo)"
+            self.etemplate_lbl.Text = u"Elevações  (nenhum Modelo de Vista de elevação/corte no modelo)"
         etpl = [NO_TEMPLATE] + [t["label"] for t in self.ctx["elev_templates"]]
         self.etemplate.ItemsSource = etpl
         saved_t = self._saved["etemplate"]
@@ -1803,10 +1876,16 @@ class CropWindow(forms.WPFWindow):
             return self._names[idx]
         return next((o for o in self._names if o["key"] == MANUAL_KEY), self._names[-1])
 
+    @property
+    def keep_name(self):
+        """'Manter nomenclatura atual da vista' (só na chamada)."""
+        return self.name_opt["key"] == KEEP_NAME_KEY
+
     def name_texts(self):
         """(manual, manual_en, complemento, complemento_en) digitados; os
-        complementos só valem com o combo em 'Sem complemento, manual ou sequência'."""
-        on = self.suffix_key == FREE_SUFFIX
+        complementos só valem com o combo em 'Sem complemento ou manual' e
+        nunca com 'Manter nomenclatura atual da vista'."""
+        on = self.suffix_key == FREE_SUFFIX and not self.keep_name
         return (to_unicode(self.manual.Text), to_unicode(self.manual_en.Text),
                 to_unicode(self.suffix_text.Text) if on else u"",
                 to_unicode(self.suffix_text_en.Text) if on else u"")
@@ -1820,7 +1899,7 @@ class CropWindow(forms.WPFWindow):
         """Prévia com o 1º ambiente: (View Name, Title on Sheet, English)."""
         return plan_names(self.name_opt, self.suffix_key, self.ctx["level"][self.mode],
                           self.ctx["room"], name_prefix(folder), self.name_texts(),
-                          self.simple_kind)
+                          self.simple_kind, self.ctx["active_names"])
 
     def _sync_suffix(self, opt):
         """Todas as opções do complemento valem para qualquer A - Principal
@@ -1854,8 +1933,11 @@ class CropWindow(forms.WPFWindow):
 
         opt = self.name_opt
         is_manual = opt["key"] == MANUAL_KEY
+        keep = self.keep_name   # 'Manter nomenclatura atual': B - Complemento desativado
         self._sync_suffix(opt)
-        free = self.suffix_key == FREE_SUFFIX
+        self.vsuffix.IsEnabled = not keep
+        self.suffix_lbl.Opacity = 0.4 if keep else 1.0
+        free = self.suffix_key == FREE_SUFFIX and not keep
         for ctl in (self.suffix_text, self.suffix_text_en):
             ctl.IsEnabled = free
         for lbl in (self.suffix_text_lbl, self.suffix_text_en_lbl):
@@ -1878,11 +1960,11 @@ class CropWindow(forms.WPFWindow):
         if dirs:
             e_name, e_title, e_en = elevation_names(self.ctx["room"], dirs[0], name_prefix(e_fold))
             others = [u"{:02d}".format(ELEV_NUM[k]) for k in dirs[1:]]
-            self.pv_e_lbl.Text = (u"{}  ·  VIEW NAME".format(elev_tag(dirs[0]))
+            self.pv_e_lbl.Text = (u"{}  ·  NOME DA VISTA (VIEW NAME)".format(elev_tag(dirs[0]))
                                   + (u"   (+ {})".format(u", ".join(others)) if others else u""))
         else:
             e_name = e_title = e_en = u"—"
-            self.pv_e_lbl.Text = u"ELEVAÇÃO  ·  VIEW NAME"
+            self.pv_e_lbl.Text = u"ELEVAÇÃO  ·  NOME DA VISTA (VIEW NAME)"
         self.pv_e_name.Text, self.pv_e_title.Text, self.pv_e_en.Text = e_name, e_title, e_en
 
         folders, tpls = [], []
@@ -1890,7 +1972,8 @@ class CropWindow(forms.WPFWindow):
                                      (elev, u"Elevações", e_fold, e_tpl)):
             if on:
                 folders.append(u"{}: {}".format(label, fold["name"] or (
-                    u"??? (template)" if fold["locked"] else u"(não definida pelo comando)")))
+                    u"(definida pelo Modelo de Vista)" if fold["locked"]
+                    else u"(não definida pelo comando)")))
                 tpls.append(u"{}: {}".format(label, tpl["label"] if tpl else NO_TEMPLATE))
         self.pv_folder.Text = u"\n".join(folders)
         self.pv_template.Text = u"\n".join(tpls)
@@ -1904,14 +1987,15 @@ class CropWindow(forms.WPFWindow):
             if not on or not fold["name"]:
                 continue
             if fold["mode"] != "none" and not folder_prefix(fold["name"]):
-                hints.append(u"{}: a pasta '{}' não tem '_' - View Name sem prefixo."
+                hints.append(u"{}: a pasta '{}' não tem '_' - nome da vista sem prefixo."
                              .format(label, fold["name"]))
             if fold["mode"] == "new" and fold["name"] in entries:
                 hints.append(u"{}: a pasta '{}' já existe - as vistas vão para ela."
                              .format(label, fold["name"]))
         opt = self.name_opt
         letters = self.simple_kind and opt["key"] != MANUAL_KEY   # recebem A, B...
-        if self.do_plans and self.ctx["count"] > 1 and not opt["room"] and not letters:
+        unique = opt["room"] or letters or opt["key"] == KEEP_NAME_KEY   # CHAMADA 1, 2...
+        if self.do_plans and self.ctx["count"] > 1 and not unique:
             hints.append(u"Nomes sem <Nº> - <AMBIENTE> se repetem entre as vistas e recebem "
                          u"(2), (3)...; no nome manual, use # para numerar.")
         return hints
@@ -2029,10 +2113,16 @@ if folders.available and not folders.entries:
                       .format(folders.param_name))
 
 active_level = getattr(active_view, "GenLevel", None)
+parent_names = view_names(active_view)   # 'Manter nomenclatura atual' na chamada
 rooms_preview = u", ".join(g.label for g in geoms[:6]) + (u"..." if len(geoms) > 6 else u"")
 dialog_ctx = {
     "types": {"plans": plan_items, "callout": callout_items},
-    "names": dict((m, name_options(target_kind(m))) for m in MODES),
+    # A - Principal: 'Manter nomenclatura atual da vista' só na chamada (no topo);
+    # com UM ambiente, o rótulo mostra o número e o nome reais
+    "names": dict((m, ([dict(KEEP_NAME_OPT)] if m == "callout" else [])
+                   + name_options(target_kind(m), geoms[0].el if len(geoms) == 1 else None))
+                  for m in MODES),
+    "active_names": parent_names,
     "level": {"plans": room_levels[0], "callout": active_level},
     "room": geoms[0].el,
     "example": geoms[0].label,
@@ -2117,7 +2207,7 @@ e_prefix = name_prefix(e_folder)
 
 
 def folder_to_write(fold):
-    """Pasta gravada pelo comando; travada = o View Template já define."""
+    """Pasta gravada pelo comando; travada = o Modelo de Vista já define."""
     return u"" if fold["locked"] else fold["name"]
 template = opts["template"]
 elev_type = opts["elev_type"]
@@ -2152,7 +2242,7 @@ def create_room_view(g, level):
     view.ViewTemplateId = INVALID_ID
 
     vname, title, en = plan_names(name_opt, opts["suffix"], name_level, g.el, prefix,
-                                  opts["texts"], opts["simple_kind"])
+                                  opts["texts"], opts["simple_kind"], parent_names)
     apply_names(view, vname, en, room_notes)      # View Name (com prefixo) + English
     apply_title_on_sheet(view, title, room_notes)  # Title on Sheet (sem prefixo)
     ProjectFolders.apply(view, folder_to_write(folder), room_notes)
