@@ -2376,10 +2376,8 @@ XAML = u"""
               ToolTip="Abre o relatório com todos os ambientes, filtros e o detalhe de onde veio cada Keynote."/>
       <Button x:Name="btn_excel" Content="Exportar Excel" MinWidth="120" ToolTipService.ShowDuration="20000"
               ToolTip="Salva o memorial de acabamentos em Excel (aba Ambientes: Número, Nome, Pavimento, Parede, Piso, Rodapé, Soleira, Teto e Rodateto) com os valores que estão gravados nos ambientes. Mostra onde o arquivo será salvo antes de gravar."/>
-      <Button x:Name="btn_finish" Content="Finalizar" MinWidth="110"
+      <Button x:Name="btn_finish" Content="Finalizar" Margin="0" MinWidth="110"
               ToolTip="Encerra o comando e fecha a janela."/>
-      <Button x:Name="btn_cancel" Content="Cancelar" Margin="0" MinWidth="110"
-              ToolTip="Fecha a janela sem gravar nada."/>
     </StackPanel>
   </Grid>
 </Window>
@@ -2439,7 +2437,6 @@ class RoomFinishWindow(forms.WPFWindow):
         self.btn_collapse.Click += self.on_collapse
         self.btn_update.Click += self.on_update
         self.btn_report.Click += self.on_report
-        self.btn_cancel.Click += self.on_cancel
         self.btn_finish.Click += self.on_finish
         self.btn_excel.Click += self.on_export_excel
         self.tb_margin.TextChanged += self.on_settings_changed
@@ -2906,9 +2903,6 @@ u"com tipo trocado, {} erro(s).".format(
             self._write_report()
         if not open_in_browser(REPORT_PATH):
             forms.alert(u"O relatório foi salvo, mas não abriu automaticamente:\n\n{}".format(REPORT_PATH))
-
-    def on_cancel(self, sender, args):
-        self.Close()
 
     def on_finish(self, sender, args):
         """Ends the command - no question, no message."""
