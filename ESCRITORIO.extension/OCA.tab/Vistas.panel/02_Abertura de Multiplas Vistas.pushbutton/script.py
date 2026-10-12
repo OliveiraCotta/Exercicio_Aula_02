@@ -36,7 +36,7 @@
 # acentos no IronPython e deixa o botão sem tooltip. O tooltip é só __doc__.
 
 __title__ = u"Abertura de\nMúltiplas Vistas"
-__doc__ = u"""Cria plantas e/ou elevações (marcador nativo do Revit) recortadas para cada ambiente selecionado, já com nome, pasta no Navegador de Projeto e View Template.
+__doc__ = u"""Cria plantas e/ou elevações (marcador nativo do Revit) recortadas para cada ambiente selecionado, já com nome, pasta no Navegador de Projeto e Modelo de Vista (View Template).
 
 Selecione os ambientes e clique no botão."""
 
@@ -44,12 +44,11 @@ import re
 import math
 
 from pyrevit import revit, DB, script, forms
-from oca_ui import build_xaml, alert_title
 from Autodesk.Revit.DB.Architecture import Room
 from Autodesk.Revit.UI.Selection import ISelectionFilter, ObjectType
 from Autodesk.Revit.Exceptions import OperationCanceledException
 
-ALERT_TITLE = alert_title(__title__)
+ALERT_TITLE = u"Abertura de Múltiplas Vistas"   # título de todas as mensagens do comando
 
 doc = revit.doc
 uidoc = revit.uidoc
@@ -161,8 +160,8 @@ def get_target_elements():
     if picked:   # já havia ambientes selecionados: segue exatamente como antes
         return _unique(picked), ignored
 
-    # sem seleção prévia: abre direto a seleção múltipla (orientação na barra
-    # de status; Concluir na Barra de opções; Esc cancela) - igual ao 01
+    # sem seleção prévia: abre direto a seleção múltipla nativa (orientação na
+    # barra de status; Concluir na Barra de opções; Esc cancela)
     try:
         refs = uidoc.Selection.PickObjects(ObjectType.Element, AllowedFilter(), PICK_PROMPT)
     except OperationCanceledException:
@@ -609,7 +608,7 @@ def view_type_label(view):
 # ------------------------------------------------------------------
 EN_TITLE_PARAM = u"Title on Sheet - English"
 ROOM_EN_PARAM = u"Room Name English"
-LEVEL_EN_PARAM = u"Level Name English"   # nome do nível no Title on Sheet - English
+LEVEL_EN_PARAM = u"Level Name English"   # nome do nível só no Title on Sheet - English
 EN_SEP = u" - "   # separador do complemento no título em inglês (hífen, como no PT)
 
 # (chave, VIEW NAME, Title on Sheet - English, leva complemento PAV./AMPLIAÇÃO)
@@ -647,22 +646,18 @@ def room_info(room):
     return number, name, name_en
 
 
-# vários ambientes: o rótulo mostra o marcador; o nome real sai de cada ambiente
-ROOM_PREFIX_LABEL = u"<Nº> - <AMBIENTE> - "
-
-
 # chamada numa elevação/corte: só o próprio título (+ versão por ambiente)
 SIMPLE_KINDS = {"elevation": "elevacao", "section": "corte"}
 MANUAL_OPT = {"key": MANUAL_KEY, "label": u"Sem nomenclatura definida ou manual",
               "pt": u"", "en": u"", "suffix": False, "room": False}
 
 
-def name_options(target, room=None):
-    """A - Principal, na ordem do 01: 'Sem nomenclatura definida ou manual', as
-    versões 'Nº - AMBIENTE - ...' e depois os títulos genéricos. O rótulo usa o
-    marcador <Nº> - <AMBIENTE>; com UM ambiente selecionado (room), mostra o
-    número e o nome reais. Na criação, cada vista usa o seu próprio ambiente.
-    'Manter nomenclatura atual da vista' entra antes de tudo só na chamada."""
+def name_options(target, room, others=0):
+    """A - Principal: 'Sem nomenclatura definida ou manual', as versões por
+    ambiente e depois os títulos genéricos ('Manter nomenclatura atual da
+    vista' entra antes de tudo, só na chamada - ver dialog_ctx). O rótulo das
+    versões por ambiente usa o número e o nome reais do 1º ambiente da lista
+    (+ quantos outros houver); na criação, cada vista usa o seu ambiente."""
     if target in SIMPLE_KINDS:
         base = [t for t in VERTICAL_TITLES if t[0] == SIMPLE_KINDS[target]]
         room_base = base
@@ -670,13 +665,12 @@ def name_options(target, room=None):
         base, room_base = PLAN_TITLES, PLAN_TITLES[1:]   # cobertura não tem versão por ambiente
     else:
         base, room_base = VERTICAL_TITLES, VERTICAL_TITLES
-    label_prefix = ROOM_PREFIX_LABEL
-    if room is not None:
-        number, name, _en = room_info(room)
-        label_prefix = u"{} - {} - ".format(number, name)
+    number, name, _en = room_info(room)
+    more = u"   (+ {} ambiente{})".format(others, u"s" if others > 1 else u"") if others else u""
     opts = [dict(MANUAL_OPT)]
-    opts.extend({"key": "room_" + key, "label": label_prefix + pt, "pt": pt, "en": en,
-                 "suffix": suf, "room": True} for key, pt, en, suf in room_base)
+    opts.extend({"key": "room_" + key, "label": u"{} - {} - {}{}".format(number, name, pt, more),
+                 "pt": pt, "en": en, "suffix": suf, "room": True}
+                for key, pt, en, suf in room_base)
     opts.extend({"key": key, "label": pt, "pt": pt, "en": en, "suffix": suf, "room": False}
                 for key, pt, en, suf in base)
     return opts
@@ -690,9 +684,10 @@ def level_text(level):
 
 
 def level_text_en(level):
-    """Nome do nível só para o Title on Sheet - English: parâmetro compartilhado
-    'Level Name English' do Level; vazio ou inexistente = nome do nível (level_text).
-    level_text continua sendo o nome em português (Title on Sheet, View Name, combo)."""
+    """Nome do nível SÓ para o Title on Sheet - English: parâmetro compartilhado
+    'Level Name English' do Level; vazio ou inexistente = nome do nível do Revit
+    (level_text). level_text continua sendo o nome em português (Title on
+    Sheet, View Name, combo)."""
     if level is None:
         return u""
     try:
@@ -700,7 +695,7 @@ def level_text_en(level):
         value = to_unicode(p.AsString()).strip() if p is not None and p.HasValue else u""
     except Exception:
         value = u""
-    return value.upper() if value else level_text(level)
+    return u" ".join(value.upper().split()) if value else level_text(level)
 
 
 def suffix_labels(level):
@@ -809,9 +804,9 @@ def view_names(view):
 
 
 def keep_callout_names(parent_names):
-    """Chamada com 'Manter nomenclatura atual da vista' (igual ao 01): nomes da
-    vista ativa + ' - CHAMADA n' (EN ' - CALLOUT n'); n = primeiro com View Name
-    livre - a cada ambiente criado o número seguinte. Título vazio fica vazio."""
+    """Chamada com 'Manter nomenclatura atual da vista': nomes da vista ativa +
+    ' - CHAMADA n' (EN ' - CALLOUT n'); n = primeiro com View Name livre - a
+    cada ambiente o número seguinte. Título vazio na vista ativa fica vazio."""
     vname, title, en = parent_names
     n = 1
     while clean_name(u"{} - CHAMADA {}".format(vname, n)) in VIEW_NAMES:
@@ -1375,206 +1370,244 @@ def room_sort_key(g):
 
 
 # ------------------------------------------------------------------
-# 8. Diálogo (padrão visual OCA - lib/oca_ui; três colunas para caber na tela)
+# 8. Diálogo (mesmo tema dos outros botões; três colunas para caber na tela)
 # ------------------------------------------------------------------
 # bloco de destino (pasta) repetido para plantas e elevações: @K@ = prefixo
 # dos nomes dos controles, @T@ = título do bloco
 FOLDER_BLOCK = u"""
-            <TextBlock Text="@T@" FontWeight="SemiBold" Margin="0,4,0,6"/>
+            <TextBlock Text="@T@" FontWeight="SemiBold" Margin="0,10,0,0"/>
             <StackPanel x:Name="@K@_box">
               <RadioButton x:Name="@K@_f_exist" GroupName="@K@_folder" Content="Pasta existente"/>
-              <ComboBox x:Name="@K@_list" Margin="22,0,0,8"/>
-              <RadioButton x:Name="@K@_f_new" GroupName="@K@_folder" Content="Nova pasta"/>
-              <TextBox x:Name="@K@_new" Margin="22,0,0,8"
+              <ComboBox x:Name="@K@_list" Margin="20,4,0,0"/>
+              <RadioButton x:Name="@K@_f_new" GroupName="@K@_folder" Content="Nova pasta"
+                           Margin="0,8,0,0"/>
+              <TextBox x:Name="@K@_new" Margin="20,4,0,0"
                        ToolTip="Ex.: D003_DETALHAMENTO - o texto antes do 1º '_' vira o prefixo do nome da vista (View Name)"/>
               <RadioButton x:Name="@K@_f_none" GroupName="@K@_folder"
-                           Content="Não definir pasta (nome da vista sem prefixo)"/>
+                           Content="Não definir pasta (nome da vista sem prefixo)" Margin="0,8,0,0"/>
             </StackPanel>
-            <Border Style="{StaticResource oca.Msg.Warn}" Visibility="{Binding Visibility, ElementName=@K@_lock}">
-              <TextBlock x:Name="@K@_lock" Style="{StaticResource oca.MsgText}"/>
-            </Border>
-            <TextBlock x:Name="@K@_prefix" Style="{StaticResource oca.Hint}" Foreground="{StaticResource oca.Ink}"
-                       Margin="0,8,0,12"/>
+            <TextBlock x:Name="@K@_lock" TextWrapping="Wrap" FontSize="11"
+                       Foreground="#FFB454" Margin="0,6,0,0"/>
+            <TextBlock x:Name="@K@_prefix" FontSize="11" Margin="0,6,0,0"/>
 """
 
-CROP_BODY = u"""
+CROP_XAML = u"""
+<Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Abertura de Múltiplas Vistas" Height="Auto" Width="1240"
+        SizeToContent="Height" WindowStartupLocation="CenterScreen"
+        ResizeMode="NoResize" Background="#0E1526">
+  <Window.Resources>
+    <Style TargetType="TextBlock">
+      <Setter Property="Foreground" Value="#CFE3FF"/>
+      <Setter Property="FontFamily" Value="Segoe UI"/>
+      <Setter Property="Margin" Value="0,10,0,3"/>
+    </Style>
+    <Style TargetType="ComboBox">
+      <Setter Property="Height" Value="26"/>
+      <Setter Property="Padding" Value="4,2,4,2"/>
+    </Style>
+    <Style TargetType="TextBox">
+      <Setter Property="Height" Value="26"/>
+      <Setter Property="Padding" Value="4,3,4,2"/>
+    </Style>
+    <Style TargetType="RadioButton">
+      <Setter Property="Foreground" Value="#CFE3FF"/>
+      <Setter Property="FontFamily" Value="Segoe UI"/>
+      <Setter Property="Margin" Value="0,5,0,0"/>
+    </Style>
+    <Style TargetType="CheckBox">
+      <Setter Property="Foreground" Value="#CFE3FF"/>
+      <Setter Property="FontFamily" Value="Segoe UI"/>
+      <Setter Property="Margin" Value="0,6,0,0"/>
+    </Style>
+    <Style TargetType="Border">
+      <Setter Property="Background" Value="#131D33"/>
+      <Setter Property="BorderBrush" Value="#26405F"/>
+      <Setter Property="BorderThickness" Value="1"/>
+      <Setter Property="Padding" Value="12,4,12,10"/>
+      <Setter Property="Margin" Value="0,12,0,0"/>
+    </Style>
+  </Window.Resources>
   <ScrollViewer VerticalScrollBarVisibility="Auto">
-  <StackPanel>
-    <TextBlock x:Name="info" Style="{StaticResource oca.Hint}" Margin="0,0,0,12"/>
+  <StackPanel Margin="18">
+    <TextBlock Text="ABERTURA DE MÚLTIPLAS VISTAS" FontSize="15" FontWeight="SemiBold"
+               Foreground="#65E3FF" Margin="0,0,0,4"/>
+    <TextBlock x:Name="info" TextWrapping="Wrap" FontSize="11"
+               Foreground="#7A8FA9" Margin="0,0,0,2"/>
 
     <Grid>
-      <Grid.Resources>
-        <Style x:Key="FieldLabel" TargetType="TextBlock" BasedOn="{StaticResource oca.Label}">
-          <Setter Property="Margin" Value="0,8,0,4"/>
-        </Style>
-      </Grid.Resources>
       <Grid.ColumnDefinitions>
         <ColumnDefinition Width="*"/>
-        <ColumnDefinition Width="28"/>
+        <ColumnDefinition Width="16"/>
         <ColumnDefinition Width="*"/>
-        <ColumnDefinition Width="28"/>
+        <ColumnDefinition Width="16"/>
         <ColumnDefinition Width="*"/>
       </Grid.ColumnDefinitions>
 
       <!-- coluna 1: premissas, plantas, elevações -->
       <StackPanel Grid.Column="0">
-        <HeaderedContentControl Header="PREMISSAS" Style="{StaticResource oca.Section}">
+        <Border>
           <StackPanel>
-            <TextBlock x:Name="rooms_txt" Style="{StaticResource oca.Hint}"/>
-            <TextBlock x:Name="view_txt" Style="{StaticResource oca.Hint}" Margin="0,4,0,0"/>
-            <TextBlock x:Name="margin_lbl" Text="Plantas: margem ao redor de cada ambiente (m)" Style="{StaticResource FieldLabel}"/>
-            <TextBox x:Name="margin" Width="72" HorizontalAlignment="Left"/>
-            <TextBlock x:Name="e_margin_lbl" Text="Elevações: margem ao redor de cada ambiente (m)" Style="{StaticResource FieldLabel}"/>
-            <TextBox x:Name="e_margin" Width="72" HorizontalAlignment="Left"/>
-            <TextBlock Text="Tipo de vista" Style="{StaticResource FieldLabel}" Margin="0,12,0,6"/>
+            <TextBlock Text="PREMISSAS" FontSize="12" FontWeight="SemiBold" Foreground="#65E3FF"/>
+            <TextBlock x:Name="rooms_txt" TextWrapping="Wrap" FontSize="11"
+                       Foreground="#7A8FA9" Margin="0,0,0,2"/>
+            <TextBlock x:Name="view_txt" TextWrapping="Wrap" FontSize="11"
+                       Foreground="#7A8FA9" Margin="0,4,0,2"/>
+            <TextBlock x:Name="margin_lbl" Text="Plantas: margem ao redor de cada ambiente (m)"/>
+            <TextBox x:Name="margin"/>
+            <TextBlock x:Name="e_margin_lbl" Text="Elevações: margem ao redor de cada ambiente (m)"/>
+            <TextBox x:Name="e_margin"/>
+            <TextBlock Text="Tipo de vista" Margin="0,14,0,0"/>
             <RadioButton x:Name="rb_c_plans" GroupName="create" Content="Plantas"/>
             <RadioButton x:Name="rb_c_elev" GroupName="create" Content="Elevações"/>
             <RadioButton x:Name="rb_c_both" GroupName="create" Content="Plantas + Elevações"/>
           </StackPanel>
-        </HeaderedContentControl>
+        </Border>
 
-        <HeaderedContentControl Header="PLANTAS" Style="{StaticResource oca.Section}">
+        <Border>
           <StackPanel x:Name="plan_panel">
-            <TextBlock Text="O que fazer (uma vista por ambiente)" Style="{StaticResource oca.Label}" Margin="0,0,0,6"/>
+            <TextBlock Text="PLANTAS" FontSize="12" FontWeight="SemiBold" Foreground="#65E3FF"/>
+            <TextBlock Text="O que fazer (uma vista por ambiente)"/>
             <RadioButton x:Name="rb_plans" GroupName="mode"
                          Content="Criar nova vista de planta (Piso, Forro, Estrutural, Área)"/>
             <RadioButton x:Name="rb_callout" GroupName="mode"
                          Content="Criar vista de chamada de detalhe (Callout) na vista ativa"/>
-            <TextBlock x:Name="mode_hint" Style="{StaticResource oca.Hint}" Margin="22,0,0,0"/>
-            <Border Style="{StaticResource oca.Msg.Warn}" Visibility="{Binding Visibility, ElementName=reasons}">
-              <TextBlock x:Name="reasons" Style="{StaticResource oca.MsgText}"/>
-            </Border>
-            <TextBlock x:Name="vtype_lbl" Text="Tipo de vista da planta" Style="{StaticResource FieldLabel}"/>
+            <TextBlock x:Name="mode_hint" TextWrapping="Wrap" FontSize="11"
+                       Foreground="#7A8FA9" Margin="20,4,0,0"/>
+            <TextBlock x:Name="reasons" TextWrapping="Wrap" FontSize="11"
+                       Foreground="#FFB454" Margin="0,8,0,0"/>
+            <TextBlock x:Name="vtype_lbl" Text="Tipo de vista da planta"/>
             <ComboBox x:Name="vtype"/>
           </StackPanel>
-        </HeaderedContentControl>
+        </Border>
 
-        <HeaderedContentControl Header="ELEVAÇÕES  ·  MARCADOR NATIVO DO REVIT" Style="{StaticResource oca.Section}">
+        <Border>
           <StackPanel x:Name="elev_panel">
-            <TextBlock Text="Tipo de elevação (família do marcador carregada no modelo)" Style="{StaticResource oca.Label}" Margin="0,0,0,4"/>
+            <TextBlock Text="ELEVAÇÕES  ·  MARCADOR NATIVO DO REVIT" FontSize="12"
+                       FontWeight="SemiBold" Foreground="#65E3FF"/>
+            <TextBlock Text="Tipo de elevação (família do marcador carregada no modelo)"/>
             <ComboBox x:Name="etype"/>
-            <TextBlock Text="Direções (um marcador novo por ambiente)" Style="{StaticResource FieldLabel}" Margin="0,10,0,6"/>
+            <TextBlock Text="Direções (um marcador novo por ambiente)"/>
             <CheckBox x:Name="cb_n" Content="ELEVAÇÃO 01" ToolTip="Norte"/>
             <CheckBox x:Name="cb_l" Content="ELEVAÇÃO 02" ToolTip="Leste"/>
             <CheckBox x:Name="cb_s" Content="ELEVAÇÃO 03" ToolTip="Sul"/>
             <CheckBox x:Name="cb_o" Content="ELEVAÇÃO 04" ToolTip="Oeste"/>
             <TextBlock Text="Elevações que já existirem no ambiente são ignoradas: o marcador e as vistas são criados de novo."
-                       Style="{StaticResource oca.Hint}" Margin="0,4,0,0"/>
-            <Border Style="{StaticResource oca.Msg.Warn}" Visibility="{Binding Visibility, ElementName=elev_reason}">
-              <TextBlock x:Name="elev_reason" Style="{StaticResource oca.MsgText}"/>
-            </Border>
+                       TextWrapping="Wrap" FontSize="11" Foreground="#7A8FA9" Margin="0,8,0,0"/>
+            <TextBlock x:Name="elev_reason" TextWrapping="Wrap" FontSize="11"
+                       Foreground="#FFB454" Margin="0,6,0,0"/>
           </StackPanel>
-        </HeaderedContentControl>
+        </Border>
       </StackPanel>
 
       <!-- coluna 2: view template + destino -->
       <StackPanel Grid.Column="2">
-        <HeaderedContentControl Header="MODELO DE VISTA (VIEW TEMPLATE)" Style="{StaticResource oca.Section}">
+        <Border>
           <StackPanel>
-            <TextBlock x:Name="template_lbl" Text="Plantas" Style="{StaticResource oca.Label}" Margin="0,0,0,4"/>
+            <TextBlock Text="MODELO DE VISTA (VIEW TEMPLATE)" FontSize="12" FontWeight="SemiBold"
+                       Foreground="#65E3FF"/>
+            <TextBlock x:Name="template_lbl" Text="Plantas"/>
             <ComboBox x:Name="template"/>
-            <TextBlock x:Name="etemplate_lbl" Text="Elevações" Style="{StaticResource FieldLabel}"/>
+            <TextBlock x:Name="etemplate_lbl" Text="Elevações"/>
             <ComboBox x:Name="etemplate"/>
             <TextBlock Text="Só aparecem os Modelos de Vista que o Revit aceita para cada tipo de vista."
-                       Style="{StaticResource oca.Hint}" Margin="0,6,0,0"/>
+                       TextWrapping="Wrap" FontSize="11" Foreground="#7A8FA9" Margin="0,6,0,0"/>
           </StackPanel>
-        </HeaderedContentControl>
+        </Border>
 
-        <HeaderedContentControl Header="DESTINO DAS VISTAS  ·  NAVEGADOR DE PROJETO (PROJECT BROWSER)" Style="{StaticResource oca.Section}">
+        <Border>
           <StackPanel>
-            <TextBlock x:Name="folder_src" Style="{StaticResource oca.Hint}" Margin="0,0,0,6"/>
-            <Border Style="{StaticResource oca.Msg.Warn}" Margin="0,0,0,8"
-                    Visibility="{Binding Visibility, ElementName=folder_reason}">
-              <TextBlock x:Name="folder_reason" Style="{StaticResource oca.MsgText}"/>
-            </Border>
+            <TextBlock Text="DESTINO DAS VISTAS  ·  NAVEGADOR DE PROJETO (PROJECT BROWSER)" FontSize="12"
+                       FontWeight="SemiBold" Foreground="#65E3FF"/>
+            <TextBlock x:Name="folder_src" TextWrapping="Wrap" FontSize="11"
+                       Foreground="#7A8FA9" Margin="0,0,0,2"/>
+            <TextBlock x:Name="folder_reason" TextWrapping="Wrap" FontSize="11"
+                       Foreground="#FFB454" Margin="0,0,0,2"/>
             <StackPanel x:Name="p_panel">""" + FOLDER_BLOCK.replace(u"@K@", u"p").replace(u"@T@", u"Plantas") + u"""
             </StackPanel>
             <StackPanel x:Name="e_panel">""" + FOLDER_BLOCK.replace(u"@K@", u"e").replace(u"@T@", u"Elevações") + u"""
             </StackPanel>
           </StackPanel>
-        </HeaderedContentControl>
+        </Border>
       </StackPanel>
 
       <!-- coluna 3: nomenclatura + pré-visualização -->
       <StackPanel Grid.Column="4">
-        <HeaderedContentControl Header="NOMENCLATURA" Style="{StaticResource oca.Section}">
+        <Border>
           <StackPanel x:Name="name_panel">
-            <TextBlock Text="Plantas: vale para o nome da vista (View Name), o título na folha (Title on Sheet) e o título em inglês (Title on Sheet - English). Elevações: Nº - AMBIENTE - ELEVAÇÃO 01..04 (automático)."
-                       Style="{StaticResource oca.Hint}"/>
-            <TextBlock Text="A - Principal" Style="{StaticResource FieldLabel}"/>
+            <TextBlock Text="NOMENCLATURA" FontSize="12" FontWeight="SemiBold"
+                       Foreground="#65E3FF"/>
+            <TextBlock Text="Plantas: vale para o nome da vista (View Name), o título na folha (Title on Sheet) e o título em inglês (Title on Sheet - English). Elevações: número e nome de cada ambiente + ELEVAÇÃO 01..04 (automático)."
+                       TextWrapping="Wrap" FontSize="11" Foreground="#7A8FA9" Margin="0,0,0,2"/>
+            <TextBlock Text="A - Principal"/>
             <ComboBox x:Name="vname"/>
-            <TextBlock x:Name="manual_lbl" Style="{StaticResource FieldLabel}"
+            <TextBlock x:Name="manual_lbl" TextWrapping="Wrap"
                        Text="Nome manual - Nome da vista (View Name) e Título na folha (Title on Sheet). Vazio = mantém o nome do Revit;  # = sequência 01, 02..."/>
             <TextBox x:Name="manual"/>
-            <TextBlock x:Name="manual_en_lbl" Style="{StaticResource FieldLabel}"
+            <TextBlock x:Name="manual_en_lbl" TextWrapping="Wrap"
                        Text="Nome manual - Título em inglês (Title on Sheet - English). Vazio = sem título em inglês."/>
             <TextBox x:Name="manual_en"/>
-            <TextBlock x:Name="suffix_lbl" Text="B - Complemento" Style="{StaticResource FieldLabel}"/>
+            <TextBlock x:Name="suffix_lbl" Text="B - Complemento"/>
             <ComboBox x:Name="vsuffix"/>
-            <TextBlock x:Name="suffix_text_lbl" Style="{StaticResource FieldLabel}"
+            <TextBlock x:Name="suffix_text_lbl" TextWrapping="Wrap"
                        Text="Complemento manual - Nome da vista (View Name) e Título na folha (Title on Sheet). Vazio = sem complemento;  # = sequência 01, 02..."/>
             <TextBox x:Name="suffix_text"/>
-            <TextBlock x:Name="suffix_text_en_lbl" Style="{StaticResource FieldLabel}"
+            <TextBlock x:Name="suffix_text_en_lbl" TextWrapping="Wrap"
                        Text="Complemento manual - Título em inglês (Title on Sheet - English). Vazio = sem complemento."/>
             <TextBox x:Name="suffix_text_en"/>
           </StackPanel>
-        </HeaderedContentControl>
+        </Border>
 
-        <HeaderedContentControl Header="PRÉ-VISUALIZAÇÃO" Style="{StaticResource oca.Section}">
+        <Border>
           <StackPanel>
-            <Border Style="{StaticResource oca.Card}" Margin="0">
-              <StackPanel>
-                <TextBlock x:Name="pv_lbl" Text="PRÉ-VISUALIZAÇÃO" Style="{StaticResource oca.Caption}" Margin="0,0,0,8"/>
-                <StackPanel x:Name="pv_plan">
-                  <TextBlock Text="PLANTA  ·  NOME DA VISTA (VIEW NAME)  ·  prefixo da pasta + _ + nome" Style="{StaticResource oca.Caption}"/>
-                  <TextBlock x:Name="pv_name" Style="{StaticResource oca.Value}" Margin="0,2,0,8"/>
-                  <TextBlock Text="TÍTULO NA FOLHA (TITLE ON SHEET)" Style="{StaticResource oca.Caption}"/>
-                  <TextBlock x:Name="pv_title" Style="{StaticResource oca.Value}" Margin="0,2,0,8"/>
-                  <TextBlock Text="TÍTULO EM INGLÊS (TITLE ON SHEET - ENGLISH)  ·  automático" Style="{StaticResource oca.Caption}"/>
-                  <TextBlock x:Name="pv_en" Style="{StaticResource oca.Value}" Margin="0,2,0,8"/>
-                </StackPanel>
-                <StackPanel x:Name="pv_elev">
-                  <TextBlock x:Name="pv_e_lbl" Text="ELEVAÇÃO  ·  NOME DA VISTA (VIEW NAME)" Style="{StaticResource oca.Caption}"/>
-                  <TextBlock x:Name="pv_e_name" Style="{StaticResource oca.Value}" Margin="0,2,0,8"/>
-                  <TextBlock Text="TÍTULO NA FOLHA (TITLE ON SHEET)" Style="{StaticResource oca.Caption}"/>
-                  <TextBlock x:Name="pv_e_title" Style="{StaticResource oca.Value}" Margin="0,2,0,8"/>
-                  <TextBlock Text="TÍTULO EM INGLÊS (TITLE ON SHEET - ENGLISH)  ·  automático" Style="{StaticResource oca.Caption}"/>
-                  <TextBlock x:Name="pv_e_en" Style="{StaticResource oca.Value}" Margin="0,2,0,8"/>
-                </StackPanel>
-                <TextBlock Text="PASTA DE DESTINO" Style="{StaticResource oca.Caption}"/>
-                <TextBlock x:Name="pv_folder" Style="{StaticResource oca.Value}" Margin="0,2,0,8"/>
-                <TextBlock Text="MODELO DE VISTA (VIEW TEMPLATE)" Style="{StaticResource oca.Caption}"/>
-                <TextBlock x:Name="pv_template" Style="{StaticResource oca.Value}" Margin="0,2,0,0"/>
-              </StackPanel>
-            </Border>
-            <Border Style="{StaticResource oca.Msg.Warn}" Visibility="{Binding Visibility, ElementName=live_hint}">
-              <TextBlock x:Name="live_hint" Style="{StaticResource oca.MsgText}"/>
-            </Border>
-            <Border Style="{StaticResource oca.Msg.Warn}" Visibility="{Binding Visibility, ElementName=name_hint}">
-              <TextBlock x:Name="name_hint" Style="{StaticResource oca.MsgText}"/>
-            </Border>
+            <TextBlock x:Name="pv_lbl" Text="PRÉ-VISUALIZAÇÃO" FontSize="10" Foreground="#7A8FA9"
+                       TextWrapping="Wrap" Margin="0,6,0,6"/>
+            <StackPanel x:Name="pv_plan">
+              <TextBlock Text="PLANTA  ·  NOME DA VISTA (VIEW NAME)  ·  prefixo da pasta + _ + nome" FontSize="10"
+                         Foreground="#7A8FA9" Margin="0"/>
+              <TextBlock x:Name="pv_name" FontWeight="SemiBold" TextWrapping="Wrap" Margin="0,2,0,6"/>
+              <TextBlock Text="TÍTULO NA FOLHA (TITLE ON SHEET)" FontSize="10" Foreground="#7A8FA9" Margin="0"/>
+              <TextBlock x:Name="pv_title" FontWeight="SemiBold" TextWrapping="Wrap" Margin="0,2,0,6"/>
+              <TextBlock Text="TÍTULO EM INGLÊS (TITLE ON SHEET - ENGLISH)  ·  automático" FontSize="10"
+                         Foreground="#7A8FA9" Margin="0"/>
+              <TextBlock x:Name="pv_en" FontWeight="SemiBold" TextWrapping="Wrap" Margin="0,2,0,8"/>
+            </StackPanel>
+            <StackPanel x:Name="pv_elev">
+              <TextBlock x:Name="pv_e_lbl" Text="ELEVAÇÃO  ·  NOME DA VISTA (VIEW NAME)" FontSize="10"
+                         Foreground="#7A8FA9" Margin="0"/>
+              <TextBlock x:Name="pv_e_name" FontWeight="SemiBold" TextWrapping="Wrap" Margin="0,2,0,6"/>
+              <TextBlock Text="TÍTULO NA FOLHA (TITLE ON SHEET)" FontSize="10" Foreground="#7A8FA9" Margin="0"/>
+              <TextBlock x:Name="pv_e_title" FontWeight="SemiBold" TextWrapping="Wrap" Margin="0,2,0,6"/>
+              <TextBlock Text="TÍTULO EM INGLÊS (TITLE ON SHEET - ENGLISH)  ·  automático" FontSize="10"
+                         Foreground="#7A8FA9" Margin="0"/>
+              <TextBlock x:Name="pv_e_en" FontWeight="SemiBold" TextWrapping="Wrap" Margin="0,2,0,8"/>
+            </StackPanel>
+            <TextBlock Text="PASTA DE DESTINO" FontSize="10" Foreground="#7A8FA9" Margin="0"/>
+            <TextBlock x:Name="pv_folder" FontWeight="SemiBold" TextWrapping="Wrap" Margin="0,2,0,6"/>
+            <TextBlock Text="MODELO DE VISTA (VIEW TEMPLATE)" FontSize="10" Foreground="#7A8FA9" Margin="0"/>
+            <TextBlock x:Name="pv_template" FontWeight="SemiBold" TextWrapping="Wrap" Margin="0,2,0,0"/>
           </StackPanel>
-        </HeaderedContentControl>
+        </Border>
+        <TextBlock x:Name="live_hint" TextWrapping="Wrap" FontSize="11"
+                   Foreground="#FFB454" Margin="0,6,0,0"/>
+        <TextBlock x:Name="name_hint" TextWrapping="Wrap" FontSize="11"
+                   Foreground="#FFB454" Margin="0,4,0,0"/>
       </StackPanel>
     </Grid>
 
-    <CheckBox x:Name="open_views" Content="Abrir as vistas criadas ao final" Margin="0,0,0,12"/>
+    <CheckBox x:Name="open_views" Content="Abrir as vistas criadas ao final" Margin="0,12,0,0"/>
 
-    <Border Style="{StaticResource oca.Msg.Err}" Margin="0,0,0,12"
-            Visibility="{Binding Visibility, ElementName=error}">
-      <TextBlock x:Name="error" Style="{StaticResource oca.MsgText}"/>
-    </Border>
+    <TextBlock x:Name="error" TextWrapping="Wrap" FontSize="11"
+               Foreground="#FF4F9A" Margin="0,10,0,0"/>
+    <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,14,0,0">
+      <Button x:Name="cancel" Content="Cancelar" Width="80" Height="28" Margin="0,0,10,0"/>
+      <Button x:Name="ok" Content="Aplicar" Width="110" Height="28"/>
+    </StackPanel>
   </StackPanel>
-  </ScrollViewer>"""
-
-CROP_FOOTER = u"""
-  <Button x:Name="ok" Content="Aplicar" Style="{StaticResource oca.Primary}"/>
-  <Button x:Name="cancel" Content="Cancelar" Margin="8,0,0,0"/>"""
-
-# subtítulo da janela = tooltip (__doc__, que não muda), com o termo em português
-WINDOW_SUBTITLE = __doc__.replace(u"View Template", u"Modelo de Vista (View Template)")
-CROP_XAML = build_xaml(title=__title__, subtitle=WINDOW_SUBTITLE, body=CROP_BODY,
-                       footer_right=CROP_FOOTER, size="M", width=1240)
+  </ScrollViewer>
+</Window>
+"""
 
 FOLDER_MODES = ("existing", "new", "none")
 CREATE_MODES = ("plans", "elev", "both")
@@ -1996,8 +2029,8 @@ class CropWindow(forms.WPFWindow):
         letters = self.simple_kind and opt["key"] != MANUAL_KEY   # recebem A, B...
         unique = opt["room"] or letters or opt["key"] == KEEP_NAME_KEY   # CHAMADA 1, 2...
         if self.do_plans and self.ctx["count"] > 1 and not unique:
-            hints.append(u"Nomes sem <Nº> - <AMBIENTE> se repetem entre as vistas e recebem "
-                         u"(2), (3)...; no nome manual, use # para numerar.")
+            hints.append(u"Nomes sem o número e o nome do ambiente se repetem entre as vistas "
+                         u"e recebem (2), (3)...; no nome manual, use # para numerar.")
         return hints
 
     def _ok(self, sender, args):
@@ -2118,9 +2151,9 @@ rooms_preview = u", ".join(g.label for g in geoms[:6]) + (u"..." if len(geoms) >
 dialog_ctx = {
     "types": {"plans": plan_items, "callout": callout_items},
     # A - Principal: 'Manter nomenclatura atual da vista' só na chamada (no topo);
-    # com UM ambiente, o rótulo mostra o número e o nome reais
+    # versões por ambiente com o número e o nome reais do 1º ambiente da lista
     "names": dict((m, ([dict(KEEP_NAME_OPT)] if m == "callout" else [])
-                   + name_options(target_kind(m), geoms[0].el if len(geoms) == 1 else None))
+                   + name_options(target_kind(m), geoms[0].el, len(geoms) - 1))
                   for m in MODES),
     "active_names": parent_names,
     "level": {"plans": room_levels[0], "callout": active_level},
