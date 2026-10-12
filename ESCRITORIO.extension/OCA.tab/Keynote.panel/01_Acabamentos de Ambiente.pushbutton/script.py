@@ -273,7 +273,7 @@ FLUSH_FINISHES = set(["ceiling", "sill"])
 # from SEARCH_BELOW_M under the room base to SEARCH_ABOVE_M over the room top
 # (so a ceiling above a room whose Limit Offset is too low is still found).
 SEARCH_BELOW_M = 0.02
-SEARCH_ABOVE_M = 1.00
+SEARCH_ABOVE_M = 0.10
 # The outline is also grown outwards by this much, so elements that are only
 # flush with the room faces (touching, zero overlap) are found too.
 SEARCH_OUTWARD_M = 0.02
@@ -1860,6 +1860,156 @@ def open_in_browser(path):
         return False
 
 
+# ==================================================================
+# Memorial de acabamentos - Excel with the values that are in the rooms now
+# (same columns as the dashboard's "Baixar Excel"). Plain .xlsx writer, no
+# external library: a stored zip with inline strings.
+# ==================================================================
+MEMORIAL_PREFIX = u"Memorial de acabamentos_"
+MEMORIAL_SHEET = u"Ambientes"
+# Finish columns in the order of the dashboard export (EXCEL_FINISHES in the HTML).
+MEMORIAL_FINISHES = ["wall", "floor", "base", "sill", "ceiling", "crown"]
+
+
+def model_file_name():
+    """Name of the .rvt without extension (the central model for a local copy)."""
+    name = u""
+    try:
+        if doc.IsWorkshared:
+            name = to_unicode(DB.ModelPathUtils.ConvertModelPathToUserVisiblePath(
+                doc.GetWorksharingCentralModelPath()))
+    except Exception:
+        name = u""
+    name = name or to_unicode(doc.PathName) or to_unicode(doc.Title)
+    name = re.split(u"[\\\\/]", name)[-1]
+    name = re.sub(u"(?i)\\.rvt$", u"", name)
+    return re.sub(u'[\\\\/:*?"<>|]+', u"_", name).strip() or u"projeto"
+
+
+def memorial_rows(rooms, targets):
+    """Header + one row per placed room: number, name, level and each finish
+    with the real values of its fields (the '-' placeholder is left out)."""
+    rows = []
+    for room in rooms:
+        try:
+            if room.Location is None:
+                continue
+        except Exception:
+            continue
+        info = room_info(room)
+        values = []
+        for key in MEMORIAL_FINISHES:
+            found = [t.read(room).strip() for t in targets.get(key, []) if t is not None]
+            values.append(join_keys([v for v in found if is_real(v)]))
+        rows.append(((info["elev"], info["level"], natural_key(info["number"]), info["id"]),
+                     [info["number"], info["name"], info["level"]] + values))
+    rows.sort(key=lambda r: r[0])
+    header = [u"Número", u"Nome do ambiente", u"Pavimento"] + [FINISH_LABELS[k] for k in MEMORIAL_FINISHES]
+    return [header] + [r[1] for r in rows]
+
+
+def _xlsx_col(i):
+    s = u""
+    i += 1
+    while i > 0:
+        i, m = divmod(i - 1, 26)
+        s = unichr_(65 + m) + s
+    return s
+
+
+def unichr_(n):
+    try:
+        return unichr(n)
+    except NameError:
+        return chr(n)
+
+
+def _xml_text(value):
+    t = re.sub(u"[\\x00-\\x08\\x0b\\x0c\\x0e-\\x1f]", u"", to_unicode(value))
+    return (t.replace(u"&", u"&amp;").replace(u"<", u"&lt;").replace(u">", u"&gt;")
+             .replace(u"\"", u"&quot;"))
+
+
+def write_xlsx(path, sheet_name, rows):
+    """One-sheet .xlsx: bold header on dark fill, header frozen, auto filter."""
+    import zipfile
+    ncol = max(1, max(len(r) for r in rows))
+    widths = [min(60, max([8] + [len(to_unicode(r[c])) + 2 for r in rows if c < len(r)])) for c in range(ncol)]
+    cols = u"".join(u'<col min="{0}" max="{0}" width="{1}" customWidth="1"/>'.format(i + 1, w)
+                    for i, w in enumerate(widths))
+    data = []
+    for ri, row in enumerate(rows):
+        cells = []
+        for ci, v in enumerate(row):
+            if v is None or to_unicode(v) == u"":
+                continue
+            ref = u"{}{}".format(_xlsx_col(ci), ri + 1)
+            st = u' s="1"' if ri == 0 else u""
+            cells.append(u'<c r="{}"{} t="inlineStr"><is><t xml:space="preserve">{}</t></is></c>'.format(
+                ref, st, _xml_text(v)))
+        data.append(u'<row r="{}">{}</row>'.format(ri + 1, u"".join(cells)))
+    last = u"{}{}".format(_xlsx_col(ncol - 1), len(rows))
+    flt = u'<autoFilter ref="A1:{}"/>'.format(last) if len(rows) > 1 else u""
+    sname = re.sub(u"[\\[\\]:*?/\\\\]", u" ", sheet_name)[:31]
+    head = u'<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n'
+    main = u"http://schemas.openxmlformats.org/spreadsheetml/2006/main"
+    rel = u"http://schemas.openxmlformats.org/officeDocument/2006/relationships"
+    pkg = u"http://schemas.openxmlformats.org/package/2006/relationships"
+    ct = u"application/vnd.openxmlformats-officedocument.spreadsheetml."
+    parts = [
+        (u"[Content_Types].xml", head +
+         u'<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">'
+         u'<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>'
+         u'<Default Extension="xml" ContentType="application/xml"/>'
+         u'<Override PartName="/xl/workbook.xml" ContentType="' + ct + u'sheet.main+xml"/>'
+         u'<Override PartName="/xl/styles.xml" ContentType="' + ct + u'styles+xml"/>'
+         u'<Override PartName="/xl/worksheets/sheet1.xml" ContentType="' + ct + u'worksheet+xml"/></Types>'),
+        (u"_rels/.rels", head + u'<Relationships xmlns="' + pkg + u'"><Relationship Id="rId1" Type="' + rel +
+         u'/officeDocument" Target="xl/workbook.xml"/></Relationships>'),
+        (u"xl/workbook.xml", head + u'<workbook xmlns="' + main + u'" xmlns:r="' + rel + u'"><sheets>'
+         u'<sheet name="' + _xml_text(sname) + u'" sheetId="1" r:id="rId1"/></sheets>' +
+         (u'<definedNames><definedName name="_xlnm._FilterDatabase" localSheetId="0" hidden="1">\'' +
+          _xml_text(sname).replace(u"'", u"''") + u"\'!$A$1:$" + _xlsx_col(ncol - 1) + u"$" + unicode(len(rows)) +
+          u"</definedName></definedNames>" if flt else u"") + u"</workbook>"),
+        (u"xl/_rels/workbook.xml.rels", head + u'<Relationships xmlns="' + pkg + u'">'
+         u'<Relationship Id="rId1" Type="' + rel + u'/worksheet" Target="worksheets/sheet1.xml"/>'
+         u'<Relationship Id="rId2" Type="' + rel + u'/styles" Target="styles.xml"/></Relationships>'),
+        (u"xl/styles.xml", head + u'<styleSheet xmlns="' + main + u'">'
+         u'<fonts count="2"><font><sz val="11"/><name val="Calibri"/></font>'
+         u'<font><b/><sz val="11"/><color rgb="FFFFFFFF"/><name val="Calibri"/></font></fonts>'
+         u'<fills count="3"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill>'
+         u'<fill><patternFill patternType="solid"><fgColor rgb="FF0E1526"/><bgColor indexed="64"/></patternFill></fill></fills>'
+         u'<borders count="1"><border><left/><right/><top/><bottom/><diagonal/></border></borders>'
+         u'<cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs>'
+         u'<cellXfs count="2"><xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/>'
+         u'<xf numFmtId="0" fontId="1" fillId="2" borderId="0" xfId="0" applyFont="1" applyFill="1"/></cellXfs>'
+         u'<cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles></styleSheet>'),
+        (u"xl/worksheets/sheet1.xml", head + u'<worksheet xmlns="' + main + u'"><sheetViews>'
+         u'<sheetView tabSelected="1" workbookViewId="0"><pane ySplit="1" topLeftCell="A2" activePane="bottomLeft" '
+         u'state="frozen"/></sheetView></sheetViews><cols>' + cols + u'</cols><sheetData>' + u"".join(data) +
+         u'</sheetData>' + flt + u'</worksheet>'),
+    ]
+    # write next to the target first: a file open in Excel fails before anything is lost
+    tmp = path + u".tmp"
+    zf = zipfile.ZipFile(tmp, "w", zipfile.ZIP_STORED)
+    try:
+        for name, text in parts:
+            zf.writestr(str(name), text.encode("utf-8"))
+    finally:
+        zf.close()
+    try:
+        if os.path.exists(path):
+            os.remove(path)
+        os.rename(tmp, path)
+    except Exception:
+        try:
+            os.remove(tmp)
+        except Exception:
+            pass
+        raise
+    return path
+
+
 def log_link(item):
     """Clickable element id in the output window (host elements only)."""
     if item.get("link"):
@@ -2201,13 +2351,13 @@ XAML = u"""
             <TextBlock Style="{StaticResource HelpBody}" Text="• Cada número de campo é uma linha do identificador: linha 01 = Parede 01, Piso 01, Teto 01, Rodapé 01, Rodateto 01 e Soleira 01; linha 02 = os campos 02; e assim por diante.&#10;• Se pelo menos uma linha tiver valor, os campos vazios das linhas preenchidas recebem &quot;-&quot;. Linhas sem nenhum valor continuam vazias. Ambiente sem nenhum acabamento: nada muda.&#10;• O número de linhas com valor escolhe o tipo do identificador: 1 linha = REVESTIMENTOS 01, 2 linhas = REVESTIMENTOS 02 ... até 05. Vale para nomes como &quot;REVESTIMENTOS 3X&quot; ou com outros textos antes e depois.&#10;• Só os identificadores já colocados no projeto são trocados, sempre dentro da mesma família. Nada é criado.&#10;• Se o tipo necessário não existir na família, a ferramenta avisa qual tipo está faltando e não troca aquele identificador."/>
 
             <TextBlock Style="{StaticResource HelpTitle}" Text="EXCEL"/>
-            <TextBlock Style="{StaticResource HelpBody}" Text="• No relatório HTML, Baixar Excel gera a aba Ambientes (Número, Nome do ambiente, Pavimento, Parede, Piso, Rodapé, Soleira, Teto e Rodateto). Só os ambientes visíveis na tabela entram.&#10;• Cada célula de acabamento traz os valores separados por &quot; / &quot; (ex.: RE01 / RE02), na ordem dos campos 01, 02, 03...&#10;• A planilha é só para consulta: ela não é lida de volta pelo Revit."/>
+            <TextBlock Style="{StaticResource HelpBody}" Text="• No relatório HTML, Baixar Excel gera a aba Ambientes (Número, Nome do ambiente, Pavimento, Parede, Piso, Rodapé, Soleira, Teto e Rodateto). Só os ambientes visíveis na tabela entram.&#10;• Cada célula de acabamento traz os valores separados por &quot; / &quot; (ex.: RE01 / RE02), na ordem dos campos 01, 02, 03...&#10;• Exportar Excel, aqui no comando, gera a mesma aba com os valores que estão gravados nos ambientes (todos os ambientes colocados), já nomeada Memorial de acabamentos_nome do arquivo .rvt. A janela de salvar mostra a pasta antes de gravar.&#10;• A planilha é só para consulta: ela não é lida de volta pelo Revit."/>
 
             <TextBlock Style="{StaticResource HelpTitle}" Text="PROTEÇÕES"/>
             <TextBlock Style="{StaticResource HelpBody}" Text="• Piso, rodapé e parede do pavimento de cima ou de baixo não entram no ambiente.&#10;• Nada é gravado até você clicar em Atualizar Ambientes.&#10;• Valores diferentes dos atuais aparecem em âmbar na pré-visualização e na confirmação antes de gravar; desmarque a linha para manter o valor atual.&#10;• Cada acabamento é regravado por inteiro: se sobrar um campo com valor antigo (ex.: Parede 04 quando agora só há 3 revestimentos), ele aparece em rosa como Limpar.&#10;• Se houver mais Keynotes do que campos, as que sobrarem aparecem como aviso - nada é descartado sem aviso.&#10;• Se nada for encontrado para um parâmetro, o valor atual é mantido - nunca é apagado.&#10;• Tudo é gravado em uma única transação: Ctrl+Z no Revit desfaz a atualização inteira.&#10;• Ambientes em uso por outro usuário (workset) aparecem bloqueados na pré-visualização."/>
 
             <TextBlock Style="{StaticResource HelpTitle}" Text="PASSO A PASSO"/>
-            <TextBlock Style="{StaticResource HelpBody}" Text="1. Analisar Modelo - lê todos os ambientes e já mostra a pré-visualização: valor atual e novo valor de cada parâmetro. Não altera nada.&#10;2. Confira a lista. Todas as linhas vêm marcadas; desmarque as que não quer gravar. Linhas em âmbar substituem um valor existente.&#10;3. Atualizar Ambientes - grava as linhas marcadas.&#10;4. Abrir Relatório HTML - resumo, filtros e o detalhe de onde veio cada Keynote."/>
+            <TextBlock Style="{StaticResource HelpBody}" Text="1. Analisar Modelo - lê todos os ambientes e já mostra a pré-visualização: valor atual e novo valor de cada parâmetro. Não altera nada.&#10;2. Confira a lista. Todas as linhas vêm marcadas; desmarque as que não quer gravar. Linhas em âmbar substituem um valor existente.&#10;3. Atualizar Ambientes - grava as linhas marcadas.&#10;4. Abrir Relatório HTML - resumo, filtros e o detalhe de onde veio cada Keynote.&#10;5. Exportar Excel - salva o memorial de acabamentos (Memorial de acabamentos_nome do arquivo.xlsx) com os valores gravados nos ambientes.&#10;6. Finalizar - encerra o comando."/>
 
             <TextBlock Style="{StaticResource HelpTitle}" Text="QUANDO ALGO NÃO APARECE"/>
             <TextBlock Style="{StaticResource HelpBody}" Text="• Forro não encontrado: aumente a margem de busca do forro ou o Limit Offset do ambiente e analise de novo.&#10;• Elemento sem Keynote: aparece no relatório como &quot;Keynote ausente&quot;.&#10;• Elemento com Keynote de acabamento fora de qualquer ambiente: seção &quot;Não atribuídos a nenhum ambiente&quot; no relatório.&#10;• Prefixo que não combina com a categoria (ex.: RE01 num piso): aparece como inconsistência, mas o valor é gravado pela regra do prefixo.&#10;• No relatório, clique num ambiente para ver cada elemento encontrado, a Keynote e o motivo de cada valor ignorado.&#10;• Shift + clique no botão do comando abre também o log passo a passo do pyRevit (no clique normal ele só aparece se houver erro)."/>
@@ -2224,6 +2374,10 @@ XAML = u"""
               ToolTip="Grava as linhas marcadas na pré-visualização, em uma única transação (Ctrl+Z desfaz)."/>
       <Button x:Name="btn_report" Content="Abrir Relatório HTML" IsEnabled="False" ToolTipService.ShowDuration="20000"
               ToolTip="Abre o relatório com todos os ambientes, filtros e o detalhe de onde veio cada Keynote."/>
+      <Button x:Name="btn_excel" Content="Exportar Excel" MinWidth="120" ToolTipService.ShowDuration="20000"
+              ToolTip="Salva o memorial de acabamentos em Excel (aba Ambientes: Número, Nome, Pavimento, Parede, Piso, Rodapé, Soleira, Teto e Rodateto) com os valores que estão gravados nos ambientes. Mostra onde o arquivo será salvo antes de gravar."/>
+      <Button x:Name="btn_finish" Content="Finalizar" MinWidth="110"
+              ToolTip="Encerra o comando e fecha a janela."/>
       <Button x:Name="btn_cancel" Content="Cancelar" Margin="0" MinWidth="110"
               ToolTip="Fecha a janela sem gravar nada."/>
     </StackPanel>
@@ -2286,6 +2440,8 @@ class RoomFinishWindow(forms.WPFWindow):
         self.btn_update.Click += self.on_update
         self.btn_report.Click += self.on_report
         self.btn_cancel.Click += self.on_cancel
+        self.btn_finish.Click += self.on_finish
+        self.btn_excel.Click += self.on_export_excel
         self.tb_margin.TextChanged += self.on_settings_changed
 
     def _fill_help_search(self):
@@ -2343,7 +2499,7 @@ class RoomFinishWindow(forms.WPFWindow):
         margin = parse_m(self.tb_margin.Text)
         if margin is None:
             forms.alert(u"Margem de busca do forro inválida: '{}'.\n\nUse um valor em metros entre 0 e 10 "
-                        u"(ex.: 1,00).".format(to_unicode(self.tb_margin.Text)))
+                        u"(ex.: 0,10).".format(to_unicode(self.tb_margin.Text)))
             return
         self.search_above_m = margin
         self.mode = KEYNOTE_MODE
@@ -2753,6 +2909,45 @@ u"com tipo trocado, {} erro(s).".format(
 
     def on_cancel(self, sender, args):
         self.Close()
+
+    def on_finish(self, sender, args):
+        """Ends the command - no question, no message."""
+        self.Close()
+
+    def on_export_excel(self, sender, args):
+        """Memorial de acabamentos: the values written in the rooms now. The
+        save dialog shows where it goes, already named
+        'Memorial de acabamentos_<arquivo .rvt>'."""
+        init_dir = u""
+        try:
+            folder = os.path.dirname(to_unicode(doc.PathName))
+            if folder and os.path.isdir(folder):
+                init_dir = folder
+        except Exception:
+            pass
+        path = forms.save_file(file_ext="xlsx", files_filter=u"Pasta de Trabalho do Excel (*.xlsx)|*.xlsx",
+                               init_dir=init_dir, default_name=MEMORIAL_PREFIX + model_file_name(),
+                               title=u"Exportar memorial de acabamentos")
+        if not path:
+            return
+        path = to_unicode(path)
+        if not path.lower().endswith(u".xlsx"):
+            path += u".xlsx"
+        try:
+            rows = memorial_rows(self.rooms, self.targets)
+            write_xlsx(path, MEMORIAL_SHEET, rows)
+        except Exception as ex:
+            log_error(u"**ERRO:** não foi possível salvar o memorial em `{}`: `{}`".format(path, to_unicode(ex)))
+            forms.alert(u"Não foi possível salvar o Excel:\n\n{}\n\n{}\n\nSe o arquivo estiver aberto no Excel, "
+                        u"feche-o e tente de novo.".format(path, to_unicode(ex)))
+            return
+        pending = 0
+        if self.table is not None:
+            pending = len([1 for r in self.table.Rows if r["Kind"] in ("Fill", "Overwrite", "Clear")])
+        self.tb_status.Text = u"Memorial salvo: {} ({} ambiente(s)).{}".format(
+            path, len(rows) - 1,
+            u" A pré-visualização ainda tem {} campo(s) não gravados - o memorial mostra o que está no Revit agora."
+            .format(pending) if pending else u"")
 
 
 # ==================================================================
