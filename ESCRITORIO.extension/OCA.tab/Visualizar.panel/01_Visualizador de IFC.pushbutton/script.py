@@ -9,9 +9,8 @@ __title__ = u"Visualizador\nde IFC"
 __doc__ = u"Abre o visualizador de IFC (modelo 3D, ambientes, áreas e dados IFC) no navegador. Depois arraste ou selecione um arquivo .ifc para carregar."
 
 import os
-from pyrevit import script
+from pyrevit import forms
 
-saida = script.get_output()
 caminho_html = os.path.join(os.path.dirname(__file__), "ifc-hud-viewer.html")
 url = "file:///" + caminho_html.replace("\\", "/")
 
@@ -41,11 +40,10 @@ def abrir_no_navegador():
         return False
 
 
-if os.path.exists(caminho_html) and abrir_no_navegador():
-    saida.print_md(u"## Visualizador de IFC")
-    saida.print_md(u"**Visualizador aberto** no navegador: arraste um arquivo `.ifc` para a página ou clique em **Procurar…** para selecioná-lo.")
-    saida.print_md(u"- O arquivo é lido localmente; nada é enviado para a internet.")
-    saida.print_md(u"- É necessário acesso à internet (`cdn.jsdelivr.net`) para carregar as bibliotecas three.js e web-ifc.")
-    saida.print_md(u"- Use o Chrome, o Edge ou o Firefox atualizado como navegador padrão.")
-else:
-    saida.print_md(u"Não foi possível abrir o visualizador automaticamente. Abra por este endereço: {}".format(url))
+# Sem janela de saída: em caso de sucesso apenas o navegador abre.
+if not os.path.exists(caminho_html):
+    forms.alert(u"Arquivo do visualizador não encontrado:\n{}".format(caminho_html),
+                title=u"Visualizador de IFC")
+elif not abrir_no_navegador():
+    forms.alert(u"Não foi possível abrir o visualizador automaticamente.\n\nAbra por este endereço:\n{}".format(url),
+                title=u"Visualizador de IFC")
