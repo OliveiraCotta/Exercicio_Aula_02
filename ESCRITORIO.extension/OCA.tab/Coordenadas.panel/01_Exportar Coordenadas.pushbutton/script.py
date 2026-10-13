@@ -623,8 +623,7 @@ EXPLANATION = [
     u"propriedades do ponto (BASEPOINT_NORTHSOUTH/EASTWEST/ELEVATION_PARAM). "
     u"São coordenadas COMPARTILHADAS, não a posição XYZ interna.",
     u"• Os valores são conferidos com BasePoint.SharedPosition e com "
-    u"ProjectLocation.GetProjectPosition(BasePoint.Position) (coluna Verificação "
-    u"da aba Detalhes).",
+    u"ProjectLocation.GetProjectPosition(BasePoint.Position).",
     u"• Posição interna = BasePoint.Position, relativa à Origem Interna (fixa).",
     u"• Ângulo = 'Ângulo para o Norte verdadeiro' do sítio ativo, lido do "
     u"Project Base Point. É uma propriedade do sistema de coordenadas: vale "
@@ -634,8 +633,7 @@ EXPLANATION = [
     u"do Projeto. Medidos convertendo, pela API, o eixo +Y interno para "
     u"coordenadas compartilhadas (independe da convenção de sinal do ângulo).",
     u"• Vínculos: valores no sistema compartilhado do PRÓPRIO arquivo vinculado "
-    u"(sítio ativo salvo nele). A aba Detalhes mostra também onde o ponto cai "
-    u"nas coordenadas compartilhadas do hospedeiro, indicando se coincidem.",
+    u"(sítio ativo salvo nele).",
     u"• Todos os comprimentos estão na unidade do modelo atual; ângulos em graus "
     u"decimais.",
 ]
@@ -791,7 +789,7 @@ def rounded(value, prec):
 
 
 def build_sheets(records, units, prec, read_time, notes):
-    """Monta as 3 abas: Coordenadas (pedida), Detalhes (auditoria) e Notas."""
+    """Monta as 2 abas: Coordenadas (pedida) e Notas."""
     date_txt = read_time.strftime("%d/%m/%Y %H:%M:%S")
     L = lambda ft: rounded(units.length(ft), prec)
 
@@ -806,32 +804,10 @@ def build_sheets(records, units, prec, read_time, notes):
             pn_text(r, prec), tn_text(r, prec),
             units.label, date_txt, r["tipo"], u" | ".join(r["obs"]) or None])
 
-    def trio(t):
-        return [None, None, None] if t is None else [L(t[0]), L(t[1]), L(t[2])]
-
-    det_headers = [u"Modelo", u"Arquivo", u"Instância do vínculo", u"Tipo", u"Referência",
-                   u"Sítio ativo", u"X interno", u"Y interno (Norte do Projeto)", u"Z interno",
-                   u"SharedPosition L/O", u"SharedPosition N/S", u"SharedPosition Elev.",
-                   u"Origem interna L/O", u"Origem interna N/S", u"Origem interna Elev.",
-                   u"No hospedeiro L/O", u"No hospedeiro N/S", u"No hospedeiro Elev.",
-                   u"Survey Point clipped", u"Verificação", u"Unidade"]
-    det_rows = []
-    for r in records:
-        internal = r["internal"]
-        clipped = None
-        if r["clipped"] is not None and r["ref"] == REF_LABELS[REF_SP]:
-            clipped = u"Sim" if r["clipped"] else u"Não"
-        det_rows.append([r["model"], r["file"], r["instance"] or None, r["tipo"], r["ref"],
-                         r["location"]] + trio(internal) + trio(r["shared"])
-                        + trio(r["origin_shared"]) + trio(r["host_shared"])
-                        + [clipped, r["check"], units.label])
-
     note_rows = [[line or u" "] for line in notes]
     return [
         (u"Coordenadas", main_headers, main_rows,
          [30, 20, 14, 14, 14, 12, 18, 18, 18, 20, 18, 60]),
-        (u"Detalhes", det_headers, det_rows,
-         [30, 30, 30, 18, 20, 20] + [16] * 12 + [12, 60, 18]),
         (u"Notas", [u"Notas"], note_rows, [140]),
     ]
 
