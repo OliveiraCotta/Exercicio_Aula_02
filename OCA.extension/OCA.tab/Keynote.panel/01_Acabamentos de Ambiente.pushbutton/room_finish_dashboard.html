@@ -1,0 +1,500 @@
+<!DOCTYPE html>
+<html lang="pt-BR" data-theme="__OCA_THEME__">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Acabamentos de Ambiente</title>
+<style>
+  /* cores: padrão visual OCA (lib/oca_ds/tokens.py, tema do Revit), injetadas na geração do relatório */
+  /* valores padrão (tema claro) se o modelo for aberto sem a marca aplicada */
+  :root{ --oca-Accent:#1D7266;--oca-AccentInk:#FFFFFF;--oca-AccentSoft:#E3F4F1;--oca-Bg:#F3F5F6;--oca-Brand:#2FBAA7;--oca-BrandInk:#0E2226;--oca-Err:#AE251D;--oca-ErrSoft:#FCE4E2;--oca-Field:#FFFFFF;--oca-FieldLine:#808C94;--oca-Ink:#1D2428;--oca-Ink2:#5A666D;--oca-Line:#D5DBDF;--oca-Ok:#1D7438;--oca-OkSoft:#E5F3E9;--oca-Surface:#FFFFFF;--oca-Surface2:#EEF1F2;--oca-Violet:#6A55C2;--oca-Warn:#8A5100;--oca-WarnSoft:#FCF0DB; }
+  :root{ /*__OCA_TOKENS__*/
+    --bg:var(--oca-Bg); --panel:var(--oca-Surface); --line:var(--oca-Line);
+    --ink:var(--oca-Ink); --dim:var(--oca-Ink2);
+    --cy:var(--oca-Accent); --teal:var(--oca-Ok); --amber:var(--oca-Warn); --mag:var(--oca-Err); --violet:var(--oca-Violet);
+  }
+  *{box-sizing:border-box; margin:0; padding:0}
+  body{
+    background:var(--bg);
+    color:var(--ink); font-family:"Segoe UI",system-ui,sans-serif;
+    padding:36px clamp(16px,4vw,56px) 80px; min-height:100vh;
+  }
+  .mono{font-family:Consolas,"Cascadia Mono",monospace}
+  header{display:flex; justify-content:space-between; align-items:flex-end; gap:16px; flex-wrap:wrap;
+    border-bottom:1px solid var(--line); padding-bottom:18px; margin-bottom:28px}
+  .brand{display:flex; align-items:center; gap:18px}
+  .brand .oca-logo{height:46px; width:auto; flex:none}
+  header .stamp{flex:1 1 320px; min-width:0}
+  .oca-logo[src=""]{display:none}
+  html[data-theme=dark]{color-scheme:dark}
+  .eyebrow{font-size:11px; letter-spacing:.12em; color:var(--cy); text-transform:uppercase}
+  h1{font-size:clamp(22px,3vw,36px); font-weight:600; letter-spacing:.04em; margin-top:6px}
+  h1 span{color:var(--dim); font-weight:300}
+  .stamp{text-align:right; font-size:11px; color:var(--dim); letter-spacing:.12em; line-height:1.8}
+  .stamp b{color:var(--teal); font-weight:600}
+  h2{font-size:12px; letter-spacing:.1em; text-transform:uppercase; color:var(--dim);
+    margin:0 0 16px; display:flex; align-items:center; gap:12px}
+  h2::after{content:""; flex:1; height:1px; background:var(--line)}
+
+  .banner{border:1px solid color-mix(in srgb,var(--mag) 50%,transparent); background:color-mix(in srgb,var(--mag) 7%,transparent); color:var(--mag);
+    border-radius:4px; padding:12px 16px; margin-bottom:22px; font-size:13px; line-height:1.7}
+
+  /* stat cards - click to filter the table */
+  .cards{display:grid; grid-template-columns:repeat(auto-fit,minmax(150px,1fr)); gap:12px; margin-bottom:32px}
+  .card{background:var(--panel); border:1px solid var(--line); border-radius:4px; text-align:left;
+    padding:16px 14px 12px; position:relative; overflow:hidden; cursor:pointer; color:inherit;
+    font:inherit}
+  .card::before{content:""; position:absolute; top:0; left:0; width:100%; height:2px;
+    background:linear-gradient(90deg, var(--c,var(--cy)), transparent 70%)}
+  .card:hover{border-color:var(--cy)}
+  .card.on{border-color:var(--c,var(--cy)); background:color-mix(in srgb,var(--cy) 7%,transparent)}
+  .card .v{font-size:30px; font-weight:600; color:var(--c,var(--cy)); font-variant-numeric:tabular-nums}
+  .card .l{font-size:10px; letter-spacing:.06em; text-transform:uppercase; color:var(--dim); margin-top:6px; line-height:1.5}
+
+  /* filters */
+  .filters{display:grid; grid-template-columns:repeat(auto-fill,minmax(160px,1fr)); gap:10px 12px; margin-bottom:12px}
+  .f label{display:block; font-size:10px; letter-spacing:.06em; text-transform:uppercase; color:var(--dim); margin-bottom:5px}
+  .f input, .f select{width:100%; background:var(--oca-Field); border:1px solid var(--line); border-radius:3px;
+    color:var(--ink); padding:7px 9px; font-size:12px; font-family:inherit; outline:none}
+  .f input:focus, .f select:focus{border-color:var(--cy)}
+  .f.wide{grid-column:span 2}
+  .toolrow{display:flex; gap:12px; align-items:center; margin:4px 0 16px; flex-wrap:wrap}
+  .btn{background:transparent; border:1px solid var(--line); border-radius:3px; color:var(--cy);
+    font-family:inherit; font-size:11px; letter-spacing:.15em; text-transform:uppercase;
+    padding:8px 14px; cursor:pointer}
+  .btn:hover{border-color:var(--cy); background:color-mix(in srgb,var(--cy) 12%,transparent)}
+  .count{font-size:11px; color:var(--dim); letter-spacing:.15em; margin-left:auto}
+
+  /* table */
+  .tablewrap{overflow-x:auto}
+  table{width:100%; border-collapse:collapse; font-size:13px; min-width:900px}
+  th{font-size:10px; letter-spacing:.06em; text-transform:uppercase; color:var(--cy);
+    text-align:left; padding:10px 10px; border-bottom:1px solid var(--line);
+    cursor:pointer; user-select:none; white-space:nowrap}
+  th .dir{color:var(--amber)}
+  td{padding:9px 10px; border-bottom:1px solid color-mix(in srgb,var(--line) 70%,transparent); vertical-align:top}
+  tbody tr.room{cursor:pointer}
+  tbody tr.room:hover td{background:color-mix(in srgb,var(--cy) 5%,transparent)}
+  tbody tr.room.open td{background:color-mix(in srgb,var(--cy) 7%,transparent)}
+  .tag{display:inline-block; padding:2px 8px; border:1px solid var(--line); border-radius:2px;
+    font-size:11px; color:var(--dim)}
+  .kn{display:inline-block; margin:1px 4px 1px 0; padding:1px 7px; border-radius:2px;
+    border:1px solid color-mix(in srgb,var(--cy) 35%,transparent); background:color-mix(in srgb,var(--cy) 7%,transparent);
+    font-family:Consolas,monospace; font-size:12px; color:var(--cy)}
+  .st{font-size:11px; letter-spacing:.05em}
+  .st.missing{color:var(--mag)}
+  .st.nd{color:var(--dim)}
+  .st.partial{color:var(--amber)}
+  .cur{display:block; font-size:10.5px; color:var(--dim); margin-top:3px; letter-spacing:.03em}
+  .cur.diff{color:var(--amber)}
+  .badge{display:inline-block; font-size:10px; letter-spacing:.15em; padding:3px 8px; border-radius:2px;
+    border:1px solid currentColor; text-transform:uppercase}
+  .badge.OK{color:var(--teal)} .badge.WARNING{color:var(--amber)} .badge.ERROR{color:var(--mag)}
+  .upd{display:inline-block; margin-left:6px; font-size:10px; color:var(--violet); letter-spacing:.1em}
+
+  /* detail row */
+  tr.detail td{background:var(--oca-Surface2); padding:16px 18px 18px}
+  .dgrid{display:grid; grid-template-columns:repeat(auto-fit,minmax(260px,1fr)); gap:16px}
+  .dbox h4{font-size:10px; letter-spacing:.08em; text-transform:uppercase; color:var(--cy); margin-bottom:8px; font-weight:600}
+  .dbox ul{list-style:none; font-size:12px; line-height:1.7}
+  .dbox li{color:var(--ink)}
+  .dbox li .id{font-family:Consolas,monospace; color:var(--dim)}
+  .dbox li .src{color:var(--dim); font-size:11px}
+  .dbox li.iss{color:var(--mag)}
+  .dbox li.warn{color:var(--amber)}
+  .dbox li.note{color:var(--dim)}
+  .dmsg{color:var(--mag); font-size:12px; margin-bottom:10px}
+
+  .empty{text-align:center; padding:50px 0; color:var(--dim); letter-spacing:.06em}
+  .meta{margin-top:40px; font-size:11px; color:var(--dim); line-height:1.9}
+  .meta b{color:var(--ink); font-weight:600}
+  footer{margin-top:40px; font-size:10px; letter-spacing:.08em; color:var(--dim);
+    text-transform:uppercase; text-align:center}
+</style>
+</head>
+<body>
+<header>
+  <div class="brand">
+    <img class="oca-logo" src="__OCA_LOGO__" alt="" onerror="this.style.display='none'">
+    <div>
+      <div class="eyebrow">Acabamentos dos ambientes // Automação por Keynote</div>
+      <h1 id="proj"></h1>
+    </div>
+  </div>
+  <div class="stamp mono">GERADO EM <b id="stamp"></b><br>ORIGEM <b>REVIT · PYREVIT</b></div>
+</header>
+
+<div id="banner"></div>
+<div class="cards" id="cards"></div>
+
+<h2>Ambientes</h2>
+<div class="filters" id="filters">
+  <div class="f wide"><label for="q">Buscar</label><input id="q" type="search" placeholder="número, nome, keynote, id do elemento…" autocomplete="off"></div>
+  <div class="f"><label for="fNumber">Número do ambiente</label><input id="fNumber" type="text" placeholder="ex.: 101" autocomplete="off"></div>
+  <div class="f"><label for="fLevel">Pavimento</label><select id="fLevel"></select></div>
+  <div class="f"><label for="fStatus">Situação</label><select id="fStatus"></select></div>
+</div>
+<div class="toolrow">
+  <button class="btn" id="resetBtn">Limpar filtros</button>
+  <button class="btn" id="xlsxBtn" title="Baixa uma planilha Excel com os ambientes que estão na tabela (respeita os filtros): aba Ambientes com Número, Nome, Pavimento, Parede, Piso, Rodapé, Soleira, Teto e Rodateto.">&#x2913; Baixar Excel</button>
+  <span class="count" id="count"></span>
+</div>
+<div class="tablewrap" id="tableWrap"></div>
+
+<div id="unassigned"></div>
+<div class="meta" id="meta"></div>
+<footer>Acabamentos de Ambiente · gerado localmente · nenhum dado sai deste computador</footer>
+
+<script>
+const DATA = __DATA__;
+const ROOMS = DATA.rooms || [];
+// finishes come from the script: key, label, prefixes and numbered fields
+const GROUPS = DATA.groups || [];
+const FIN = GROUPS.map(g=>g.key);
+const FIN_LABEL = Object.fromEntries(GROUPS.map(g=>[g.key, g.label]));
+const FIN_PREFIX = Object.fromEntries(GROUPS.map(g=>[g.key, g.prefixes.join("/")]));
+const FIN_FIELDS = Object.fromEntries(GROUPS.map(g=>[g.key, g.slots.map(s=>s.name)]));
+const STATUS_PT = {OK:"OK", WARNING:"Atenção", ERROR:"Erro"};
+const KN = DATA.keynotes || {};
+const esc = s => String(s==null?"":s).replace(/[&<>"]/g,m=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[m]));
+const fmt = n => n.toLocaleString("pt-BR");
+const natural = (a,b) => String(a).localeCompare(String(b), undefined, {numeric:true, sensitivity:"base"});
+
+document.getElementById("proj").innerHTML =
+  esc(String(DATA.project||"").replace(/\.rvt$/i,"")) + " <span>/ acabamentos</span>";
+document.getElementById("stamp").textContent = DATA.generated || "";
+
+if((DATA.paramProblems||[]).length){
+  document.getElementById("banner").innerHTML = `<div class="banner">${DATA.paramProblems.map(esc).join("<br>")}
+    <br>Esses parâmetros aparecem no relatório, mas não foram gravados. Nada é criado automaticamente.</div>`;
+}
+
+/* ---- stats: each is also a filter ---- */
+const hasBounds = r => r.boundary === "ok";
+const missing = k => r => hasBounds(r) && r.finishes[k].state !== "ok";
+const STATS = [
+  {k:"total",   l:"Total de ambientes",                c:"var(--cy)",     f: r => true},
+  {k:"updated", l:"Ambientes atualizados",             c:"var(--violet)", f: r => r.updated},
+  {k:"nobound", l:"Ambientes sem contorno",            c:"var(--mag)",    f: r => !hasBounds(r)},
+  ...GROUPS.map(g=>({k:g.key, l:`Sem ${g.label.toLowerCase()} (${g.prefixes.join("/")})`, c:"var(--amber)", f: missing(g.key)})),
+  {k:"overflow",l:"Keynotes sem campo livre",          c:"var(--mag)",    f: r => hasBounds(r) && FIN.some(k=>(r.finishes[k].overflow||[]).length)},
+  {k:"tagmiss", l:"Identificador sem o tipo necessário", c:"var(--mag)",  f: r => (r.tags||[]).some(t=>t.missing)},
+  {k:"nokn",    l:"Ambientes com elementos sem Keynote", c:"var(--mag)",  f: r => hasBounds(r) && (r.issues||[]).length > 0},
+  {k:"mismatch",l:"Inconsistências prefixo / categoria", c:"var(--mag)",  f: r => hasBounds(r) && FIN.some(k=>(r.finishes[k].mismatches||[]).length)},
+  {k:"complete",l:"Ambientes com informação completa", c:"var(--teal)",   f: r => r.status === "OK"},
+];
+let statFilter = null;
+function renderCards(){
+  document.getElementById("cards").innerHTML = STATS.map(s=>{
+    const n = ROOMS.filter(s.f).length;
+    return `<button class="card${statFilter===s.k?" on":""}" data-k="${s.k}" style="--c:${s.c}"
+      title="Clique para mostrar só estes ambientes"><div class="v">${fmt(n)}</div><div class="l">${esc(s.l)}</div></button>`;
+  }).join("");
+  document.querySelectorAll(".card").forEach(b=>b.onclick=()=>{
+    statFilter = (statFilter===b.dataset.k || b.dataset.k==="total") ? null : b.dataset.k;
+    renderCards(); renderTable();
+  });
+}
+
+// one dropdown per finish, after the fixed filters
+document.getElementById("filters").insertAdjacentHTML("beforeend", GROUPS.map(g=>
+  `<div class="f"><label for="f_${g.key}" title="${esc(g.slots.map(s=>s.name).join(", "))}">${esc(g.label)} (${esc(g.prefixes.join("/"))})</label><select id="f_${g.key}"></select></div>`).join(""));
+
+/* ---- filter dropdowns ---- */
+function fillSelect(id, options){
+  document.getElementById(id).innerHTML = options.map(([v,l])=>`<option value="${esc(v)}">${esc(l)}</option>`).join("");
+}
+const levels = [...new Set(ROOMS.map(r=>r.level))];         // rooms arrive sorted by elevation
+fillSelect("fLevel", [["","Todos os pavimentos"], ...levels.map(l=>[l,l])]);
+fillSelect("fStatus", [["","Todas"],["OK","OK"],["WARNING","Atenção"],["ERROR","Erro"]]);
+FIN.forEach(k=>{
+  const keys = [...new Set(ROOMS.flatMap(r=>hasBounds(r)?r.finishes[k].keys:[]))].sort(natural);
+  fillSelect("f_"+k, [["","Todos"],["__issue","Ausente"],["__diff","Diferente do valor no Revit"],
+    ...keys.map(x=>[x, x + (KN[x] ? " - " + KN[x] : "")])]);
+});
+
+function matches(r){
+  const q = document.getElementById("q").value.trim().toLowerCase();
+  const num = document.getElementById("fNumber").value.trim().toLowerCase();
+  const lv = document.getElementById("fLevel").value;
+  const st = document.getElementById("fStatus").value;
+  if(statFilter){ const s = STATS.find(x=>x.k===statFilter); if(s && !s.f(r)) return false; }
+  if(lv && r.level !== lv) return false;
+  if(st && r.status !== st) return false;
+  if(num && !String(r.number).toLowerCase().includes(num)) return false;
+  for(const k of FIN){
+    const v = document.getElementById("f_"+k).value;
+    if(!v) continue;
+    const f = r.finishes[k];
+    if(v === "__issue"){ if(!hasBounds(r) || f.state === "ok") return false; }
+    else if(v === "__diff"){ if(!f.value || f.value === f.current) return false; }
+    else if(!f.keys.includes(v)) return false;
+  }
+  if(q){
+    const hay = [r.number, r.name, r.level, STATUS_PT[r.status], r.id,
+      ...FIN.flatMap(k=>[r.finishes[k].value, r.finishes[k].current, ...r.finishes[k].items.map(i=>i.id)]),
+      ...(r.issues||[]).map(i=>i.id), ...(r.others||[]).flatMap(o=>[o.id, ...(o.kn||[])])]
+      .join(" ").toLowerCase();
+    if(!hay.includes(q)) return false;
+  }
+  return true;
+}
+
+/* ---- table ---- */
+let sortK = null, sortDir = 1;
+const openRows = new Set();
+function finishCell(r, k){
+  if(!hasBounds(r)) return `<span class="st nd">-</span>`;
+  const f = r.finishes[k];
+  let main = f.keys.length
+    ? f.keys.map(x=>`<span class="kn" title="${esc(KN[x]||"")}">${esc(x)}</span>`).join("")
+    : `<span class="st missing">Ausente</span>`;
+  const flags = [...(f.mismatches||[]), ...(f.warnings||[]),
+    ...((f.overflow||[]).length ? [`Sem campo livre para: ${f.overflow.join(", ")}`] : [])];
+  if(flags.length) main += ` <span class="st partial" title="${esc(flags.join("\n"))}">!</span>`;
+  let cur = "";
+  if(f.current && f.current !== f.value){
+    cur = f.value ? `<span class="cur diff">no Revit: ${esc(f.current)}</span>`
+                  : `<span class="cur">no Revit: ${esc(f.current)} (mantido)</span>`;
+  }
+  return main + cur;
+}
+const STATUS_RANK = {ERROR:0, WARNING:1, OK:2};
+function renderTable(){
+  let list = ROOMS.filter(matches);
+  if(sortK){
+    list = list.slice().sort((a,b)=>{
+      let x, y;
+      if(sortK === "status"){ x = STATUS_RANK[a.status]; y = STATUS_RANK[b.status]; return (x-y)*sortDir; }
+      if(sortK === "rows"){ return ((a.rows||0)-(b.rows||0))*sortDir; }
+      if(FIN.includes(sortK)){ x = a.finishes[sortK].value; y = b.finishes[sortK].value; }
+      else { x = a[sortK]; y = b[sortK]; }
+      return natural(x||"", y||"") * sortDir;
+    });
+  }
+  document.getElementById("count").textContent = `${list.length} / ${ROOMS.length} AMBIENTES`;
+  const wrap = document.getElementById("tableWrap");
+  if(!list.length){ wrap.innerHTML = `<div class="empty">Nenhum ambiente corresponde aos filtros.</div>`; return; }
+  const arrow = k => sortK===k ? ` <span class="dir">${sortDir>0?"▲":"▼"}</span>` : "";
+  const cols = [["number","Número"],["name","Nome do ambiente"],["level","Pavimento"],
+    ...FIN.map(k=>[k, FIN_LABEL[k]]),["rows","Linhas"],["status","Situação"]];
+  const head = `<tr>${cols.map(([k,l])=>`<th data-k="${k}"${FIN_FIELDS[k]?` title="${esc(FIN_FIELDS[k].join(", "))}"`:""}>${l}${arrow(k)}</th>`).join("")}</tr>`;
+  const body = list.map(r=>{
+    const open = openRows.has(r.id);
+    const row = `<tr class="room${open?" open":""}" data-id="${r.id}">
+      <td class="mono">${esc(r.number)||"-"}</td>
+      <td>${esc(r.name)||"-"}</td>
+      <td><span class="tag">${esc(r.level)}</span></td>
+      ${FIN.map(k=>`<td>${finishCell(r,k)}</td>`).join("")}
+      <td class="mono" title="Linhas do identificador com valor">${r.rows||"-"}${(r.tags||[]).some(t=>t.missing)?` <span class="st missing" title="Tipo de identificador ausente">!</span>`:""}</td>
+      <td><span class="badge ${r.status}">${STATUS_PT[r.status]||r.status}</span>${r.updated?`<span class="upd">ATUALIZADO</span>`:""}</td></tr>`;
+    return open ? row + detailRow(r, cols.length) : row;
+  }).join("");
+  wrap.innerHTML = `<table><thead>${head}</thead><tbody>${body}</tbody></table>`;
+  wrap.querySelectorAll("th[data-k]").forEach(th=>th.onclick=()=>{
+    const k = th.dataset.k; sortDir = (sortK===k) ? -sortDir : 1; sortK = k; renderTable();
+  });
+  wrap.querySelectorAll("tr.room").forEach(tr=>tr.onclick=()=>{
+    const id = +tr.dataset.id; openRows.has(id) ? openRows.delete(id) : openRows.add(id); renderTable();
+  });
+}
+function detailRow(r, span){
+  let msgs = "";
+  if(r.boundaryMsg) msgs += `<div class="dmsg">${esc(r.boundaryMsg)}</div>`;
+  if(r.writeError) msgs += `<div class="dmsg">Erro ao gravar - ${esc(r.writeError)}</div>`;
+  const elLine = (i, tail) => {
+    const link = i.link ? ` <span class="src">(vínculo: ${esc(i.link)})</span>` : "";
+    const rels = (i.rels||[]).length ? ` <span class="src">[${esc(i.rels.join(", "))}]</span>` : "";
+    return `${esc(i.cat)} <span class="id">${i.id}</span>${link}${rels} ${tail}`;
+  };
+  const boxes = hasBounds(r) ? FIN.map(k=>{
+    const f = r.finishes[k];
+    const items = f.items.map(i=>{
+      const kn = i.kn.map(x=>`<span class="kn">${esc(x)}</span>`).join("");
+      const src = i.src.length ? ` <span class="src">${esc(i.src.join(", "))}</span>` : "";
+      return `<li>${elLine(i, "→ " + kn + src)}</li>`;
+    });
+    const mism = (f.mismatches||[]).map(m=>`<li class="warn">${esc(m)}</li>`);
+    const warn = (f.warnings||[]).map(w=>`<li class="warn">${esc(w)}</li>`);
+    const notes = (f.notes||[]).map(n=>`<li class="note">${esc(n)}</li>`);
+    const over = (f.overflow||[]).length
+      ? [`<li class="warn">Sem campo livre para ${esc(f.overflow.join(", "))} - só há ${(FIN_FIELDS[k]||[]).length} campos.</li>`] : [];
+    const fields = (f.slots||[]).map(sl=>`<li class="note">${esc(sl.name)}: <b style="color:var(--ink)">${esc(sl.new||"-")}</b>`
+      + (sl.current && sl.current!==sl.new ? ` · no Revit: ${esc(sl.current)}` : "")
+      + (sl.change ? ` <span class="src">[${esc(sl.change)}]</span>` : "") + `</li>`);
+    return `<div class="dbox"><h4>${FIN_LABEL[k]} <span class="src">(${FIN_PREFIX[k]})</span></h4><ul>${[...items,...mism,...warn,...over,...notes,...fields].join("")}</ul></div>`;
+  }).join("") : "";
+  const iss = (r.issues||[]).map(i=>`<li class="iss">${elLine(i, "- " + esc(i.msg))}</li>`);
+  const oth = (r.others||[]).map(o=>`<li class="note">${elLine(o, (o.kn||[]).map(x=>`<span class="kn">${esc(x)}</span>`).join("") + " " + esc(o.msg))}</li>`);
+  const tagLines = (r.tags||[]).map(t=> t.missing
+      ? `<li class="iss">Vista ${esc(t.view)}: ${esc(t.current)} → <b>${esc(t.new)}</b> - ${esc(t.msg)}</li>`
+      : `<li>Vista ${esc(t.view)}: ${esc(t.current)} → <span class="kn">${esc(t.new)}</span>${t.msg?` <span class="src">${esc(t.msg)}</span>`:""}</li>`);
+  const tagBox = hasBounds(r) ? `<div class="dbox"><h4>Identificador <span class="src">(${r.rows||0} linha(s) com valor)</span></h4><ul>${
+      tagLines.join("") || `<li class="note">${r.rows ? "Nenhum identificador para trocar (já está no tipo certo ou o ambiente não tem identificador REVESTIMENTOS)." : "Ambiente sem acabamento: o identificador não é alterado."}</li>`}</ul></div>` : "";
+  const otherBox = (iss.length || oth.length)
+    ? `<div class="dbox"><h4>Outros elementos</h4><ul>${[...iss,...oth].join("")}</ul></div>` : "";
+  return `<tr class="detail"><td colspan="${span}">${msgs}<div class="dgrid">${boxes}${tagBox}${otherBox}</div>
+    <div class="cur">Id do ambiente ${r.id}${r.phase?" · fase "+esc(r.phase):""}</div></td></tr>`;
+}
+
+/* ---- wiring ---- */
+["q","fNumber"].forEach(id=>document.getElementById(id).addEventListener("input", renderTable));
+["fLevel","fStatus",...FIN.map(k=>"f_"+k)].forEach(id=>document.getElementById(id).addEventListener("change", renderTable));
+document.getElementById("resetBtn").onclick = ()=>{
+  document.querySelectorAll(".filters input, .filters select").forEach(el=>el.value="");
+  statFilter = null; renderCards(); renderTable();
+};
+
+/* ---- elements with a finish Keynote that no room claimed ---- */
+const UN = DATA.unassigned || [];
+if(UN.length){
+  document.getElementById("unassigned").innerHTML =
+    `<h2 style="margin-top:40px">Não atribuídos a nenhum ambiente · ${fmt(UN.length)}</h2>
+     <div class="tablewrap"><table><thead><tr><th>Categoria</th><th>Id do elemento</th><th>Keynote</th><th>Motivo</th></tr></thead><tbody>` +
+    UN.map(u=>`<tr><td>${esc(u.cat)}${u.link?` <span class="cur">vínculo: ${esc(u.link)}</span>`:""}</td>
+      <td class="mono">${u.id}</td>
+      <td>${u.kn?`<span class="kn">${esc(u.kn)}</span>`:`<span class="st missing">sem Keynote</span>`}</td>
+      <td class="st nd">${esc(u.reason)}</td></tr>`).join("") +
+    `</tbody></table></div>`;
+}
+const CS = DATA.containStats || {};
+
+const RULES = DATA.prefixRules || {};
+document.getElementById("meta").innerHTML =
+  `<b>Classificação (somente pelo prefixo da Keynote):</b> ` +
+    Object.keys(RULES).map(p=>`${esc(p)}… → ${esc(RULES[p])}`).join(" · ") + ` · outros prefixos são ignorados · cada Keynote diferente ocupa um campo, em ordem (01, 02, …) · moldura de parede sem prefixo RT/RD vai para o Rodapé<br>` +
+  `<b>Fonte da Keynote:</b> ${esc(DATA.keynoteSource)}<br>` +
+  `<b>Contorno do ambiente:</b> ${esc(DATA.boundaryLocation)} · <b>Margem de busca do forro:</b> ${esc(String((DATA.searchAboveM!=null?DATA.searchAboveM:1).toFixed(2)).replace(".", ","))} m · <b>Separador:</b> "${esc(DATA.separator)}"<br>` +
+  `<b>Campos:</b> ` + GROUPS.map(g=>{ const miss = g.slots.filter(x=>!x.found).map(x=>x.name);
+    return `${esc(g.label)}: ${g.slots.length - miss.length}/${g.slots.length}` + (miss.length ? ` <span style="color:var(--mag)">(faltando: ${esc(miss.join(", "))})</span>` : ""); }).join(" · ") +
+  `<br><b>Ambiente por ponto:</b> ${fmt(CS.tested||0)} elementos testados · molduras de parede: ${fmt(CS.sweeps||0)} no modelo, ${fmt(CS.sweeps_in_rooms||0)} dentro de um ambiente · ${fmt(UN.length)} fora de qualquer ambiente` +
+  `<br><b>Identificador:</b> ` + ((DATA.tagFamilies||[]).length ? (DATA.tagFamilies.map(esc).join(", ") +
+      ((DATA.tagMissing||[]).length ? ` <span style="color:var(--mag)">(faltando: ${DATA.tagMissing.map(m=>esc(m.family)+": "+m.types.map(esc).join(", ")).join(" · ")})</span>` : ` (tipos REVESTIMENTOS 01 a 05 encontrados)`))
+      : `nenhuma família com tipos REVESTIMENTOS - os identificadores não são trocados`) +
+  ` · linhas vazias recebem "${esc(DATA.placeholder||"-")}" quando o ambiente tem pelo menos uma linha preenchida` +
+  `<br><b>Arquivo de Keynotes:</b> ${Object.keys(KN).length ? fmt(Object.keys(KN).length)+" chaves carregadas" : "não carregado - as chaves não são validadas"}`;
+
+/* ---- Excel export: .xlsx built in the browser, no library, works offline ----
+   Exports the rooms currently shown in the table (filters are respected). */
+// estilos do Excel no padrão OCA (lib/oca_ds/excel.py: styles.xml, índices de
+// estilo, impressão), injetados por brand_report; null no HTML aberto cru, e
+// então a planilha sai como antes. Só muda a formatação, nunca os valores.
+const OCA_XLSX = /*__OCA_XLSX__*/null;
+// cabeçalho/rodapé de impressão do padrão OCA: "OCA · título | projeto" e "aba | Página x de y"
+const ocaHF = (title, project) => {
+  if (!OCA_XLSX || !OCA_XLSX.headerFooter) return "";
+  const hf = t => String(t||"").slice(0,100).replace(/&/g,"&&").replace(/&/g,"&amp;")
+    .replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;");
+  return OCA_XLSX.headerFooter.split("@title@").join(hf(title)).split("@project@").join(hf(project));
+};
+const XLSX_WRITER = (()=>{
+  const CRC = (()=>{ const t = new Uint32Array(256);
+    for(let n=0;n<256;n++){ let c=n; for(let k=0;k<8;k++) c=(c&1)?(0xEDB88320^(c>>>1)):(c>>>1); t[n]=c>>>0; }
+    return t; })();
+  const crc32 = b=>{ let c=0xFFFFFFFF; for(let i=0;i<b.length;i++) c=CRC[(c^b[i])&0xFF]^(c>>>8); return (c^0xFFFFFFFF)>>>0; };
+  const enc = s=>new TextEncoder().encode(s);
+  const xml = s=>String(s).replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F]/g,"")
+    .replace(/[<>&"']/g, m=>({"<":"&lt;",">":"&gt;","&":"&amp;",'"':"&quot;","'":"&apos;"}[m]));
+  const colRef = i=>{ let s=""; i++; while(i>0){ const m=(i-1)%26; s=String.fromCharCode(65+m)+s; i=(i-m-1)/26|0; } return s; };
+  const sheetName = n=>String(n).replace(/[\[\]:*?\/\\]/g," ").slice(0,31);
+
+  // sheets: [[name, rows]]; filter only on tables with data rows
+  const hasFilter = sh=>sh[1].length > 1;
+
+  // cabeçalho: estilo 1 do STYLES abaixo, ou o cabeçalho OCA; dados: sem estilo, ou texto OCA
+  const S_HEADER = OCA_XLSX ? OCA_XLSX.s.header : 1;
+  const S_TEXT = OCA_XLSX ? OCA_XLSX.s.text : null;
+
+  function sheetXml(rows, filtered){
+    const ncol = Math.max(1, ...rows.map(r=>r.length));
+    const widths = Array.from({length:ncol}, (_,c)=>Math.min(60, Math.max(8,
+      ...rows.map(r=>String(r[c]==null?"":r[c]).length + 2))));
+    const cols = `<cols>${widths.map((w,i)=>`<col min="${i+1}" max="${i+1}" width="${w}" customWidth="1"/>`).join("")}</cols>`;
+    const data = rows.map((r,ri)=>`<row r="${ri+1}">${r.map((v,ci)=>{
+      if(v==null || v==="") return "";
+      const ref = colRef(ci)+(ri+1), st = ri===0 ? ` s="${S_HEADER}"` : (S_TEXT!=null ? ` s="${S_TEXT}"` : "");
+      if(typeof v==="number" && isFinite(v)) return `<c r="${ref}"${st}><v>${v}</v></c>`;
+      return `<c r="${ref}"${st} t="inlineStr"><is><t xml:space="preserve">${xml(v)}</t></is></c>`;
+    }).join("")}</row>`).join("");
+    const filter = filtered ? `<autoFilter ref="A1:${colRef(ncol-1)}${rows.length}"/>` : "";
+    return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">${OCA_XLSX ? OCA_XLSX.fitToPage : ""}<sheetViews><sheetView workbookViewId="0"><pane ySplit="1" topLeftCell="A2" activePane="bottomLeft" state="frozen"/></sheetView></sheetViews>${cols}<sheetData>${data}</sheetData>${filter}${OCA_XLSX ? OCA_XLSX.print + ocaHF("Acabamentos de Ambiente", DATA.project) : ""}</worksheet>`;
+  }
+
+  const STYLES = OCA_XLSX ? OCA_XLSX.styles : `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><fonts count="2"><font><sz val="11"/><name val="Calibri"/></font><font><b/><sz val="11"/><color rgb="FFFFFFFF"/><name val="Calibri"/></font></fonts><fills count="3"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill><fill><patternFill patternType="solid"><fgColor rgb="FF0E1526"/><bgColor indexed="64"/></patternFill></fill></fills><borders count="1"><border><left/><right/><top/><bottom/><diagonal/></border></borders><cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs><cellXfs count="2"><xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/><xf numFmtId="0" fontId="1" fillId="2" borderId="0" xfId="0" applyFont="1" applyFill="1"/></cellXfs><cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles></styleSheet>`;
+
+  function zip(parts){
+    const chunks = [], central = []; let offset = 0;
+    const u16 = n=>[n&0xFF,(n>>8)&0xFF], u32 = n=>[n&0xFF,(n>>8)&0xFF,(n>>16)&0xFF,(n>>>24)&0xFF];
+    parts.forEach(([name, content])=>{
+      const nameB = enc(name), dataB = enc(content), crc = crc32(dataB);
+      const local = [].concat(u32(0x04034b50),u16(20),u16(0x0800),u16(0),u16(0),u16(0x21),
+        u32(crc),u32(dataB.length),u32(dataB.length),u16(nameB.length),u16(0));
+      chunks.push(new Uint8Array(local), nameB, dataB);
+      central.push({nameB, crc, size:dataB.length, offset});
+      offset += local.length + nameB.length + dataB.length;
+    });
+    const cdStart = offset, cd = [];
+    central.forEach(e=>{ cd.push(new Uint8Array([].concat(u32(0x02014b50),u16(20),u16(20),u16(0x0800),u16(0),u16(0),u16(0x21),
+      u32(e.crc),u32(e.size),u32(e.size),u16(e.nameB.length),u16(0),u16(0),u16(0),u16(0),u32(0),u32(e.offset))), e.nameB); });
+    const cdBytes = cd.reduce((a,b)=>a+b.length, 0);
+    const end = new Uint8Array([].concat(u32(0x06054b50),u16(0),u16(0),u16(central.length),u16(central.length),
+      u32(cdBytes),u32(cdStart),u16(0)));
+    return new Blob([...chunks, ...cd, end], {type:"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"});
+  }
+
+  // sheets: [[name, rows]]
+  return function build(sheets){
+    const names = sheets.map(([n])=>sheetName(n));
+    const defined = sheets.map((sh, i)=> hasFilter(sh)
+      ? `<definedName name="_xlnm._FilterDatabase" localSheetId="${i}" hidden="1">'${xml(names[i]).replace(/'/g,"''")}'!$A$1:$${colRef(Math.max(1,...sh[1].map(r=>r.length))-1)}$${sh[1].length}</definedName>` : "").join("");
+    const parts = [
+      ["[Content_Types].xml", `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/><Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/>${
+        names.map((_,i)=>`<Override PartName="/xl/worksheets/sheet${i+1}.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>`).join("")}</Types>`],
+      ["_rels/.rels", `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/></Relationships>`],
+      ["xl/workbook.xml", `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets>${
+        names.map((n,i)=>`<sheet name="${xml(n)}" sheetId="${i+1}" r:id="rId${i+1}"/>`).join("")}</sheets>${defined ? `<definedNames>${defined}</definedNames>` : ""}</workbook>`],
+      ["xl/_rels/workbook.xml.rels", `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">${
+        names.map((_,i)=>`<Relationship Id="rId${i+1}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet${i+1}.xml"/>`).join("")}<Relationship Id="rId${names.length+1}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/></Relationships>`],
+      ["xl/styles.xml", STYLES],
+      ...sheets.map((sh, i)=>[`xl/worksheets/sheet${i+1}.xml`, sheetXml(sh[1], hasFilter(sh))]),
+    ];
+    return zip(parts);
+  };
+})();
+
+/* Ambientes: one column per finish with its values joined by " / " (the
+   "-" placeholder is left out). */
+const EXCEL_FINISHES = ["wall", "floor", "base", "sill", "ceiling", "crown"];
+function exportSheets(){
+  const list = ROOMS.filter(matches);
+  const fins = EXCEL_FINISHES.filter(k=>FIN.includes(k));
+  const isReal = v=>v && v !== (DATA.placeholder||"-");
+  const ambientes = [["Número","Nome do ambiente","Pavimento", ...fins.map(k=>FIN_LABEL[k])]];
+  for(const r of list){
+    ambientes.push([r.number, r.name, r.level,
+      ...fins.map(k=>(r.finishes[k].slots||[]).map(s=>s.new).filter(isReal).join(DATA.separator||" / "))]);
+  }
+  return [["Ambientes", ambientes]];
+}
+
+document.getElementById("xlsxBtn").onclick = ()=>{
+  const blob = XLSX_WRITER(exportSheets());
+  const proj = String(DATA.project||"projeto").replace(/\.rvt$/i,"").replace(/[\\/:*?"<>|]+/g,"_");
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = `${proj}_acabamentos.xlsx`;
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(()=>URL.revokeObjectURL(a.href), 2000);
+};
+
+renderCards();
+renderTable();
+</script>
+</body>
+</html>
