@@ -61,6 +61,8 @@ XAML = build_xaml(title=__title__, subtitle=__doc__, body=BODY,
 ```
 
 - A classe da janela continua igual (`forms.WPFWindow.__init__(self, XAML, literal_string=True)`).
+- `logo=False` tira o logo do cabeçalho (o ícone da janela continua), para janelas que já
+  mostram o logo no corpo, como o **Sobre**.
 - **Botão principal:** verbo explícito, só a primeira letra maiúscula ("Atualizar descrições"),
   `Style="{StaticResource oca.Primary}"`, primeiro do rodapé à direita. Um por janela.
 - **Nunca** escreva cores no XAML do comando: use os pincéis `oca.*`.

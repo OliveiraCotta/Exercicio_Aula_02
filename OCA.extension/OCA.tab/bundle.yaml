@@ -1,0 +1,8 @@
+# Ordem dos paineis na aba OCA (da esquerda para a direita). Painel novo:
+# incluir o nome aqui (o nome da pasta, sem ".panel").
+layout:
+  - Sobre
+  - Coordenadas
+  - Keynote
+  - Vistas
+  - Visualizar

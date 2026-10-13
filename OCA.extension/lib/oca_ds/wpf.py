@@ -705,7 +705,7 @@ def _fill(template, values):
 
 
 def build_xaml(title, body, footer_right, subtitle=u"", footer_left=u"",
-               size="S", height=None, width=None, resources=u"", dark=None):
+               size="S", height=None, width=None, resources=u"", dark=None, logo=True):
     """XAML completo de uma janela no padrão OCA.
 
     title         nome do comando (aceita o __title__ com quebras de linha).
@@ -719,6 +719,8 @@ def build_xaml(title, body, footer_right, subtitle=u"", footer_left=u"",
     resources     XAML extra para <Window.Resources> (estilos que o código busca com
                   FindResource ou que precisam valer na janela inteira).
     dark          None = segue o tema do Revit (padrão); True/False força o tema.
+    logo          False tira o logo do cabeçalho (o ícone da janela continua), para
+                  janelas que mostram o logo no corpo, como o Sobre.
     """
     is_dark = theme.is_dark(dark)
     name = command_name(title)
@@ -734,7 +736,7 @@ def build_xaml(title, body, footer_right, subtitle=u"", footer_left=u"",
         "font": tokens.FONT,
         "theme": u"dark" if is_dark else u"light",
         "icon": _ICON_XAML.replace(u"@uri@", xml_escape(uri)) if uri else u"",
-        "logo": _LOGO_XAML.replace(u"@uri@", xml_escape(uri)) if uri else u"",
+        "logo": _LOGO_XAML.replace(u"@uri@", xml_escape(uri)) if uri and logo else u"",
         "subtitle": _SUBTITLE_XAML.replace(u"@subtitle@", xml_escape(u" ".join(unicode(subtitle).split())))
                     if subtitle else u"",
         "resources": window_resources(is_dark) + (resources or u""),
