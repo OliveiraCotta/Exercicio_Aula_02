@@ -1,11 +1,13 @@
 <!DOCTYPE html>
-<html lang="pt-BR">
+<html lang="pt-BR" data-theme="__OCA_THEME__">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Acabamentos de Ambiente</title>
 <style>
   /* cores: padrão visual OCA (lib/oca_ds/tokens.py, tema do Revit), injetadas na geração do relatório */
+  /* valores padrão (tema claro) se o modelo for aberto sem a marca aplicada */
+  :root{ --oca-Accent:#1D7266;--oca-AccentInk:#FFFFFF;--oca-AccentSoft:#E3F4F1;--oca-Bg:#F3F5F6;--oca-Brand:#2FBAA7;--oca-BrandInk:#0E2226;--oca-Err:#AE251D;--oca-ErrSoft:#FCE4E2;--oca-Field:#FFFFFF;--oca-FieldLine:#808C94;--oca-Ink:#1D2428;--oca-Ink2:#5A666D;--oca-Line:#D5DBDF;--oca-Ok:#1D7438;--oca-OkSoft:#E5F3E9;--oca-Surface:#FFFFFF;--oca-Surface2:#EEF1F2;--oca-Violet:#6A55C2;--oca-Warn:#8A5100;--oca-WarnSoft:#FCF0DB; }
   :root{ /*__OCA_TOKENS__*/
     --bg:var(--oca-Bg); --panel:var(--oca-Surface); --line:var(--oca-Line);
     --ink:var(--oca-Ink); --dim:var(--oca-Ink2);
@@ -24,6 +26,7 @@
   .brand .oca-logo{height:46px; width:auto; flex:none}
   header .stamp{flex:1 1 320px; min-width:0}
   .oca-logo[src=""]{display:none}
+  html[data-theme=dark]{color-scheme:dark}
   .eyebrow{font-size:11px; letter-spacing:.12em; color:var(--cy); text-transform:uppercase}
   h1{font-size:clamp(22px,3vw,36px); font-weight:600; letter-spacing:.04em; margin-top:6px}
   h1 span{color:var(--dim); font-weight:300}
@@ -112,7 +115,7 @@
 <body>
 <header>
   <div class="brand">
-    <img class="oca-logo" src="__OCA_LOGO__" alt="">
+    <img class="oca-logo" src="__OCA_LOGO__" alt="" onerror="this.style.display='none'">
     <div>
       <div class="eyebrow">Acabamentos dos ambientes // Automação por Keynote</div>
       <h1 id="proj"></h1>
@@ -377,6 +380,13 @@ document.getElementById("meta").innerHTML =
 // estilo, impressão), injetados por brand_report; null no HTML aberto cru, e
 // então a planilha sai como antes. Só muda a formatação, nunca os valores.
 const OCA_XLSX = /*__OCA_XLSX__*/null;
+// cabeçalho/rodapé de impressão do padrão OCA: "OCA · título | projeto" e "aba | Página x de y"
+const ocaHF = (title, project) => {
+  if (!OCA_XLSX || !OCA_XLSX.headerFooter) return "";
+  const hf = t => String(t||"").slice(0,100).replace(/&/g,"&&").replace(/&/g,"&amp;")
+    .replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;");
+  return OCA_XLSX.headerFooter.split("@title@").join(hf(title)).split("@project@").join(hf(project));
+};
 const XLSX_WRITER = (()=>{
   const CRC = (()=>{ const t = new Uint32Array(256);
     for(let n=0;n<256;n++){ let c=n; for(let k=0;k<8;k++) c=(c&1)?(0xEDB88320^(c>>>1)):(c>>>1); t[n]=c>>>0; }
@@ -408,7 +418,7 @@ const XLSX_WRITER = (()=>{
     }).join("")}</row>`).join("");
     const filter = filtered ? `<autoFilter ref="A1:${colRef(ncol-1)}${rows.length}"/>` : "";
     return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
-<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">${OCA_XLSX ? OCA_XLSX.fitToPage : ""}<sheetViews><sheetView workbookViewId="0"><pane ySplit="1" topLeftCell="A2" activePane="bottomLeft" state="frozen"/></sheetView></sheetViews>${cols}<sheetData>${data}</sheetData>${filter}${OCA_XLSX ? OCA_XLSX.print : ""}</worksheet>`;
+<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">${OCA_XLSX ? OCA_XLSX.fitToPage : ""}<sheetViews><sheetView workbookViewId="0"><pane ySplit="1" topLeftCell="A2" activePane="bottomLeft" state="frozen"/></sheetView></sheetViews>${cols}<sheetData>${data}</sheetData>${filter}${OCA_XLSX ? OCA_XLSX.print + ocaHF("Acabamentos de Ambiente", DATA.project) : ""}</worksheet>`;
   }
 
   const STYLES = OCA_XLSX ? OCA_XLSX.styles : `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>

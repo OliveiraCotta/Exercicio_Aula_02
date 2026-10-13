@@ -211,7 +211,9 @@ STYLES = u"""
                 <Setter TargetName="bd" Property="BorderBrush" Value="{StaticResource oca.Accent}"/>
               </Trigger>
               <Trigger Property="IsEnabled" Value="False">
-                <Setter TargetName="bd" Property="Opacity" Value="0.45"/>
+                <Setter Property="Foreground" Value="{StaticResource oca.Ink2}"/>
+                <Setter TargetName="bd" Property="Background" Value="{StaticResource oca.Surface2}"/>
+                <Setter TargetName="bd" Property="BorderBrush" Value="{StaticResource oca.Line}"/>
               </Trigger>
             </ControlTemplate.Triggers>
           </ControlTemplate>
@@ -262,7 +264,8 @@ STYLES = u"""
             </Grid>
             <ControlTemplate.Triggers>
               <Trigger Property="IsEnabled" Value="False">
-                <Setter Property="Opacity" Value="0.45"/>
+                <Setter Property="Foreground" Value="{StaticResource oca.Ink2}"/>
+                <Setter Property="Opacity" Value="0.7"/>
               </Trigger>
             </ControlTemplate.Triggers>
           </ControlTemplate>
@@ -324,7 +327,7 @@ STYLES = u"""
       <Setter Property="Template">
         <Setter.Value>
           <ControlTemplate TargetType="Thumb">
-            <Border x:Name="bd" CornerRadius="3" Background="{StaticResource oca.FieldLine}"/>
+            <Border x:Name="bd" CornerRadius="{StaticResource oca.RadiusControl}" Background="{StaticResource oca.FieldLine}"/>
             <ControlTemplate.Triggers>
               <Trigger Property="IsMouseOver" Value="True">
                 <Setter TargetName="bd" Property="Background" Value="{StaticResource oca.Ink2}"/>
@@ -502,7 +505,7 @@ STYLES = u"""
     </Style>
     <Style TargetType="DataGridCell">
       <Setter Property="BorderThickness" Value="0"/>
-      <Setter Property="Padding" Value="6,4"/>
+      <Setter Property="Padding" Value="6,2"/>
       <Setter Property="Template">
         <Setter.Value>
           <ControlTemplate TargetType="DataGridCell">
@@ -552,7 +555,8 @@ STYLES = u"""
                 <Setter TargetName="dot" Property="Visibility" Value="Visible"/>
               </Trigger>
               <Trigger Property="IsEnabled" Value="False">
-                <Setter Property="Opacity" Value="0.45"/>
+                <Setter Property="Foreground" Value="{StaticResource oca.Ink2}"/>
+                <Setter TargetName="ring" Property="Stroke" Value="{StaticResource oca.Line}"/>
               </Trigger>
             </ControlTemplate.Triggers>
           </ControlTemplate>
@@ -571,7 +575,7 @@ STYLES = u"""
                 <ColumnDefinition Width="Auto"/>
                 <ColumnDefinition Width="*"/>
               </Grid.ColumnDefinitions>
-              <Border x:Name="box" Width="14" Height="14" CornerRadius="3" BorderThickness="1" VerticalAlignment="Center"
+              <Border x:Name="box" Width="14" Height="14" CornerRadius="{StaticResource oca.RadiusControl}" BorderThickness="1" VerticalAlignment="Center"
                       Background="{StaticResource oca.Field}" BorderBrush="{StaticResource oca.FieldLine}">
                 <Path x:Name="mark" Data="M2,6 L5,9 L10,3" Stroke="{StaticResource oca.AccentInk}" StrokeThickness="1.8"
                       Visibility="Collapsed"/>
@@ -592,7 +596,8 @@ STYLES = u"""
                 <Setter TargetName="mark" Property="Visibility" Value="Visible"/>
               </Trigger>
               <Trigger Property="IsEnabled" Value="False">
-                <Setter Property="Opacity" Value="0.45"/>
+                <Setter Property="Foreground" Value="{StaticResource oca.Ink2}"/>
+                <Setter TargetName="box" Property="BorderBrush" Value="{StaticResource oca.Line}"/>
               </Trigger>
             </ControlTemplate.Triggers>
           </ControlTemplate>

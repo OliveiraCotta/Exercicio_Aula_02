@@ -673,7 +673,7 @@ def build_summary(document, records, units, prec, read_time):
         (u"Ponto de referência", u", ".join(sorted(set(r["ref"] for r in records)))),
         (u"Unidade", units.label),
         (u"Casas decimais", prec),
-        (u"Modelos lidos", len(records)),
+        (u"Linhas exportadas", len(records)),
         (u"Linhas com observação", sum(1 for r in records if r["obs"])),
     ]
 
@@ -700,6 +700,10 @@ def build_xlsx_parts(sheets, prec, project=u"", summary=None):
 def write_xlsx(path, parts):
     """Grava o pacote ZIP. FileMode.Create falha ANTES de truncar se o arquivo
     estiver aberto no Excel, então um arquivo existente nunca é corrompido."""
+    # binários (logo do Resumo) convertidos ANTES de abrir o arquivo: se a conversão
+    # falhar, o arquivo existente continua intacto
+    raw_parts = dict((name, Array[Byte](data)) for name, data in parts.items()
+                     if isinstance(data, bytearray))
     # getattr: 'None' é palavra reservada no Python 3 (motor CPython do pyRevit)
     stream = FileStream(path, FileMode.Create, FileAccess.Write,
                         getattr(FileShare, "None"))
@@ -708,8 +712,8 @@ def write_xlsx(path, parts):
         try:
             for name in sorted(parts):
                 entry = archive.CreateEntry(name)
-                if isinstance(parts[name], bytearray):     # logo do Resumo (PNG)
-                    raw = Array[Byte](parts[name])
+                if name in raw_parts:                      # logo do Resumo (PNG)
+                    raw = raw_parts[name]
                     out = entry.Open()
                     try:
                         out.Write(raw, 0, raw.Length)

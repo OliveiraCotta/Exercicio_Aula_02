@@ -6,10 +6,12 @@
 <title>Qualidade dos dados · Keynotes</title>
 <!-- Dashboard gerado pelo comando pyRevit "Atualização das Descrições por Keynote".
      Arquivo independente: CSS, JavaScript e gráficos (SVG) embutidos, sem internet.
-     __DATA__ é trocado pelos dados da análise. Cores, tema (claro/escuro, o do Revit)
+     O marcador de dados (no script abaixo) é trocado pelos dados da análise. Cores, tema (claro/escuro, o do Revit)
      e logo: Design System OCA (lib/oca_ds/report.py, brand_report). -->
 <style>
   /* tokens --oca-* do tema do Revit (claro ou escuro), injetados na geração */
+  /* valores padrão (tema claro) se o modelo for aberto sem a marca aplicada */
+  :root{ --oca-Accent:#1D7266;--oca-AccentInk:#FFFFFF;--oca-AccentSoft:#E3F4F1;--oca-Bg:#F3F5F6;--oca-Brand:#2FBAA7;--oca-BrandInk:#0E2226;--oca-Err:#AE251D;--oca-ErrSoft:#FCE4E2;--oca-Field:#FFFFFF;--oca-FieldLine:#808C94;--oca-Ink:#1D2428;--oca-Ink2:#5A666D;--oca-Line:#D5DBDF;--oca-Ok:#1D7438;--oca-OkSoft:#E5F3E9;--oca-Surface:#FFFFFF;--oca-Surface2:#EEF1F2;--oca-Violet:#6A55C2;--oca-Warn:#8A5100;--oca-WarnSoft:#FCF0DB; }
   :root{ /*__OCA_TOKENS__*/
     --bg:var(--oca-Bg); --panel:var(--oca-Surface); --ink:var(--oca-Ink); --muted:var(--oca-Ink2);
     --line:var(--oca-Line); --ok:var(--oca-Ok); --miss:var(--oca-Err); --div:var(--oca-Warn);
@@ -80,7 +82,7 @@
 <div class="wrap">
   <header>
     <div class="brand">
-      <img class="oca-logo" src="__OCA_LOGO__" alt="OCA">
+      <img class="oca-logo" src="__OCA_LOGO__" alt="OCA" onerror="this.style.display='none'">
       <div>
         <h1>Qualidade dos dados · Keynotes do modelo</h1>
         <div class="sub" id="sub"></div>

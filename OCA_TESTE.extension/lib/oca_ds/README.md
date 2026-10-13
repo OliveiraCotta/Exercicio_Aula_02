@@ -118,6 +118,5 @@ Integridade: o módulo grava os valores exatamente como recebe. A regra de cada 
 começam na linha 1 e a aba Resumo é sempre a última.
 
 Visual: cabeçalho `#1D7266` com texto branco em negrito, linha 1 congelada, tabela estruturada
-com filtro e linhas alternadas (estilo de tabela "OCA"; sem tabela quando os títulos se repetem
-ou não há dados, e então só filtro), Segoe UI 10, códigos em Consolas, A4 paisagem ajustado à
+com filtro e linhas alternadas (estilo de tabela "OCA"; quando os títulos se repetem, só filtro; sem dados, nem tabela nem filtro, como antes), Segoe UI 10, códigos em Consolas, A4 paisagem ajustado à
 largura com a linha 1 repetida, cabeçalho "OCA · título | projeto" e rodapé "aba | Página x de y".

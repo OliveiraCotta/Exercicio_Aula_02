@@ -223,7 +223,7 @@ KN_BODY = u"""
     <HeaderedContentControl Header="TXT DE KEYNOTE DO REVIT" Style="{StaticResource oca.Section}">
       <StackPanel>
         <TextBlock Style="{StaticResource oca.Hint}" Margin="0,0,0,6"
-                   Text="Gerado a partir do Excel e recarregado no projeto ao clicar em Conferir keynotes. Troque XXX (projeto) e XX (revisão) no nome. Se o arquivo já existir, é substituído e o anterior vira um backup com data e hora na mesma pasta."/>
+                   Text="Gerado a partir do Excel e recarregado no projeto ao clicar em Gerar TXT e conferir. Troque XXX (projeto) e XX (revisão) no nome. Se o arquivo já existir, é substituído e o anterior vira um backup com data e hora na mesma pasta."/>
         <Grid>
           <Grid.ColumnDefinitions>
             <ColumnDefinition Width="*"/>
@@ -237,7 +237,7 @@ KN_BODY = u"""
   </StackPanel>"""
 
 KN_FOOTER = u"""
-  <Button x:Name="ok" Content="Conferir keynotes" Style="{StaticResource oca.Primary}"/>
+  <Button x:Name="ok" Content="Gerar TXT e conferir" Style="{StaticResource oca.Primary}"/>
   <Button x:Name="cancel" Content="Cancelar" Margin="8,0,0,0"/>"""
 
 KN_XAML = build_xaml(title=__title__, subtitle=__doc__, body=KN_BODY,

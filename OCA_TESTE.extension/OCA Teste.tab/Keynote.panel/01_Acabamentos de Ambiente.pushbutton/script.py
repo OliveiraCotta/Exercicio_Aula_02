@@ -1842,7 +1842,8 @@ def write_report(data):
     payload = to_unicode(json.dumps(data, ensure_ascii=False))
     # keep the JSON from closing the <script> tag or breaking JS string rules
     payload = payload.replace(u"</", u"<\\/").replace(u"\u2028", u"\\u2028").replace(u"\u2029", u"\\u2029")
-    html = brand_report(html.replace(u"__DATA__", payload))
+    # marca primeiro, dados depois: textos do modelo nunca passam pela troca de marcadores
+    html = brand_report(html).replace(u"__DATA__", payload)
     with codecs.open(REPORT_PATH, "w", encoding="utf-8") as f:
         f.write(html)
     return REPORT_PATH
@@ -2169,7 +2170,8 @@ BODY = u"""
                                 FontFamily="Consolas"/>
             <DataGridTextColumn Header="Novo valor" Binding="{Binding New}" IsReadOnly="True" Width="*" MinWidth="80"
                                 FontFamily="Consolas"/>
-            <DataGridTemplateColumn Header="Alteração" Width="95" MinWidth="85" IsReadOnly="True">
+            <DataGridTemplateColumn Header="Alteração" Width="95" MinWidth="85" IsReadOnly="True"
+                                    SortMemberPath="Change" ClipboardContentBinding="{Binding Change}">
               <DataGridTemplateColumn.CellTemplate>
                 <DataTemplate>
                   <Border x:Name="tag" CornerRadius="{StaticResource oca.RadiusControl}" Padding="7,1" HorizontalAlignment="Left"

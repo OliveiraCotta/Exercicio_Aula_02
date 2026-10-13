@@ -633,7 +633,12 @@ const OCA_XL = (() => {
       }
       return runs.length ? `<conditionalFormatting sqref="${runs.join(' ')}"><cfRule type="expression" dxfId="0" priority="1"><formula>MOD(ROW()-${r0},2)=0</formula></cfRule></conditionalFormatting>` : '';
     };
-    return { styles, band: band2, sheetPr: OCA_XLSX.fitToPage || '', print: OCA_XLSX.print || '' };
+    // cabeçalho/rodapé de impressão do padrão OCA: "OCA · título | projeto" e "aba | Página x de y"
+    const hf = t => String(t || '').slice(0, 100).replace(/&/g, '&&').replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+    const headerFooter = () => !OCA_XLSX.headerFooter ? '' : OCA_XLSX.headerFooter
+      .split('@title@').join(hf('Visualizador de IFC')).split('@project@').join(hf(S.projectName || S.fileName));
+    return { styles, band: band2, sheetPr: OCA_XLSX.fitToPage || '', print: OCA_XLSX.print || '', headerFooter };
   } catch (e) { console.warn('Padrão OCA do Excel não aplicado:', e); return null; }
 })();
 /* sheets: [{name, cols:[width], rows:[[{v,s}|value]], headerRow (0-based index of header, for freeze+filter)}] */
@@ -661,7 +666,7 @@ function buildXlsx(sheets) {
     x += '</sheetData>';
     if (sh.filterRows) x += `<autoFilter ref="A${hr + 1}:${colL(nCols - 1)}${hr + sh.filterRows + 1}"/>`;
     if (OCA_XL && sh.filterRows) x += OCA_XL.band(sh, hr, nCols);
-    if (OCA_XL && OCA_XL.print) x += OCA_XL.print + '</worksheet>';
+    if (OCA_XL && OCA_XL.print) x += OCA_XL.print + OCA_XL.headerFooter() + '</worksheet>';
     else x += `<pageMargins left="0.5" right="0.5" top="0.6" bottom="0.6" header="0.3" footer="0.3"/><pageSetup orientation="landscape" fitToWidth="1" fitToHeight="0"/></worksheet>`;
     return x;
   };

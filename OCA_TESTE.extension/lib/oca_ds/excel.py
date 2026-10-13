@@ -182,10 +182,13 @@ def _table_name(name, used):
     return out
 
 
-def _table_ok(header, nrows):
+def _table_ok(header, data):
     """Tabela estruturada só quando o Excel aceita sem reparo: 1 linha de dados
-    ou mais, títulos de texto não vazios, sem repetição e sem quebra de linha."""
-    if nrows < 1:
+    ou mais, nenhuma linha mais larga que o cabeçalho, títulos de texto não
+    vazios, sem repetição e sem quebra de linha."""
+    if not data or any(len(r) > len(header) for r in data):
+        return False
+    if any(h is None for h in header):
         return False
     names = [_text(h) for h in header]
     if any((not n.strip()) or (u"\n" in n) or (u"\r" in n) for n in names):
@@ -194,8 +197,14 @@ def _table_ok(header, nrows):
     return len(set(lower)) == len(lower)
 
 
+def _clip(text, size):
+    text = _text(text)
+    return text if len(text) <= size else text[:size - 1] + u"…"
+
+
 def _print_setup(title, project, landscape=True):
-    head = u'&L&B{} · {}&B&R{}'.format(BRAND, _hf_text(title), _hf_text(project))
+    # o Excel limita cabeçalho/rodapé a 255 caracteres: título e projeto são encurtados
+    head = u'&L&B{} · {}&B&R{}'.format(BRAND, _hf_text(_clip(title, 80)), _hf_text(_clip(project, 100)))
     foot = u'&L&A&RPágina &P de &N'
     return (u'<pageMargins left="0.5" right="0.5" top="0.75" bottom="0.75" header="0.3" footer="0.3"/>'
             u'<pageSetup paperSize="9" orientation="{}" fitToWidth="1" fitToHeight="0"/>'
@@ -217,7 +226,7 @@ def _data_sheet(sheet, idx, sst, numfmt_index, table_names, table_id, title, pro
     num_style = S_NUMBER_FIRST + numfmt_index[sheet.get("num_format") or u"General"] if numbers else S_TEXT
     last_col = col_letter(ncol - 1)
     ref = u"A1:{}{}".format(last_col, len(rows))
-    use_table = sheet.get("table", True) and _table_ok(header, len(data))
+    use_table = sheet.get("table", True) and _table_ok(header, data)
     filtered = sheet.get("filter", True) and len(data) > 0
 
     out = [HEAD, u'<worksheet xmlns="{}" xmlns:r="{}">'.format(NS_MAIN, NS_REL),
@@ -233,6 +242,8 @@ def _data_sheet(sheet, idx, sst, numfmt_index, table_names, table_id, title, pro
     # cabeçalho: texto compartilhado (exigência da tabela estruturada)
     out.append(u'<row r="1" ht="20" customHeight="1">')
     for c, value in enumerate(header):
+        if value is None:       # título ausente: célula vazia, como nos gravadores anteriores
+            continue
         out.append(u'<c r="{}1" s="{}" t="s"><v>{}</v></c>'.format(col_letter(c), S_HEADER, sst.index(value)))
     out.append(u'</row>')
     for r, row in enumerate(data):
@@ -301,7 +312,7 @@ def logo_bytes():
     try:
         with open(LOGO_PATH, "rb") as f:
             return bytearray(f.read())
-    except (IOError, OSError):
+    except Exception:           # sem logo, a planilha sai igual, só sem a imagem
         return None
 
 
@@ -418,7 +429,9 @@ def workbook_parts(sheets, title, project=u"", summary=None, subtitle=u""):
             title, subtitle or u"Plugin {} · pyRevit".format(BRAND), summary, project, logo is not None)
         ct.append(u'<Override PartName="/xl/worksheets/sheet{}.xml" ContentType="{}spreadsheetml.worksheet+xml"/>'.format(n, CT))
         wb_rels.append(u'<Relationship Id="rId{0}" Type="{1}/worksheet" Target="worksheets/sheet{0}.xml"/>'.format(n, NS_REL))
-        wb_sheets.append(u'<sheet name="{}" sheetId="{}" r:id="rId{}"/>'.format(SUMMARY_SHEET, n, n))
+        used = set(sheet_name(s["name"]).lower() for s in sheets)
+        summary_name = SUMMARY_SHEET if SUMMARY_SHEET.lower() not in used else SUMMARY_SHEET + u" " + BRAND
+        wb_sheets.append(u'<sheet name="{}" sheetId="{}" r:id="rId{}"/>'.format(summary_name, n, n))
         if logo is not None:
             parts[u"xl/worksheets/_rels/sheet{}.xml.rels".format(n)] = (
                 HEAD + u'<Relationships xmlns="{}"><Relationship Id="rId1" Type="{}/drawing" '
@@ -474,4 +487,8 @@ def js_payload():
         "print": u'<pageMargins left="0.5" right="0.5" top="0.75" bottom="0.75" header="0.3" footer="0.3"/>'
                  u'<pageSetup paperSize="9" orientation="landscape" fitToWidth="1" fitToHeight="0"/>',
         "fitToPage": u'<sheetPr><pageSetUpPr fitToPage="1"/></sheetPr>',
+        # cabeçalho/rodapé de impressão: o JS troca @title@ e @project@ por texto já
+        # preparado (& -> &&, depois escape XML) e insere logo após o pageSetup
+        "headerFooter": u'<headerFooter><oddHeader>&amp;L&amp;B' + BRAND + u' · @title@&amp;B&amp;R@project@</oddHeader>'
+                        u'<oddFooter>&amp;L&amp;A&amp;RPágina &amp;P de &amp;N</oddFooter></headerFooter>',
     }, ensure_ascii=True)
