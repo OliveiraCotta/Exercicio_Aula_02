@@ -26,6 +26,7 @@ except NameError:           # IronPython 3 / CPython
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 LOGO_PATH = os.path.join(HERE, "assets", "logo", "logo.png")
+ICON_PATH = os.path.join(HERE, "assets", "logo", "icon.png")   # logo quadrado 64 px (ícone da janela)
 
 
 # Os pincéis (oca.*) são gerados por window_resources() e vêm antes destes estilos,
@@ -625,29 +626,25 @@ def window_resources(dark=None):
     return brushes + _fill(STYLES, values)
 
 
-def logo_uri():
-    """URI do logo, ou None se o arquivo não existir ou não puder ser lido.
+def logo_uri(path=None):
+    """URI do logo (ou de path), ou None se o arquivo não existir ou não puder ser lido.
 
     O arquivo é decodificado aqui uma vez: se estiver corrompido, a janela
     abre sem logo em vez de falhar ao carregar o XAML.
     """
-    if not os.path.isfile(LOGO_PATH):
+    path = path or LOGO_PATH
+    if not os.path.isfile(path):
         return None
     try:
         import clr
         clr.AddReference("PresentationCore")
         from System import Uri
-        from System.Windows.Media.Imaging import BitmapImage, BitmapCacheOption
     except Exception:       # fora do .NET (testes): URI simples
-        return u"file:///" + LOGO_PATH.replace(u"\\", u"/").lstrip(u"/")
+        return u"file:///" + path.replace(u"\\", u"/").lstrip(u"/")
+    if _bitmap(path) is None:
+        return None
     try:
-        uri = Uri(LOGO_PATH)
-        bmp = BitmapImage()
-        bmp.BeginInit()
-        bmp.UriSource = uri
-        bmp.CacheOption = BitmapCacheOption.OnLoad
-        bmp.EndInit()
-        return unicode(uri.AbsoluteUri)
+        return unicode(Uri(path).AbsoluteUri)
     except Exception:
         return None
 
@@ -658,6 +655,63 @@ _LOGO_XAML = u"""
           <Image.Source><BitmapImage UriSource="@uri@" CacheOption="OnLoad"/></Image.Source>
         </Image>
         <Border DockPanel.Dock="Left" Width="1" Margin="0,0,12,0" Background="{StaticResource oca.Line}"/>"""
+
+def _bitmap(path):
+    """BitmapImage carregado na memória (o arquivo não fica travado), ou None."""
+    if not os.path.isfile(path):
+        return None
+    try:
+        import clr
+        clr.AddReference("PresentationCore")
+        from System import Uri
+        from System.Windows.Media.Imaging import BitmapImage, BitmapCacheOption
+        bmp = BitmapImage()
+        bmp.BeginInit()
+        bmp.UriSource = Uri(path)
+        bmp.CacheOption = BitmapCacheOption.OnLoad
+        bmp.EndInit()
+        bmp.Freeze()
+        return bmp
+    except Exception:
+        return None
+
+
+def _install_icon_hook():
+    """Ícone da janela = logo OCA.
+
+    O pyRevit troca o ícone de toda janela pelo dele depois de carregar o XAML
+    (forms.WPFWindow.setup_icon). Aqui setup_icon passa a usar o logo, mas SÓ
+    nas janelas montadas por build_xaml (Tag "oca-light"/"oca-dark"); as demais
+    janelas do pyRevit e de outras extensões continuam com o ícone delas. Se a
+    versão do pyRevit não tiver setup_icon, nada muda (fica o ícone do pyRevit).
+    """
+    try:
+        from pyrevit import forms
+    except Exception:           # fora do Revit (testes)
+        return
+    cls = getattr(forms, "WPFWindow", None)
+    original = getattr(cls, "setup_icon", None)
+    if original is None or getattr(cls, "_oca_icon_hook", False):
+        return
+
+    def setup_icon(self):
+        try:
+            tag = self.Tag
+            if tag is not None and unicode(tag).startswith(u"oca-"):
+                icon = _bitmap(ICON_PATH) or _bitmap(LOGO_PATH)
+                if icon is not None:
+                    self.Icon = icon
+                    return
+        except Exception:
+            pass
+        return original(self)
+
+    cls.setup_icon = setup_icon
+    cls._oca_icon_hook = True
+
+
+_install_icon_hook()
+
 
 _ICON_XAML = u"""
   <Window.Icon><BitmapImage UriSource="@uri@" CacheOption="OnLoad"/></Window.Icon>"""
@@ -727,13 +781,14 @@ def build_xaml(title, body, footer_right, subtitle=u"", footer_left=u"",
     else:
         sizing = u'SizeToContent="Height" ResizeMode="NoResize"'
     uri = logo_uri()
+    icon_uri = logo_uri(ICON_PATH) if os.path.isfile(ICON_PATH) else uri
     values = {
         "title": xml_escape(name),
         "width": unicode(width or tokens.SIZES[size]),
         "sizing": sizing,
         "font": tokens.FONT,
         "theme": u"dark" if is_dark else u"light",
-        "icon": _ICON_XAML.replace(u"@uri@", xml_escape(uri)) if uri else u"",
+        "icon": _ICON_XAML.replace(u"@uri@", xml_escape(icon_uri)) if icon_uri else u"",
         "logo": _LOGO_XAML.replace(u"@uri@", xml_escape(uri)) if uri else u"",
         "subtitle": _SUBTITLE_XAML.replace(u"@subtitle@", xml_escape(u" ".join(unicode(subtitle).split())))
                     if subtitle else u"",

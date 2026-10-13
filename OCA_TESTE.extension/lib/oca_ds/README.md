@@ -13,7 +13,8 @@ lib/oca_ds/
 ├─ messages.py          título e texto dos diálogos nativos
 ├─ report.py            relatórios HTML (cores, tema e logo) e cabeçalho da janela de saída
 ├─ excel.py             planilhas .xlsx no padrão (estilos, tabela, filtros, impressão, aba Resumo)
-└─ assets/logo/logo.png logo original da empresa (não editar; substituir pelo novo arquivo, mesmo nome)
+├─ assets/logo/logo.png logo original da empresa (não editar; substituir pelo novo arquivo, mesmo nome)
+└─ assets/logo/icon.png logo quadrado 64 px, ícone da barra de título (gerado do logo.png)
 ```
 
 ## Tema
@@ -61,6 +62,10 @@ XAML = build_xaml(title=__title__, subtitle=__doc__, body=BODY,
 ```
 
 - A classe da janela continua igual (`forms.WPFWindow.__init__(self, XAML, literal_string=True)`).
+- **Ícone da barra de título:** o pyRevit troca o ícone de toda janela pelo dele depois de carregar
+  o XAML (`WPFWindow.setup_icon`). Ao importar `oca_ds`, esse passo passa a usar `icon.png`, só nas
+  janelas montadas por `build_xaml` (marcadas com `Tag="oca-light|oca-dark"`); as outras janelas do
+  pyRevit não mudam.
 - **Botão principal:** verbo explícito, só a primeira letra maiúscula ("Atualizar descrições"),
   `Style="{StaticResource oca.Primary}"`, primeiro do rodapé à direita. Um por janela.
 - **Nunca** escreva cores no XAML do comando: use os pincéis `oca.*`.
