@@ -474,11 +474,25 @@ def workbook_parts(sheets, title, project=u"", summary=None, subtitle=u""):
 # ------------------------------------------------------------------
 # planilhas geradas no navegador (relatórios HTML)
 # ------------------------------------------------------------------
+def _json_ascii(text):
+    """Troca todo caractere não ASCII por \\uXXXX, como json.dumps(ensure_ascii=True).
+    No IronPython 2.7 o ensure_ascii=True chama .decode('utf-8') em texto que já
+    é unicode e falha em qualquer acento ou '·' ("'unknown' codec can't decode
+    byte 0xb7") - por isso o JSON é gerado com ensure_ascii=False e escapado aqui."""
+    def esc(m):
+        n = ord(m.group(0))
+        if n > 0xFFFF:                       # fora do BMP (Python 3): par substituto
+            n -= 0x10000
+            return u"\\u%04x\\u%04x" % (0xD800 | (n >> 10), 0xDC00 | (n & 0x3FF))
+        return u"\\u%04x" % n
+    return re.sub(u"[^\\x00-\\x7f]", esc, _text(text))
+
+
 def js_payload():
     """Objeto JSON com o styles.xml e os índices de estilo, injetado nos
     relatórios HTML que geram .xlsx em JavaScript (ver report.brand_report)."""
     import json
-    return json.dumps({
+    return _json_ascii(json.dumps({
         "styles": styles_xml(),
         "s": {"header": S_HEADER, "text": S_TEXT, "mono": S_MONO, "wrap": S_WRAP},
         "font": tokens.EXCEL["font"],
@@ -491,4 +505,4 @@ def js_payload():
         # preparado (& -> &&, depois escape XML) e insere logo após o pageSetup
         "headerFooter": u'<headerFooter><oddHeader>&amp;L&amp;B' + BRAND + u' · @title@&amp;B&amp;R@project@</oddHeader>'
                         u'<oddFooter>&amp;L&amp;A&amp;RPágina &amp;P de &amp;N</oddFooter></headerFooter>',
-    }, ensure_ascii=True)
+    }, ensure_ascii=False))
