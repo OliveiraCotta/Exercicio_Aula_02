@@ -49,6 +49,8 @@ import traceback
 from datetime import datetime
 
 from pyrevit import revit, DB, script, forms
+from oca_ds import build_xaml, alert_title
+from oca_ds import excel as oca_excel
 
 import clr
 clr.AddReference("System.Data")
@@ -59,7 +61,7 @@ for _asm in ("System.IO.Compression",
         clr.AddReference(_asm)
     except Exception:
         pass
-from System import String
+from System import String, Array, Byte
 from System.Data import DataTable
 from System.IO import FileStream, FileMode, FileAccess, FileShare, StreamWriter
 from System.IO.Compression import ZipArchive, ZipArchiveMode
@@ -73,7 +75,7 @@ except NameError:                       # pragma: no cover
 
 doc = revit.doc
 BIP = DB.BuiltInParameter
-TITLE = u"Exportação de Coordenadas"
+TITLE = alert_title(__title__)          # "OCA · Exportar Coordenadas" nos alertas
 
 
 # ------------------------------------------------------------------
@@ -657,114 +659,49 @@ def build_notes(records, units):
 # ------------------------------------------------------------------
 # Excel (.xlsx gerado em XML puro, sem Excel/COM)
 # ------------------------------------------------------------------
-NS_MAIN = "http://schemas.openxmlformats.org/spreadsheetml/2006/main"
-NS_REL = "http://schemas.openxmlformats.org/officeDocument/2006/relationships"
-NS_PKG = "http://schemas.openxmlformats.org/package/2006/relationships"
-_INVALID_XML = re.compile(u"[\x00-\x08\x0b\x0c\x0e-\x1f]")
+# Gravação: write_xlsx (abaixo). Estilos, tabela, impressão e Resumo: lib/oca_ds/excel.py
+EXPORT_TITLE = u"Exportação de Coordenadas"   # título do Resumo e da impressão
 
 
-def xml_escape(text):
-    text = _INVALID_XML.sub(u"", to_unicode(text))
-    return (text.replace(u"&", u"&amp;").replace(u"<", u"&lt;")
-            .replace(u">", u"&gt;").replace(u'"', u"&quot;"))
+def build_summary(document, records, units, prec, read_time):
+    """Aba Resumo (última aba): só informações que já estão na exportação."""
+    return [
+        (u"Projeto", doc_file_name(document)),
+        (u"Data da leitura", read_time.strftime("%d/%m/%Y %H:%M:%S")),
+        (u"Ponto de referência", u", ".join(sorted(set(r["ref"] for r in records)))),
+        (u"Unidade", units.label),
+        (u"Casas decimais", prec),
+        (u"Linhas exportadas", len(records)),
+        (u"Linhas com observação", sum(1 for r in records if r["obs"])),
+    ]
 
 
-def col_letter(idx):
-    """0 -> A, 25 -> Z, 26 -> AA."""
-    letters = u""
-    idx += 1
-    while idx:
-        idx, rem = divmod(idx - 1, 26)
-        letters = unicode(chr(65 + rem)) + letters
-    return letters
+def build_xlsx_parts(sheets, prec, project=u"", summary=None):
+    """sheets = [(nome, cabeçalhos, linhas, larguras)] -> {parte: xml}.
 
-
-def sheet_xml(headers, rows, widths):
-    """Cabeçalho (estilo 1), números (estilo 2), texto inline. None -> '-'."""
-    out = [u'<?xml version="1.0" encoding="UTF-8" standalone="yes"?>',
-           u'<worksheet xmlns="{}" xmlns:r="{}">'.format(NS_MAIN, NS_REL),
-           u'<sheetViews><sheetView workbookViewId="0"><pane ySplit="1" '
-           u'topLeftCell="A2" activePane="bottomLeft" state="frozen"/>'
-           u'</sheetView></sheetViews>',
-           u'<sheetFormatPr defaultRowHeight="15"/><cols>']
-    for i, w in enumerate(widths):
-        out.append(u'<col min="{0}" max="{0}" width="{1}" customWidth="1"/>'.format(i + 1, w))
-    out.append(u'</cols><sheetData>')
-    for r_idx, row in enumerate([headers] + rows):
-        rn = r_idx + 1
-        out.append(u'<row r="{}">'.format(rn))
-        for c_idx, value in enumerate(row):
-            ref = col_letter(c_idx) + unicode(rn)
-            if r_idx > 0 and isinstance(value, float):
-                out.append(u'<c r="{}" s="2"><v>{}</v></c>'.format(ref, repr(value)))
-            else:
-                text = NA if value is None else value
-                style = u' s="1"' if r_idx == 0 else u""
-                out.append(u'<c r="{}"{} t="inlineStr"><is><t xml:space="preserve">'
-                           u'{}</t></is></c>'.format(ref, style, xml_escape(text)))
-        out.append(u'</row>')
-    out.append(u'</sheetData></worksheet>')
-    return u"".join(out)
-
-
-def build_xlsx_parts(sheets, prec):
-    """sheets = [(nome, cabeçalhos, linhas, larguras)] -> {parte: xml}."""
+    Gravação dos valores igual à anterior: float vira número com o formato
+    "0.000..." da precisão escolhida; None vira NA; o resto é texto.
+    Padrão visual e aba Resumo: lib/oca_ds/excel.py."""
     num_fmt = u"0." + u"0" * prec
-    parts = {}
-    parts[u"[Content_Types].xml"] = (
-        u'<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
-        u'<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">'
-        u'<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>'
-        u'<Default Extension="xml" ContentType="application/xml"/>'
-        u'<Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/>'
-        u'<Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/>'
-        + u"".join(u'<Override PartName="/xl/worksheets/sheet{}.xml" ContentType="application/'
-                   u'vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>'.format(i + 1)
-                   for i in range(len(sheets)))
-        + u'</Types>')
-    parts[u"_rels/.rels"] = (
-        u'<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
-        u'<Relationships xmlns="{}"><Relationship Id="rId1" Type="{}/officeDocument" '
-        u'Target="xl/workbook.xml"/></Relationships>'.format(NS_PKG, NS_REL))
-    parts[u"xl/workbook.xml"] = (
-        u'<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
-        u'<workbook xmlns="{}" xmlns:r="{}"><sheets>'.format(NS_MAIN, NS_REL)
-        + u"".join(u'<sheet name="{}" sheetId="{}" r:id="rId{}"/>'.format(
-            xml_escape(s[0]), i + 1, i + 1) for i, s in enumerate(sheets))
-        + u'</sheets></workbook>')
-    parts[u"xl/_rels/workbook.xml.rels"] = (
-        u'<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
-        u'<Relationships xmlns="{}">'.format(NS_PKG)
-        + u"".join(u'<Relationship Id="rId{0}" Type="{1}/worksheet" '
-                   u'Target="worksheets/sheet{0}.xml"/>'.format(i + 1, NS_REL)
-                   for i in range(len(sheets)))
-        + u'<Relationship Id="rId{}" Type="{}/styles" Target="styles.xml"/>'.format(
-            len(sheets) + 1, NS_REL)
-        + u'</Relationships>')
-    parts[u"xl/styles.xml"] = (
-        u'<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
-        u'<styleSheet xmlns="{}">'.format(NS_MAIN)
-        + u'<numFmts count="1"><numFmt numFmtId="164" formatCode="{}"/></numFmts>'.format(num_fmt)
-        + u'<fonts count="2"><font><sz val="11"/><name val="Calibri"/><family val="2"/></font>'
-          u'<font><b/><sz val="11"/><color rgb="FFFFFFFF"/><name val="Calibri"/><family val="2"/></font></fonts>'
-          u'<fills count="3"><fill><patternFill patternType="none"/></fill>'
-          u'<fill><patternFill patternType="gray125"/></fill>'
-          u'<fill><patternFill patternType="solid"><fgColor rgb="FF1F3864"/><bgColor indexed="64"/></patternFill></fill></fills>'
-          u'<borders count="1"><border><left/><right/><top/><bottom/><diagonal/></border></borders>'
-          u'<cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs>'
-          u'<cellXfs count="3"><xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/>'
-          u'<xf numFmtId="0" fontId="1" fillId="2" borderId="0" xfId="0" applyFont="1" applyFill="1"/>'
-          u'<xf numFmtId="164" fontId="0" fillId="0" borderId="0" xfId="0" applyNumberFormat="1"/></cellXfs>'
-          u'<cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles>'
-          u'</styleSheet>')
-    for i, (_, headers, rows, widths) in enumerate(sheets):
-        parts[u"xl/worksheets/sheet{}.xml".format(i + 1)] = sheet_xml(headers, rows, widths)
-    return parts
+    specs = []
+    for name, headers, rows, widths in sheets:
+        spec = {"name": name, "rows": [headers] + rows, "widths": widths,
+                "numbers": "float", "num_format": num_fmt, "none_text": NA}
+        if name == u"Notas":           # texto corrido: sem tabela e sem filtro
+            spec.update(table=False, filter=False, wrap_cols=(0,), landscape=False)
+        elif u"Observação" in headers:  # destaca as linhas com observação
+            spec.update(flag_col=headers.index(u"Observação"), flag_ignore=NA)
+        specs.append(spec)
+    return oca_excel.workbook_parts(specs, EXPORT_TITLE, project, summary)
 
 
 def write_xlsx(path, parts):
     """Grava o pacote ZIP. FileMode.Create falha ANTES de truncar se o arquivo
     estiver aberto no Excel, então um arquivo existente nunca é corrompido."""
+    # binários (logo do Resumo) convertidos ANTES de abrir o arquivo: se a conversão
+    # falhar, o arquivo existente continua intacto
+    raw_parts = dict((name, Array[Byte](data)) for name, data in parts.items()
+                     if isinstance(data, bytearray))
     # getattr: 'None' é palavra reservada no Python 3 (motor CPython do pyRevit)
     stream = FileStream(path, FileMode.Create, FileAccess.Write,
                         getattr(FileShare, "None"))
@@ -773,6 +710,14 @@ def write_xlsx(path, parts):
         try:
             for name in sorted(parts):
                 entry = archive.CreateEntry(name)
+                if name in raw_parts:                      # logo do Resumo (PNG)
+                    raw = raw_parts[name]
+                    out = entry.Open()
+                    try:
+                        out.Write(raw, 0, raw.Length)
+                    finally:
+                        out.Dispose()
+                    continue
                 writer = StreamWriter(entry.Open(), UTF8Encoding(False))
                 try:
                     writer.Write(parts[name])
@@ -813,97 +758,60 @@ def build_sheets(records, units, prec, read_time, notes):
 
 
 # ------------------------------------------------------------------
-# Interface (WPF)
+# Interface (WPF - Design System OCA, lib/oca_ds)
 # ------------------------------------------------------------------
-XAML = u"""
-<Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
-        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="Exportação de Coordenadas" Width="1040" Height="680"
-        MinWidth="760" MinHeight="520"
-        WindowStartupLocation="CenterScreen" Background="#0E1526">
-  <Window.Resources>
-    <Style x:Key="Label" TargetType="TextBlock">
-      <Setter Property="Foreground" Value="#65E3FF"/>
-      <Setter Property="FontFamily" Value="Segoe UI"/>
-      <Setter Property="FontWeight" Value="SemiBold"/>
-      <Setter Property="Margin" Value="0,0,0,6"/>
-    </Style>
-    <Style TargetType="RadioButton">
-      <Setter Property="Foreground" Value="#D9E8F5"/>
-      <Setter Property="FontFamily" Value="Segoe UI"/>
-      <Setter Property="Margin" Value="0,2,0,2"/>
-    </Style>
-    <Style TargetType="Button">
-      <Setter Property="Height" Value="30"/>
-      <Setter Property="Padding" Value="14,0"/>
-      <Setter Property="FontFamily" Value="Segoe UI"/>
-    </Style>
-    <Style TargetType="DataGridColumnHeader">
-      <Setter Property="Background" Value="#1C2E50"/>
-      <Setter Property="Foreground" Value="#65E3FF"/>
-      <Setter Property="FontWeight" Value="SemiBold"/>
-      <Setter Property="Padding" Value="6,4"/>
-      <Setter Property="BorderBrush" Value="#24375A"/>
-      <Setter Property="BorderThickness" Value="0,0,1,1"/>
-    </Style>
-    <Style x:Key="Num" TargetType="TextBlock">
-      <Setter Property="HorizontalAlignment" Value="Right"/>
-      <Setter Property="Margin" Value="6,0"/>
-    </Style>
-    <Style x:Key="Txt" TargetType="TextBlock">
-      <Setter Property="Margin" Value="6,0"/>
-    </Style>
-  </Window.Resources>
-  <Grid Margin="16">
+BODY = u"""
+  <Grid>
+    <Grid.Resources>
+      <Style x:Key="Num" TargetType="TextBlock">
+        <Setter Property="HorizontalAlignment" Value="Right"/>
+        <Setter Property="Margin" Value="6,0"/>
+      </Style>
+      <Style x:Key="Txt" TargetType="TextBlock">
+        <Setter Property="Margin" Value="6,0"/>
+      </Style>
+    </Grid.Resources>
     <Grid.RowDefinitions>
-      <RowDefinition Height="Auto"/>
       <RowDefinition Height="Auto"/>
       <RowDefinition Height="*"/>
       <RowDefinition Height="Auto"/>
       <RowDefinition Height="130"/>
-      <RowDefinition Height="Auto"/>
     </Grid.RowDefinitions>
 
-    <TextBlock Grid.Row="0" Text="Exportação de Coordenadas" FontSize="17"
-               FontWeight="SemiBold" Foreground="#FFFFFF" Margin="0,0,0,12"/>
-
-    <WrapPanel Grid.Row="1" Margin="0,0,0,12">
-      <Border Background="#13203A" CornerRadius="4" Padding="12,8" Margin="0,0,12,0">
+    <Grid Grid.Row="0">
+      <Grid.ColumnDefinitions>
+        <ColumnDefinition Width="Auto"/>
+        <ColumnDefinition Width="32"/>
+        <ColumnDefinition Width="Auto"/>
+        <ColumnDefinition Width="32"/>
+        <ColumnDefinition Width="Auto"/>
+        <ColumnDefinition Width="*"/>
+        <ColumnDefinition Width="Auto"/>
+      </Grid.ColumnDefinitions>
+      <HeaderedContentControl Grid.Column="0" Header="PONTO DE REFERÊNCIA" Style="{StaticResource oca.Section}">
         <StackPanel>
-          <TextBlock Style="{StaticResource Label}" Text="Ponto de referência"/>
-          <RadioButton x:Name="rb_pbp" GroupName="ref" IsChecked="True"
-                       Content="Project Base Point"/>
+          <RadioButton x:Name="rb_pbp" GroupName="ref" IsChecked="True" Content="Project Base Point"/>
           <RadioButton x:Name="rb_sp" GroupName="ref" Content="Survey Point"/>
         </StackPanel>
-      </Border>
-      <Border Background="#13203A" CornerRadius="4" Padding="12,8" Margin="0,0,12,0">
+      </HeaderedContentControl>
+      <HeaderedContentControl Grid.Column="2" Header="LER MODELOS VINCULADOS" Style="{StaticResource oca.Section}">
         <StackPanel>
-          <TextBlock Style="{StaticResource Label}" Text="Ler modelos vinculados"/>
           <RadioButton x:Name="rb_links_yes" GroupName="links" Content="Sim"/>
           <RadioButton x:Name="rb_links_no" GroupName="links" IsChecked="True" Content="Não"/>
         </StackPanel>
-      </Border>
-      <Border Background="#13203A" CornerRadius="4" Padding="12,8" Margin="0,0,12,0">
-        <StackPanel>
-          <TextBlock Style="{StaticResource Label}" Text="Precisão"/>
-          <ComboBox x:Name="cb_prec" Width="140">
-            <ComboBoxItem Content="2 casas decimais"/>
-            <ComboBoxItem Content="3 casas decimais"/>
-            <ComboBoxItem Content="4 casas decimais"/>
-          </ComboBox>
-        </StackPanel>
-      </Border>
-      <StackPanel VerticalAlignment="Bottom" Margin="0,0,0,8">
-        <Button x:Name="btn_read" Content="Ler coordenadas" Width="150"/>
-      </StackPanel>
-    </WrapPanel>
+      </HeaderedContentControl>
+      <HeaderedContentControl Grid.Column="4" Header="PRECISÃO" Style="{StaticResource oca.Section}">
+        <ComboBox x:Name="cb_prec" Width="160" HorizontalAlignment="Left">
+          <ComboBoxItem Content="2 casas decimais"/>
+          <ComboBoxItem Content="3 casas decimais"/>
+          <ComboBoxItem Content="4 casas decimais"/>
+        </ComboBox>
+      </HeaderedContentControl>
+      <Button x:Name="btn_read" Grid.Column="6" Content="Ler coordenadas" VerticalAlignment="Bottom" Margin="0,0,0,14"/>
+    </Grid>
 
-    <DataGrid x:Name="grid_coords" Grid.Row="2" AutoGenerateColumns="False"
-              IsReadOnly="True" CanUserAddRows="False" HeadersVisibility="Column"
-              SelectionMode="Extended" Background="#13203A" Foreground="#E6F0FF"
-              RowBackground="#13203A" AlternatingRowBackground="#172744"
-              BorderBrush="#24375A" GridLinesVisibility="Horizontal"
-              HorizontalGridLinesBrush="#24375A" RowHeight="24">
+    <DataGrid x:Name="grid_coords" Grid.Row="1" AutoGenerateColumns="False"
+              IsReadOnly="True" CanUserAddRows="False" SelectionMode="Extended" RowHeight="24">
       <DataGrid.Columns>
         <DataGridTextColumn Header="Modelo" Binding="{Binding model}" Width="2*"
                             ElementStyle="{StaticResource Txt}"/>
@@ -912,13 +820,13 @@ XAML = u"""
         <DataGridTextColumn Header="Referência" Binding="{Binding ref}" Width="Auto"
                             ElementStyle="{StaticResource Txt}"/>
         <DataGridTextColumn Header="Norte/Sul" Binding="{Binding ns}" Width="*"
-                            ElementStyle="{StaticResource Num}"/>
+                            ElementStyle="{StaticResource Num}" FontFamily="Consolas"/>
         <DataGridTextColumn Header="Leste/Oeste" Binding="{Binding ew}" Width="*"
-                            ElementStyle="{StaticResource Num}"/>
+                            ElementStyle="{StaticResource Num}" FontFamily="Consolas"/>
         <DataGridTextColumn Header="Elevação" Binding="{Binding elev}" Width="*"
-                            ElementStyle="{StaticResource Num}"/>
+                            ElementStyle="{StaticResource Num}" FontFamily="Consolas"/>
         <DataGridTextColumn Header="Ângulo" Binding="{Binding angle}" Width="Auto"
-                            ElementStyle="{StaticResource Num}"/>
+                            ElementStyle="{StaticResource Num}" FontFamily="Consolas"/>
         <DataGridTextColumn Header="Project North" Binding="{Binding pn}" Width="Auto"
                             ElementStyle="{StaticResource Num}"/>
         <DataGridTextColumn Header="True North" Binding="{Binding tn}" Width="Auto"
@@ -928,23 +836,24 @@ XAML = u"""
       </DataGrid.Columns>
     </DataGrid>
 
-    <TextBlock x:Name="tb_status" Grid.Row="3" Foreground="#7A8FA9" Margin="0,8,0,4"
-               TextWrapping="Wrap"
-               Text="Escolha as opções e clique em 'Ler coordenadas'."/>
+    <Border Grid.Row="2" Style="{StaticResource oca.Msg.Info}" Margin="0,10,0,8"
+            Visibility="{Binding Visibility, ElementName=tb_status}">
+      <TextBlock x:Name="tb_status" Style="{StaticResource oca.MsgText}"
+                 Text="Escolha as opções e clique em 'Ler coordenadas'."/>
+    </Border>
 
-    <TextBox x:Name="tb_notes" Grid.Row="4" IsReadOnly="True" TextWrapping="Wrap"
-             VerticalScrollBarVisibility="Auto" Background="#0A1020" Foreground="#B8C9E0"
-             BorderBrush="#24375A" FontFamily="Segoe UI" FontSize="11" Padding="6"/>
+    <TextBox x:Name="tb_notes" Grid.Row="3" IsReadOnly="True" TextWrapping="Wrap" Height="Auto"
+             VerticalContentAlignment="Top" VerticalScrollBarVisibility="Auto" Padding="8,6"
+             FontSize="11" Foreground="{StaticResource oca.Ink2}"/>
+  </Grid>"""
 
-    <StackPanel Grid.Row="5" Orientation="Horizontal" HorizontalAlignment="Right"
-                Margin="0,12,0,0">
-      <Button x:Name="btn_export" Content="Exportar para Excel" Width="170"
-              Margin="0,0,10,0"/>
-      <Button x:Name="btn_close" Content="Fechar" Width="100"/>
-    </StackPanel>
-  </Grid>
-</Window>
-"""
+FOOTER = u"""
+  <Button x:Name="btn_export" Content="Exportar coordenadas" Style="{StaticResource oca.Primary}"/>
+  <Button x:Name="btn_close" Content="Fechar" Margin="8,0,0,0"/>"""
+
+XAML = build_xaml(title=__title__, subtitle=__doc__, body=BODY, footer_right=FOOTER,
+                  size="L", height=680, width=1040)
+
 
 GRID_KEYS = ["model", "tipo", "ref", "ns", "ew", "elev", "angle", "pn", "tn", "obs"]
 TIPO_COLUMN_INDEX = 1
@@ -1051,7 +960,9 @@ class CoordinatesWindow(forms.WPFWindow):
             prec = self.precision
             sheets = build_sheets(self.records, self.units, prec, self.read_time,
                                   build_notes(self.records, self.units))
-            parts = build_xlsx_parts(sheets, prec)
+            parts = build_xlsx_parts(sheets, prec, doc_file_name(self.document),
+                                     build_summary(self.document, self.records, self.units,
+                                                   prec, self.read_time))
         except Exception as ex:
             friendly_error(u"Erro ao preparar a exportação.", ex)
             return
@@ -1061,7 +972,7 @@ class CoordinatesWindow(forms.WPFWindow):
             friendly_error(u"Não foi possível gravar o arquivo Excel.\n\nSe ele estiver "
                            u"aberto no Excel, feche-o e tente novamente.", ex)
             return
-        if forms.alert(u"Arquivo exportado com sucesso:\n{}\n\nAbrir agora?".format(path),
+        if forms.alert(u"Arquivo exportado com sucesso. Abrir agora?", sub_msg=path,
                        title=TITLE, yes=True, no=True):
             try:
                 os.startfile(path)
@@ -1094,9 +1005,8 @@ def main():
         forms.alert(u"Abra um modelo do Revit antes de executar o comando.", title=TITLE)
         return
     if doc.IsFamilyDocument:
-        forms.alert(u"Este comando funciona apenas em modelos de projeto (não em "
-                    u"famílias): famílias não têm Project Base Point/Survey Point.",
-                    title=TITLE)
+        forms.alert(u"Este comando funciona apenas em modelos de projeto.",
+                    sub_msg=u"Famílias não têm Project Base Point/Survey Point.", title=TITLE)
         return
     try:
         CoordinatesWindow(doc).ShowDialog()
