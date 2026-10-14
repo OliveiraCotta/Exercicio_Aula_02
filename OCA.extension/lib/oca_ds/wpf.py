@@ -79,7 +79,12 @@ STYLES = u"""
               <DockPanel>
                 <ContentPresenter ContentSource="Header" DockPanel.Dock="Top" Margin="0,0,0,8"
                                   TextElement.FontSize="10.5" TextElement.FontWeight="SemiBold"
-                                  TextElement.Foreground="{StaticResource oca.Ink2}"/>
+                                  TextElement.Foreground="{StaticResource oca.Ink2}">
+                  <ContentPresenter.Resources>
+                    <!-- título longo quebra linha em vez de ser cortado -->
+                    <Style TargetType="TextBlock"><Setter Property="TextWrapping" Value="Wrap"/></Style>
+                  </ContentPresenter.Resources>
+                </ContentPresenter>
                 <ContentPresenter/>
               </DockPanel>
             </Border>
@@ -541,7 +546,13 @@ STYLES = u"""
                 <Ellipse x:Name="ring" Fill="{StaticResource oca.Field}" Stroke="{StaticResource oca.FieldLine}" StrokeThickness="1"/>
                 <Ellipse x:Name="dot" Width="6" Height="6" Fill="{StaticResource oca.Accent}" Visibility="Collapsed"/>
               </Grid>
-              <ContentPresenter Grid.Column="1" Margin="8,0,0,0" VerticalAlignment="Center" RecognizesAccessKey="True"/>
+              <ContentPresenter Grid.Column="1" Margin="8,0,0,0" VerticalAlignment="Center" RecognizesAccessKey="True">
+                <ContentPresenter.Resources>
+                  <!-- texto simples da opção quebra linha quando a janela fica mais estreita
+                       (conteúdo montado pelo comando, como um TextBlock com reticências, não muda) -->
+                  <Style TargetType="AccessText"><Setter Property="TextWrapping" Value="Wrap"/></Style>
+                </ContentPresenter.Resources>
+              </ContentPresenter>
             </Grid>
             <ControlTemplate.Triggers>
               <Trigger Property="IsMouseOver" Value="True">
@@ -581,7 +592,13 @@ STYLES = u"""
                 <Path x:Name="mark" Data="M2,6 L5,9 L10,3" Stroke="{StaticResource oca.AccentInk}" StrokeThickness="1.8"
                       Visibility="Collapsed"/>
               </Border>
-              <ContentPresenter Grid.Column="1" Margin="8,0,0,0" VerticalAlignment="Center" RecognizesAccessKey="True"/>
+              <ContentPresenter Grid.Column="1" Margin="8,0,0,0" VerticalAlignment="Center" RecognizesAccessKey="True">
+                <ContentPresenter.Resources>
+                  <!-- texto simples da opção quebra linha quando a janela fica mais estreita
+                       (conteúdo montado pelo comando, como um TextBlock com reticências, não muda) -->
+                  <Style TargetType="AccessText"><Setter Property="TextWrapping" Value="Wrap"/></Style>
+                </ContentPresenter.Resources>
+              </ContentPresenter>
             </Grid>
             <ControlTemplate.Triggers>
               <Trigger Property="IsMouseOver" Value="True">
@@ -676,14 +693,81 @@ def _bitmap(path):
         return None
 
 
-def _install_icon_hook():
-    """Ícone da janela = logo OCA.
+def _work_area(window):
+    """Área útil (sem a barra de tarefas) do monitor onde a janela está, em
+    unidades WPF. Se não der para saber, usa a do monitor principal."""
+    from System.Windows import SystemParameters
+    try:
+        import clr
+        clr.AddReference("System.Windows.Forms")
+        from System.Windows import PresentationSource, Point
+        from System.Windows.Interop import WindowInteropHelper
+        from System.Windows.Forms import Screen
+        area = Screen.FromHandle(WindowInteropHelper(window).Handle).WorkingArea   # pixels
+        to_wpf = PresentationSource.FromVisual(window).CompositionTarget.TransformFromDevice
+        tl = to_wpf.Transform(Point(area.Left, area.Top))
+        br = to_wpf.Transform(Point(area.Right, area.Bottom))
+        return tl.X, tl.Y, br.X - tl.X, br.Y - tl.Y
+    except Exception:
+        wa = SystemParameters.WorkArea
+        return wa.Left, wa.Top, wa.Width, wa.Height
 
-    O pyRevit troca o ícone de toda janela pelo dele depois de carregar o XAML
-    (forms.WPFWindow.setup_icon). Aqui setup_icon passa a usar o logo, mas SÓ
-    nas janelas montadas por build_xaml (Tag "oca-light"/"oca-dark"); as demais
-    janelas do pyRevit e de outras extensões continuam com o ícone delas. Se a
-    versão do pyRevit não tiver setup_icon, nada muda (fica o ícone do pyRevit).
+
+def fit_to_screen(window):
+    """Na abertura, a janela cabe na área útil do monitor (sem passar da barra de
+    tarefas) e fica inteira visível. Formulários altos passam a rolar em vez de
+    sair da tela. Não muda nada se a janela já cabe."""
+    def on_loaded(sender, args):
+        try:
+            window.Loaded -= on_loaded
+        except Exception:
+            pass
+        try:
+            from System.Windows import SizeToContent
+            left, top, w, h = _work_area(window)
+            if window.MinWidth > w:
+                window.MinWidth = w
+            if window.MinHeight > h:
+                window.MinHeight = h
+            moved = False
+            if window.ActualHeight > h:
+                window.SizeToContent = SizeToContent.Manual
+                window.Height = h
+                moved = True
+            if window.ActualWidth > w:
+                window.SizeToContent = SizeToContent.Manual
+                window.Width = w
+                moved = True
+            cur_w = min(window.ActualWidth, w)
+            cur_h = min(window.ActualHeight, h)
+            if (moved or window.Left < left or window.Top < top
+                    or window.Left + cur_w > left + w or window.Top + cur_h > top + h):
+                window.Left = left + max(0.0, (w - cur_w) / 2.0)
+                window.Top = top + max(0.0, (h - cur_h) / 2.0)
+        except Exception:
+            pass
+    window.Loaded += on_loaded
+
+
+def is_oca_window(window):
+    """True nas janelas montadas por build_xaml (Tag "oca-light"/"oca-dark")."""
+    try:
+        tag = window.Tag
+        return tag is not None and unicode(tag).startswith(u"oca-")
+    except Exception:
+        return False
+
+
+def _install_window_hook():
+    """Ajustes de janela que o XAML sozinho não consegue fazer.
+
+    O pyRevit chama forms.WPFWindow.setup_icon logo depois de carregar o XAML
+    de cada janela (e troca o ícone pelo dele). Nesse passo, SÓ nas janelas
+    montadas por build_xaml, o ícone passa a ser o logo OCA e a janela recebe
+    fit_to_screen. As demais janelas do pyRevit e de outras extensões ficam
+    como estão. Se a versão do pyRevit não tiver setup_icon, nada muda: ficam
+    o ícone do pyRevit e o tamanho inicial do XAML (que continua
+    redimensionável).
     """
     try:
         from pyrevit import forms
@@ -695,22 +779,25 @@ def _install_icon_hook():
         return
 
     def setup_icon(self):
-        try:
-            tag = self.Tag
-            if tag is not None and unicode(tag).startswith(u"oca-"):
+        if is_oca_window(self):
+            try:
+                fit_to_screen(self)
+            except Exception:
+                pass
+            try:
                 icon = _bitmap(ICON_PATH) or _bitmap(LOGO_PATH)
                 if icon is not None:
                     self.Icon = icon
                     return
-        except Exception:
-            pass
+            except Exception:
+                pass
         return original(self)
 
     cls.setup_icon = setup_icon
     cls._oca_icon_hook = True
 
 
-_install_icon_hook()
+_install_window_hook()
 
 
 _ICON_XAML = u"""
@@ -722,7 +809,7 @@ _SUBTITLE_XAML = u"""
 
 _WINDOW = u"""<Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="@title@" Width="@width@" @sizing@ WindowStartupLocation="CenterScreen"
+        Title="@title@" Width="@width@" @sizing@ ResizeMode="@resize@" WindowStartupLocation="CenterScreen"
         Background="{DynamicResource oca.Bg}" Foreground="{DynamicResource oca.Ink}"
         FontFamily="@font@" FontSize="12" UseLayoutRounding="True" SnapsToDevicePixels="True"
         TextOptions.TextFormattingMode="Display" Tag="oca-@theme@">@icon@
@@ -746,11 +833,27 @@ _WINDOW = u"""<Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presen
         </StackPanel>
       </DockPanel>
     </Border>
-    <Grid Margin="16,14,16,2">@body@
-    </Grid>
+@body_host@
   </DockPanel>
 </Window>
 """
+
+
+# Corpo da janela. Formulários (S/M) ganham rolagem vertical própria quando o
+# conteúdo não cabe; a largura do conteúdo acompanha a janela (sem rolagem
+# horizontal: a largura mínima da janela garante que nada fique cortado).
+# Janelas de tabela (L) e corpos que já começam com ScrollViewer ficam como
+# estão: eles mesmos distribuem o espaço (linhas "*") e rolam o que precisam.
+_BODY_PLAIN = u"""
+    <Grid Margin="16,14,16,2">@body@
+    </Grid>"""
+
+_BODY_SCROLL = u"""
+    <ScrollViewer x:Name="oca_body_scroll" Focusable="False" VerticalScrollBarVisibility="Auto"
+                  HorizontalScrollBarVisibility="Disabled">
+      <Grid Margin="16,14,16,2">@body@
+      </Grid>
+    </ScrollViewer>"""
 
 
 def _fill(template, values):
@@ -759,7 +862,8 @@ def _fill(template, values):
 
 
 def build_xaml(title, body, footer_right, subtitle=u"", footer_left=u"",
-               size="S", height=None, width=None, resources=u"", dark=None, logo=True):
+               size="S", height=None, width=None, resources=u"", dark=None, logo=True,
+               min_width=None, min_height=None, resizable=True, scroll=None):
     """XAML completo de uma janela no padrão OCA.
 
     title         nome do comando (aceita o __title__ com quebras de linha).
@@ -767,9 +871,19 @@ def build_xaml(title, body, footer_right, subtitle=u"", footer_left=u"",
     body          XAML do conteúdo (os mesmos x:Name que o código usa).
     footer_right  botão principal primeiro (Style oca.Primary), depois o secundário.
     footer_left   ações auxiliares ou "Voltar" (opcional).
-    size          "S" 460 px, "M" 580 px (altura pelo conteúdo, tamanho fixo)
-                  ou "L" 1160 px (redimensionável; informe height).
-    width         largura em px, só quando a janela original era maior que o padrão.
+    size          "S" 460 px ou "M" 580 px: formulários; a altura inicial acompanha o
+                  conteúdo e o corpo ganha rolagem vertical quando não cabe.
+                  "L" 1160 px: janelas de tabela; informe height (altura inicial).
+                  Todas são redimensionáveis pelas bordas e cantos, com maximizar e
+                  minimizar (ver resizable).
+    width         largura inicial em px, quando diferente do padrão do tamanho.
+    min_width     largura mínima em px. Padrão: 75% da largura inicial, nunca menos
+                  que 420 (formulários) ou 760 (tabelas).
+    min_height    altura mínima em px. Padrão: 300 (formulários) ou 460 (tabelas).
+    resizable     True (padrão). False só para janelas que realmente não podem mudar
+                  de tamanho (fica como antes: tamanho fixo).
+    scroll        None (padrão) = rolagem vertical automática nos formulários cujo corpo
+                  ainda não tem ScrollViewer próprio; True/False força.
     resources     XAML extra para <Window.Resources> (estilos que o código busca com
                   FindResource ou que precisam valer na janela inteira).
     dark          None = segue o tema do Revit (padrão); True/False força o tema.
@@ -778,16 +892,28 @@ def build_xaml(title, body, footer_right, subtitle=u"", footer_left=u"",
     """
     is_dark = theme.is_dark(dark)
     name = command_name(title)
-    if size == "L":
-        sizing = u'Height="{}" MinWidth="900" MinHeight="460"'.format(height or 780)
+    win_width = int(width or tokens.SIZES[size])
+    table = size == "L"
+    if min_width is None:
+        min_width = max(760 if table else 420, int(round(win_width * 0.75)))
+    if min_height is None:
+        min_height = 460 if table else 300
+    min_width, min_height = min(int(min_width), win_width), int(min_height)
+    if table:
+        sizing = u'Height="{}"'.format(height or 780)
     else:
-        sizing = u'SizeToContent="Height" ResizeMode="NoResize"'
+        sizing = u'SizeToContent="Height"'
+    if resizable:
+        sizing += u' MinWidth="{}" MinHeight="{}"'.format(min_width, min_height)
+    if scroll is None:
+        scroll = (not table) and not body.lstrip().startswith(u"<ScrollViewer")
     uri = logo_uri()
     icon_uri = logo_uri(ICON_PATH) if os.path.isfile(ICON_PATH) else uri
     values = {
         "title": xml_escape(name),
-        "width": unicode(width or tokens.SIZES[size]),
+        "width": unicode(win_width),
         "sizing": sizing,
+        "resize": u"CanResize" if resizable else u"NoResize",
         "font": tokens.FONT,
         "theme": u"dark" if is_dark else u"light",
         "icon": _ICON_XAML.replace(u"@uri@", xml_escape(icon_uri)) if icon_uri else u"",
@@ -797,6 +923,6 @@ def build_xaml(title, body, footer_right, subtitle=u"", footer_left=u"",
         "resources": window_resources(is_dark) + (resources or u""),
         "footer_left": footer_left,
         "footer_right": footer_right,
-        "body": body,
+        "body_host": (_BODY_SCROLL if scroll else _BODY_PLAIN).replace(u"@body@", body),
     }
     return _fill(_WINDOW, values)

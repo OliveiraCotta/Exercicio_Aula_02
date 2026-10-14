@@ -1747,7 +1747,8 @@ VERIFY_XAML = build_xaml(title=__title__ + u" · Verificação",
                                   u"(nada é gravado sem confirmação).",
                          body=VERIFY_BODY, footer_right=VERIFY_FOOTER,
                          footer_left=VERIFY_FOOTER_LEFT, resources=VERIFY_RESOURCES,
-                         size="L", height=980, width=1450)
+                         size="L", height=980, width=1450,
+                         min_width=900, min_height=620)   # mínimos da janela original
 
 GROUP_MODES = [u"Sem agrupamento", u"Keynote", u"Categoria"]
 COLS1 = ("Grupo", "Categoria", "Familia", "Tipo", "Keynote", "PtAtual", "PtNova",

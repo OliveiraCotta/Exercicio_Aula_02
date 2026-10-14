@@ -2299,7 +2299,8 @@ FOOTER = u"""
   <Button x:Name="btn_finish" Content="Finalizar" Margin="8,0,0,0" ToolTip="Encerra o comando e fecha a janela."/>"""
 
 XAML = build_xaml(title=__title__, subtitle=__doc__, body=BODY, footer_right=FOOTER,
-                  footer_left=FOOTER_LEFT, resources=RESOURCES, size="L", height=800)
+                  footer_left=FOOTER_LEFT, resources=RESOURCES, size="L", height=800,
+                  min_width=900, min_height=600)   # mínimos da janela original
 
 
 def group_header(rec, rows):

@@ -852,7 +852,8 @@ FOOTER = u"""
   <Button x:Name="btn_close" Content="Fechar" Margin="8,0,0,0"/>"""
 
 XAML = build_xaml(title=__title__, subtitle=__doc__, body=BODY, footer_right=FOOTER,
-                  size="L", height=680, width=1040)
+                  size="L", height=680, width=1040,
+                  min_width=760, min_height=520)   # mínimos da janela original
 
 
 GRID_KEYS = ["model", "tipo", "ref", "ns", "ew", "elev", "angle", "pn", "tn", "obs"]

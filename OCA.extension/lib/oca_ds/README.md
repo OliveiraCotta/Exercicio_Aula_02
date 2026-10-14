@@ -58,7 +58,7 @@ FOOTER = u"""
   <Button x:Name="cancel" Content="Cancelar" Margin="8,0,0,0"/>"""
 
 XAML = build_xaml(title=__title__, subtitle=__doc__, body=BODY,
-                  footer_right=FOOTER, size="S")   # S 460, M 580, L 1160 (+ height; width= se precisar)
+                  footer_right=FOOTER, size="S")   # S 460, M 580, L 1160 (+ height); width=, min_width=, min_height= se precisar
 ```
 
 - A classe da janela continua igual (`forms.WPFWindow.__init__(self, XAML, literal_string=True)`).
@@ -84,6 +84,38 @@ XAML = build_xaml(title=__title__, subtitle=__doc__, body=BODY,
 | `oca.Bg`, `oca.Surface`, `oca.Surface2`, `oca.Field`, `oca.Line`, `oca.FieldLine`, `oca.Ink`, `oca.Ink2`, `oca.Accent`, `oca.AccentSoft`, `oca.AccentInk`, `oca.Brand`, `oca.BrandInk`, `oca.Ok(Soft)`, `oca.Warn(Soft)`, `oca.Err(Soft)`, `oca.Violet` | pincéis, quando um elemento precisar de cor explícita |
 
 Código que pinta controles em tempo de execução usa `self.FindResource("oca.Warn")`, nunca um hexadecimal.
+
+## Redimensionamento das janelas
+
+Toda janela montada por `build_xaml` é redimensionável pelas bordas e pelos cantos (cursor de
+redimensionar do Windows), com maximizar, restaurar e minimizar. Não é preciso fazer nada no
+comando: o comportamento vem do `build_xaml` e do ajuste que a lib faz na abertura da janela.
+
+| Tipo | `size` | Abertura | Ao redimensionar |
+|---|---|---|---|
+| Formulário | `"S"` (460) ou `"M"` (580) | altura pelo conteúdo | a largura do conteúdo acompanha a janela; quando a altura não basta, o corpo rola na vertical |
+| Tabela | `"L"` (1160) + `height` | largura e altura informadas | as linhas e colunas `*` (tabelas) ocupam o espaço; cada tabela rola sozinha |
+
+- **Tamanho mínimo:** padrão de 75% da largura inicial (nunca menos que 420 em formulários e 760 em
+  tabelas) e altura mínima de 300 (formulários) ou 460 (tabelas). Use `min_width=` e `min_height=`
+  quando a janela precisar de outro mínimo (ex.: Acabamentos 900 × 600).
+- **Cabe na tela:** na abertura, a janela é limitada à área útil do monitor onde abriu (sem passar
+  da barra de tarefas) e reposicionada se estiver fora dela; formulários mais altos que a tela
+  passam a rolar. Isso roda no mesmo passo do ícone (`fit_to_screen`, ver "Ícone da barra de título").
+- **Rolagem:** formulários ganham um `ScrollViewer` vertical da lib. Se o corpo do comando já começa
+  com `<ScrollViewer`, a lib não envolve de novo (evita rolagem dentro de rolagem). Para forçar,
+  `scroll=True/False`.
+- **Textos que acompanham a largura:** os textos de opções (`RadioButton`, `CheckBox`) e os títulos
+  de seção quebram linha em vez de serem cortados.
+- **Exceção:** `resizable=False` deixa a janela com tamanho fixo, como antes. Use só se a janela
+  realmente não puder mudar de tamanho.
+
+Ao montar o corpo de um comando novo, para que ele aproveite o espaço:
+- use colunas e linhas `*` (e não larguras fixas) nas áreas que devem crescer; campos e listas
+  esticam sozinhos dentro das seções;
+- em janelas de tabela, deixe a tabela numa linha `Height="*"`; em formulários, empilhe as
+  seções num `StackPanel` (a lib cuida da rolagem);
+- reserve larguras fixas para campos numéricos curtos (ex.: margem em metros, `Width="72"`).
 
 ## Mensagens
 
