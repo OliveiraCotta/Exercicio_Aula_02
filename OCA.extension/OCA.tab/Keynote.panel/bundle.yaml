@@ -1,5 +1,5 @@
 # Cor do rodape (barra de titulo) do painel: tema claro e tema escuro
 background:
-  title: "#acede6"
+  title: "#e6b0e4"
 background_dark:
-  title: "#2e5e58"
+  title: "#d485d1"
