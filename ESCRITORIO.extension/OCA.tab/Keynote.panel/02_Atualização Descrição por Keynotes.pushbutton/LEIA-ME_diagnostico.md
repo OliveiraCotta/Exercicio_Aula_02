@@ -58,6 +58,24 @@ apontam se foi um evento da janela, uma ação do ExternalEvent ou algo do próp
 - Dashboard: os tipos sem o parâmetro mostram "Não aplicável" e ficam fora de todos os
   indicadores; os critérios explicam isso.
 
+### 2.1b Description não era gravada pela tabela 2 (correção de 15/10)
+
+- **Causa:** na tabela 2, digitar a Keynote só gravava a Keynote. A Description e a
+  Descrição IN do Excel só entravam depois de clicar em "Verificar no Excel", e só quando
+  o campo do modelo estava **vazio**. Quem digitava a Keynote e clicava direto em
+  "Atualizar descrições" gravava só a Keynote; a Description ficava para uma segunda
+  rodada pela tabela 1.
+- **Correção (`verify_incomplete`, `_cmp2`, `_on_changed2`, `analyze_model`):** com a
+  Keynote no Excel, a Description e a Descrição IN da planilha ficam **propostas** na
+  linha, tanto ao digitar quanto ao abrir. A proposta preenche campo vazio (célula verde)
+  ou substitui um valor diferente (célula âmbar), igual à tabela 1. Só é gravada com a
+  linha marcada e a confirmação. Excel vazio continua sem apagar nada.
+- A confirmação passou a mostrar quantos campos serão gravados (Description, Descrição
+  IN, Keynote). O resumo depois de gravar mostra quantos de cada um foram **gravados e
+  conferidos**, e o log registra cada valor (antes → depois).
+- A conferência ignora diferenças apenas de espaço ou quebra de linha, que o Revit pode
+  normalizar, para não acusar falha num valor que foi gravado.
+
 ### 2.2 Gravação no modelo (`save_run`, `run_transaction`, `_set_param`)
 
 - `run_transaction`:

@@ -1539,21 +1539,27 @@ def excel_rec(key):
 
 
 def verify_incomplete(r, autofill):
-    """Confere a linha com o Excel. autofill: completa Descrição / Descrição IN
-    vazias com os valores do Excel quando o Keynote existe na planilha.
-    Descrição do modelo DIFERENTE da do Excel não é substituída aqui: depois de
-    gravar o keynote, a diferença aparece na tabela 1 (Excel -> Modelo)."""
+    """Confere a linha com o Excel. autofill=True: quando a Keynote existe na
+    planilha, PROPÕE a Description e a Descrição IN do Excel (preenche campo
+    vazio ou substitui valor diferente), igual à tabela 1. A proposta só é
+    gravada se a linha estiver marcada e o usuário confirmar 'Atualizar
+    descrições'. Valor vazio no Excel nunca apaga o modelo. Descrição IN só
+    entra onde o parâmetro existe."""
     for f in ("key", "pt", "en"):
         r[f] = clean(r[f])
     rec = excel_rec(r["key"])
-    filled = []
-    if autofill and rec is not None:
-        if not r["pt"] and rec["pt"]:
-            r["pt"] = rec["pt"]
-            filled.append(u"Descrição")
-        if not r["en"] and rec["en"] and r["hasIn"]:
-            r["en"] = rec["en"]
-            filled.append(PARAM_IN_NAME)
+    applied = []
+    if autofill:
+        r["pt"], r["en"] = r["pt0"], r["en0"]       # parte sempre do valor do modelo
+        if rec is not None:
+            if rec["pt"] and rec["pt"] != r["pt0"]:
+                r["pt"] = rec["pt"]
+                applied.append(u"Description ({})".format(
+                    u"substitui" if r["pt0"] else u"preenche"))
+            if r["hasIn"] and rec["en"] and rec["en"] != r["en0"]:
+                r["en"] = rec["en"]
+                applied.append(u"{} ({})".format(
+                    PARAM_IN_NAME, u"substitui" if r["en0"] else u"preenche"))
     errs, warns = [], []
     if not r["key"]:
         errs.append(u"falta Keynote")
@@ -1563,8 +1569,7 @@ def verify_incomplete(r, autofill):
         errs.append(u"falta Descrição" + (u" (vazia também no Excel)"
                                           if rec is not None and not rec["pt"] else u""))
     elif rec is not None and rec["pt"] and r["pt"] != rec["pt"]:
-        warns.append(u"Descrição atual difere do Excel (mantida; após gravar o keynote "
-                     u"a troca aparece na tabela 1)")
+        warns.append(u"Descrição difere do Excel")
     if not r["hasIn"]:
         pass                              # Descrição IN não aplicável: nada a avisar
     elif not r["en"]:
@@ -1574,17 +1579,12 @@ def verify_incomplete(r, autofill):
     parts = []
     if rec is not None:
         parts.append(u"Keynote encontrada no Excel (linha {})".format(rec["row"]))
-        pending = [lbl for f, lbl, ok in (("pt", u"Descrição", True),
-                                          ("en", PARAM_IN_NAME, r["hasIn"]))
-                   if ok and not r[f] and rec[f]]
-        if pending and not autofill:
-            parts.append(u"clique em 'Verificar no Excel' para usar: " + u", ".join(pending))
+    if applied:
+        parts.append(u"Do Excel ao gravar: " + u", ".join(applied))
     if errs:
         parts.append(u"Erro: " + u", ".join(errs))
     if warns:
         parts.append(u"Aviso: " + u", ".join(warns))
-    if filled:
-        parts.append(u"Completado do Excel: " + u", ".join(filled))
     r["check"] = u" · ".join(parts) if parts else u"OK"
     return r["check"]
 
@@ -1816,7 +1816,7 @@ VERIFY_BODY = u"""
         </Border>
         <StackPanel x:Name="body2" Margin="0,6,0,0">
             <TextBlock Style="{StaticResource oca.Hint}"
-                       Text="Clique duas vezes no Keynote para digitar. Linha destacada (faixa verde-azulada à esquerda) = keynote encontrada no Excel (só indica correspondência; nada é gravado até 'Atualizar descrições'). 'Verificar no Excel' traz a Descrição e a Descrição em IN da planilha para os campos vazios.   Texto lilás = keynote digitado  ·  Verde = vem do Excel e será gravado  ·  Âmbar = Excel difere do modelo (mantido)"/>
+                       Text="Clique duas vezes no Keynote para digitar. Linha destacada (faixa verde-azulada à esquerda) = keynote encontrada no Excel (só indica correspondência; nada é gravado até 'Atualizar descrições'). Ao digitar a Keynote, a Description e a Descrição em IN do Excel já ficam propostas; marque a linha e use 'Atualizar descrições' (grava Keynote e descrições juntos). 'Verificar no Excel' marca todas as linhas com algo a gravar.   Texto lilás = keynote digitado  ·  Verde = preenche campo vazio  ·  Âmbar = substitui o valor atual"/>
             <DataGrid x:Name="grid2" """ + _GRID_STYLE + u""">
               <DataGrid.Columns>""" + _CHECK_COL + u"""
                 """ + _col(u"Categoria", u"Categoria", 105) + u"""
@@ -2155,7 +2155,8 @@ class VerifyWindow(forms.WPFWindow):
             return (u"(keynote não está no Excel)" if clean(r["key"]) else u""), u""
         xl = rec[f]
         if r[f] and r[f] != r[f + "0"]:
-            return r[f], u"excel"              # vem do Excel e será gravado
+            # vem do Excel e será gravado: verde preenche vazio, âmbar substitui
+            return r[f], (u"over" if r[f + "0"] else u"excel")
         if not xl:
             return u"(vazio no Excel)", u""
         if r[f + "0"] and xl != r[f + "0"]:
@@ -2399,10 +2400,9 @@ class VerifyWindow(forms.WPFWindow):
             else:
                 r = self.by_rid2[rid]
                 r["key"] = clean(e.Row["Keynote"] or u"")
-                # novo keynote: confere no Excel (destaque + valores do Excel);
-                # descrições só são usadas depois de 'Verificar no Excel'
-                r["pt"], r["en"] = r["pt0"], r["en0"]
-                verify_incomplete(r, autofill=False)
+                # novo keynote: confere no Excel e já propõe Description / IN da
+                # planilha (gravados só ao confirmar 'Atualizar descrições')
+                verify_incomplete(r, autofill=True)
                 self._refresh2(r)
                 self._check2(rid, inc_changed(r))
             self._update_counter()
@@ -2410,8 +2410,9 @@ class VerifyWindow(forms.WPFWindow):
             self._busy = False
 
     def _verify_all(self, sender, args):
-        """Confere cada Keynote no Excel e traz Descrição / Descrição IN de lá
-        para os campos VAZIOS. Só marca as linhas: gravar é outro passo."""
+        """Confere de novo cada Keynote no Excel, propõe Description /
+        Descrição IN da planilha e MARCA as linhas que têm algo a gravar.
+        Gravar é outro passo (Atualizar descrições + confirmação)."""
         self._commit()
         self._busy = True
         n_match = 0
@@ -2486,12 +2487,16 @@ class VerifyWindow(forms.WPFWindow):
             self.viewinfo.Text = u"Nada marcado para gravar."
             return
         n_over = len([r for r in sel1 if r["over"]])
+        cnt = pending_fields(sel1, sel2)
         if not _ask(self, u"Gravar no modelo?\n\n"
                           u"Tabela 1 (Excel > Modelo): {} tipo(s){}\n"
                           u"Tabela 2 (Keynote / descrições): {} tipo(s)\n\n"
+                          u"Campos que serão gravados:\n"
+                          u"  • Description: {}\n  • {}: {}\n  • Keynote: {}\n\n"
                           u"Ctrl+Z no Revit desfaz a gravação.".format(
                               len(sel1), u" - {} substitui(em) valor atual".format(n_over)
-                              if n_over else u"", len(sel2))):
+                              if n_over else u"", len(sel2), cnt["pt"], PARAM_IN_NAME,
+                              cnt["en"], cnt["key"])):
             self.viewinfo.Text = u"Gravação cancelada - nada foi alterado."
             return
         self.b_apply.IsEnabled = False
@@ -2740,7 +2745,7 @@ def analyze_model():
     INC, NOTX = collect_incomplete(set(r["key"] for r in VROWS), scan)
     for i, r in enumerate(INC):
         r["rid"] = i
-        verify_incomplete(r, autofill=False)
+        verify_incomplete(r, autofill=True)   # mostra a proposta; a linha segue desmarcada
     for i, r in enumerate(NOTX):
         r["rid"] = i
     TYPE_INST.clear()
@@ -2909,6 +2914,22 @@ def _set_param(p, new):
     return True, u""
 
 
+def pending_fields(rows1, rows2):
+    """Quantos campos cada gravação vai tentar: {"pt": n, "en": n, "key": n}."""
+    cnt = {"pt": 0, "en": 0, "key": 0}
+    for r in rows1:
+        for it in r["items"]:
+            if not it["reason"]:
+                cnt[it["field"]] += 1
+    for r in rows2:
+        for f in ("key", "pt", "en"):
+            if f == "en" and not r["hasIn"]:
+                continue
+            if clean(r[f]) and clean(r[f]) != r[f + "0"]:
+                cnt[f] += 1
+    return cnt
+
+
 def save_run(chosen_rows, chosen_inc):
     """'Atualizar descrições' (já confirmado pelo usuário). Grava, CONFERE no
     modelo o que ficou gravado, reanalisa, atualiza as tabelas e mostra o
@@ -3012,15 +3033,19 @@ def save_run(chosen_rows, chosen_inc):
                 problems.append((u"Tabela 2", msg))
 
         # ---- conferência: relê cada parâmetro gravado ----
-        n_ok = 0
+        def same(a, b):                    # ignora diferença só de espaço/quebra de linha
+            return u" ".join(to_unicode(a).split()) == u" ".join(to_unicode(b).split())
+        by_field = defaultdict(int)
         for p, new, rec in written:
             try:
                 now = param_text(p)
             except Exception:
                 now = None
-            if now == new:
-                n_ok += 1
+            if now is not None and same(now, new):
                 changes.append(rec)
+                by_field[rec["fieldKey"].replace(u"inc_", u"")] += 1
+                LOG.info(u"Gravado e conferido: {} · {}: '{}' -> '{}'".format(
+                    rec["where"], rec["field"], rec["old"], now))
             else:
                 problems.append((rec["where"] + u" · " + rec["field"],
                                  u"depois de gravar o modelo mostra '{}'".format(now)))
@@ -3045,7 +3070,9 @@ def save_run(chosen_rows, chosen_inc):
         MODEL = collect_model(use_view, opts["materials"])
         analyze_model()
         LOG.end(u"Reanálise após gravar")
-        msg = u"{} parâmetro(s) gravado(s) e conferido(s) no modelo.".format(n_saved)
+        msg = (u"{} parâmetro(s) gravado(s) e conferido(s) no modelo: Description {} · "
+               u"{} {} · Keynote {}.".format(n_saved, by_field["pt"], PARAM_IN_NAME,
+                                            by_field["en"], by_field["key"]))
         if problems:
             msg += u" {} item(ns) NÃO gravado(s) - veja o resumo.".format(len(problems))
         if VW is not None:
