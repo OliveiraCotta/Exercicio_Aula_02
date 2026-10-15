@@ -258,7 +258,7 @@ if (!N) {
       const xl = (f) => r.inExcel ? v(r[f]) : (r.key ? '<span class="none">keynote fora do Excel</span>' : '<span class="none">—</span>');
       return `<tr><td class="mono">${r.id}</td><td>${esc(r.category)}</td><td>${esc(r.family)}</td><td>${esc(r.type)}</td>
         <td>${r.count}</td><td class="mono">${v(r.key)}</td><td>${v(r.pt)}</td><td>${xl("xlPt")}</td>
-        <td>${r.hasIn ? v(r.en) : '<span class="none">sem parâmetro</span>'}</td><td>${xl("xlEn")}</td>
+        <td>${r.hasIn ? v(r.en) : '<span class="none" title="O tipo não tem o parâmetro (não é erro)">Não aplicável</span>'}</td><td>${r.hasIn ? xl("xlEn") : '<span class="none">—</span>'}</td>
         <td><span class="tag" style="background:${css(s.color)}">${s.label}</span></td>
         <td>${reasons.length ? reasons.map(p => `<span class="reason">${esc(p)}</span>`).join("") : '<span class="none">—</span>'}</td></tr>`;
     }).join("") : `<tr><td colspan="12" class="empty">Nenhum registro com este filtro.</td></tr>`;
@@ -269,9 +269,10 @@ if (!N) {
 
 $("crit").innerHTML = [
   `<b>Registro analisado</b>: cada tipo (família + tipo) usado por elementos do modelo em categoria com parâmetro Keynote. Materiais não entram.`,
-  `<b>Informação faltante</b>: Keynote vazio, Description vazia ou ${esc(DATA.inParam)} vazia.`,
+  `<b>Informação faltante</b>: Keynote vazio, Description vazia ou ${esc(DATA.inParam)} vazia (só nos tipos que têm esse parâmetro).`,
   `<b>Divergência</b>: Keynote não encontrada no Excel, ou Description / ${esc(DATA.inParam)} do modelo diferente da do Excel (só compara quando os dois lados têm valor).`,
-  `<b>Não verificado</b>: o tipo não tem o parâmetro ${esc(DATA.inParam)}, ou o Excel não tem a descrição para comparar. Nunca é contado como correto.`,
+  `<b>Não verificado</b>: o Excel não tem a descrição para comparar com a do modelo. Nunca é contado como correto.`,
+  `<b>${esc(DATA.inParam)} é opcional</b>: nos tipos que não têm esse parâmetro (${DATA.totals.inNA || 0} tipo(s) nesta análise) o campo aparece como "Não aplicável" e não entra em nenhum indicador.`,
   `<b>Correto</b>: todos os critérios aplicáveis atendidos.`,
   `<b>Situação única por registro</b> (rosca e filtros), nesta prioridade: Informação faltante → Divergência → Não verificado → Correto. Os cartões "Com informação faltante" e "Com divergência" contam registros com pelo menos um problema daquele grupo (um registro pode estar nos dois).`,
   `<b>Saúde</b> = Corretos ÷ (Total analisado − Não verificados).`,
