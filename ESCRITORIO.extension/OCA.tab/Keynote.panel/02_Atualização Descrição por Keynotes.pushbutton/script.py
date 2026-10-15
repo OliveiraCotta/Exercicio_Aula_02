@@ -36,8 +36,9 @@
 # Ao executar a 1ª aba, o TXT de Keynote é gerado do Excel e recarregado no
 # projeto (arquivo existente é substituído; o anterior vira backup com data/hora).
 # Botões da 2ª aba: Voltar (1ª aba) · Dashboard HTML (qualidade dos dados,
-# offline) · Gravar marcados (pede confirmação, grava e atualiza as tabelas)
-# · Finalizar (só fecha - não grava nem gera nada).
+# offline) · Atualizar descrições (antes "Gravar marcados": pede confirmação,
+# grava e atualiza as tabelas) · Finalizar (só fecha - não grava nem gera nada).
+# Visual: Design System OCA (lib/oca_ds) - janelas, diálogos e dashboard.
 #
 # TXT de Keynote do Revit: mesma estrutura do arquivo do escritório -
 # CATEGORIA/prefixos, PREFIXO/GRUPO/CATEGORIA e KEYNOTE / "DESCRIÇÃO |
@@ -60,6 +61,7 @@ from datetime import datetime
 from collections import OrderedDict, defaultdict
 
 from pyrevit import revit, DB, script, forms
+from oca_ds import build_xaml, alert_title, brand_report
 
 import clr
 clr.AddReference("System.Xml")
@@ -84,6 +86,7 @@ HERE = os.path.dirname(__file__)
 
 output = script.get_output()
 output.set_title("Atualização Descrição por Keynotes")
+ALERT_TITLE = alert_title(__title__)    # "OCA · Atualização das Descrições por Keynote"
 
 
 # ------------------------------------------------------------------
@@ -193,56 +196,52 @@ def open_in_browser(path):
 
 
 # ------------------------------------------------------------------
-# 1. Janela de opções
+# 1. Janela de opções (Design System OCA - lib/oca_ds)
 # ------------------------------------------------------------------
-KN_XAML = u"""
-<Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
-        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="Atualização das Descrições do Modelo por Keynote" Height="Auto" Width="580"
-        SizeToContent="Height" WindowStartupLocation="CenterScreen"
-        ResizeMode="NoResize" Background="#0E1526">
-  <Window.Resources>
-    <Style TargetType="TextBlock">
-      <Setter Property="Foreground" Value="#CFE3FF"/>
-      <Setter Property="FontFamily" Value="Segoe UI"/>
-      <Setter Property="Margin" Value="0,12,0,4"/>
-    </Style>
-  </Window.Resources>
-  <StackPanel Margin="18">
-    <TextBlock Text="ATUALIZAÇÃO DAS DESCRIÇÕES DO MODELO POR KEYNOTE" FontSize="15"
-               FontWeight="SemiBold" Foreground="#65E3FF" Margin="0,0,0,4"/>
+KN_BODY = u"""
+  <StackPanel>
+    <HeaderedContentControl Header="RESUMO" Style="{StaticResource oca.Section}">
+      <TextBlock Style="{StaticResource oca.Hint}"
+                 Text="Lê a aba MATERIAIS da planilha de Keynote e atualiza a Descrição e a Descrição IN dos tipos do modelo pelo código de Keynote. Na próxima etapa você confere as tabelas e grava só o que marcar (com confirmação). Ao executar, o TXT de Keynote é gerado a partir do Excel e recarregado no projeto."/>
+    </HeaderedContentControl>
 
-    <TextBlock Text="Resumo" FontWeight="SemiBold"/>
-    <TextBlock TextWrapping="Wrap" FontSize="11" Foreground="#9FB3CC" Margin="0,0,0,0"
-               Text="Lê a aba MATERIAIS da planilha de Keynote e atualiza a Descrição e a Descrição IN dos tipos do modelo pelo código de Keynote. Na próxima etapa você confere as tabelas e grava só o que marcar (com confirmação). Ao executar, o TXT de Keynote é gerado a partir do Excel e recarregado no projeto."/>
+    <HeaderedContentControl Header="FLUXO" Style="{StaticResource oca.Section}">
+      <TextBlock Text="Excel  &gt;  Modelo" Style="{StaticResource oca.Value}"/>
+    </HeaderedContentControl>
 
-    <TextBlock Text="Fluxo" FontWeight="SemiBold"/>
-    <TextBlock Margin="0,0,0,0" FontSize="13" Foreground="#D9E8F5"
-               Text="Excel  &gt;  Modelo"/>
+    <HeaderedContentControl Header="PLANILHA EXCEL DE KEYNOTE (.XLSX)" Style="{StaticResource oca.Section}">
+      <Grid>
+        <Grid.ColumnDefinitions>
+          <ColumnDefinition Width="*"/>
+          <ColumnDefinition Width="Auto"/>
+        </Grid.ColumnDefinitions>
+        <TextBox x:Name="xlsx"/>
+        <Button x:Name="browse" Grid.Column="1" Content="Procurar..." Margin="8,0,0,0"/>
+      </Grid>
+    </HeaderedContentControl>
 
-    <TextBlock Text="Planilha Excel de Keynote (.xlsx)" FontWeight="SemiBold"/>
-    <DockPanel LastChildFill="True">
-      <Button x:Name="browse" DockPanel.Dock="Right" Content="Procurar..." Width="90"
-              Height="26" Margin="8,0,0,0"/>
-      <TextBox x:Name="xlsx" Height="26" Padding="4,3,4,2"/>
-    </DockPanel>
+    <HeaderedContentControl Header="TXT DE KEYNOTE DO REVIT" Style="{StaticResource oca.Section}">
+      <StackPanel>
+        <TextBlock Style="{StaticResource oca.Hint}" Margin="0,0,0,6"
+                   Text="Gerado a partir do Excel e recarregado no projeto ao clicar em Gerar TXT e conferir. Troque XXX (projeto) e XX (revisão) no nome. Se o arquivo já existir, é substituído e o anterior vira um backup com data e hora na mesma pasta."/>
+        <Grid>
+          <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="*"/>
+            <ColumnDefinition Width="Auto"/>
+          </Grid.ColumnDefinitions>
+          <TextBox x:Name="txt_path"/>
+          <Button x:Name="txt_browse" Grid.Column="1" Content="Salvar como..." Margin="8,0,0,0"/>
+        </Grid>
+      </StackPanel>
+    </HeaderedContentControl>
+  </StackPanel>"""
 
-    <TextBlock Text="TXT de Keynote do Revit" FontWeight="SemiBold"/>
-    <TextBlock TextWrapping="Wrap" FontSize="11" Foreground="#9FB3CC" Margin="0,0,0,6"
-               Text="Gerado a partir do Excel e recarregado no projeto ao clicar em Executar. Troque XXX (projeto) e XX (revisão) no nome. Se o arquivo já existir, é substituído e o anterior vira um backup com data e hora na mesma pasta."/>
-    <DockPanel LastChildFill="True">
-      <Button x:Name="txt_browse" DockPanel.Dock="Right" Content="Salvar como..." Width="90"
-              Height="26" Margin="8,0,0,0"/>
-      <TextBox x:Name="txt_path" Height="26" Padding="4,3,4,2"/>
-    </DockPanel>
+KN_FOOTER = u"""
+  <Button x:Name="ok" Content="Gerar TXT e conferir" Style="{StaticResource oca.Primary}"/>
+  <Button x:Name="cancel" Content="Cancelar" Margin="8,0,0,0"/>"""
 
-    <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,20,0,0">
-      <Button x:Name="cancel" Content="Cancelar" Width="90" Height="28" Margin="0,0,10,0"/>
-      <Button x:Name="ok" Content="Executar  →" Width="120" Height="28"/>
-    </StackPanel>
-  </StackPanel>
-</Window>
-"""
+KN_XAML = build_xaml(title=__title__, subtitle=__doc__, body=KN_BODY,
+                     footer_right=KN_FOOTER, size="M")
 
 
 TXT_DEFAULT_NAME = u"OCA_XXX_Lista de Materiais_XX.txt"   # XXX = projeto · XX = revisão
@@ -300,13 +299,14 @@ class KeynoteWindow(forms.WPFWindow):
     def _ok(self, sender, args):
         path = to_unicode(self.xlsx.Text).strip().strip('"')
         if not path or not os.path.isfile(path) or not path.lower().endswith(".xlsx"):
-            forms.alert(u"Selecione um arquivo .xlsx válido.", title=__title__.replace("\n", " "))
+            forms.alert(u"Selecione um arquivo .xlsx válido.",
+                        sub_msg=u"Use Procurar... para escolher a planilha de Keynote.", title=ALERT_TITLE)
             return
         txt = to_unicode(self.txt_path.Text).strip().strip('"') or default_txt_path(path)
         if not txt.lower().endswith(".txt"):
             txt += u".txt"
         if not os.path.isdir(os.path.dirname(txt) or u"."):
-            forms.alert(u"Pasta do TXT de Keynote não existe:\n{}".format(txt))
+            forms.alert(u"A pasta do TXT de Keynote não existe.", sub_msg=txt, title=ALERT_TITLE)
             return
         self.result = {
             "xlsx": path,
@@ -1230,7 +1230,8 @@ class _RevitAction(IExternalEventHandler):
             except SystemExit:
                 pass
             except Exception as ex:
-                forms.alert(u"Erro: {}".format(to_unicode(ex)))
+                forms.alert(u"Não foi possível concluir a ação.", sub_msg=to_unicode(ex),
+                            title=ALERT_TITLE)
 
     def GetName(self):
         return u"Atualização das Descrições por Keynote"
@@ -1477,15 +1478,14 @@ from System.Data import DataTable
 
 # tabela com altura do conteúdo: quem rola é a janela (barra à direita);
 # sem virtualização, para o agrupamento sempre redesenhar todas as linhas
+# (cores, contorno e fonte: estilos implícitos do Design System - lib/oca_ds/wpf.py)
 _GRID_STYLE = u"""
               AutoGenerateColumns="False" CanUserAddRows="False"
               CanUserDeleteRows="False" CanUserSortColumns="False" CanUserReorderColumns="False"
               CanUserResizeColumns="True"
               CanUserResizeRows="False" HeadersVisibility="Column" SelectionMode="Single"
               SelectionUnit="FullRow" GridLinesVisibility="Horizontal"
-              HorizontalGridLinesBrush="#1C2B44" Background="#0A1120" AlternationCount="2"
-              Foreground="#D9E8F5" BorderBrush="#2A4A66"
-              BorderThickness="1" FontFamily="Segoe UI" FontSize="12" Margin="0,4,0,0"
+              AlternationCount="2" Margin="0,4,0,0"
               VerticalScrollBarVisibility="Disabled" HorizontalScrollBarVisibility="Auto"
               EnableRowVirtualization="False" EnableColumnVirtualization="False"
               VirtualizingPanel.IsVirtualizing="False"
@@ -1496,9 +1496,12 @@ _GRID_STYLE = u"""
 # cor da CÉLULA que vai mudar (coluna "<campo>Mark" da linha):
 #   fill = preenche vazio · over = sobrescreve · edit = digitado · blocked = não grava
 #   excel = vem do Excel e será gravado · diff = Excel difere do modelo (não grava)
-MARK_COLORS = (("fill", "#1E5A3A", "#E8FFF0"), ("over", "#6B4A12", "#FFF3DD"),
-               ("edit", "#1F4E8C", "#EAF3FF"), ("excel", "#1E5A3A", "#E8FFF0"),
-               ("diff", "#6B4A12", "#FFF3DD"))
+# (fundo, texto): pincéis do Design System, que acompanham o tema da janela
+MARK_COLORS = (("fill", "{StaticResource oca.OkSoft}", "{StaticResource oca.Ok}"),
+               ("over", "{StaticResource oca.WarnSoft}", "{StaticResource oca.Warn}"),
+               ("edit", "{StaticResource oca.AccentSoft}", "{StaticResource oca.Violet}"),
+               ("excel", "{StaticResource oca.OkSoft}", "{StaticResource oca.Ok}"),
+               ("diff", "{StaticResource oca.WarnSoft}", "{StaticResource oca.Warn}"))
 
 
 def _mark_style(key, mark_col):
@@ -1508,7 +1511,7 @@ def _mark_style(key, mark_col):
         u'<Setter Property="FontWeight" Value="SemiBold"/></DataTrigger>'.format(mark_col, v, bg, fg)
         for v, bg, fg in MARK_COLORS)
     trig += (u'<DataTrigger Binding="{{Binding {0}}}" Value="blocked">'
-             u'<Setter Property="Foreground" Value="#7A8FA9"/></DataTrigger>'.format(mark_col))
+             u'<Setter Property="Foreground" Value="{{StaticResource oca.Ink2}}"/></DataTrigger>'.format(mark_col))
     return (u'<Style x:Key="{0}" TargetType="DataGridCell" '
             u'BasedOn="{{StaticResource {{x:Type DataGridCell}}}}">'
             u'<Style.Triggers>{1}</Style.Triggers></Style>'.format(key, trig))
@@ -1518,7 +1521,7 @@ _CHECK_COL = u"""
         <DataGridTemplateColumn Header="✓" Width="36">
           <DataGridTemplateColumn.CellTemplate>
             <DataTemplate>
-              <CheckBox HorizontalAlignment="Center" VerticalAlignment="Center"
+              <CheckBox HorizontalAlignment="Center" VerticalAlignment="Center" Margin="0"
                         IsChecked="{Binding Sel, UpdateSourceTrigger=PropertyChanged}"
                         IsEnabled="{Binding Enabled}"/>
             </DataTemplate>
@@ -1538,18 +1541,9 @@ def _col(header, binding, width, style=u"wrap", readonly=True, cell=None):
                 u' CellStyle="{{StaticResource {}}}"'.format(cell) if cell else u""))
 
 
-VERIFY_XAML = u"""
-<Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
-        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="Atualização das Descrições do Modelo por Keynote · Verificação"
-        Width="1450" Height="980" MinWidth="900" MinHeight="620"
-        WindowStartupLocation="CenterScreen" Background="#0E1526">
-  <Window.Resources>
-    <Style TargetType="Button">
-      <Setter Property="Height" Value="28"/>
-      <Setter Property="Padding" Value="12,0,12,0"/>
-      <Setter Property="Margin" Value="0,0,8,0"/>
-    </Style>
+# estilos referenciados pelas colunas geradas em _col / _GRID_STYLE e pelo corpo
+# (vão para Window.Resources, depois dos pincéis e estilos oca.*)
+VERIFY_RESOURCES = u"""
     <Style x:Key="wrap" TargetType="TextBlock">
       <Setter Property="TextWrapping" Value="Wrap"/>
       <Setter Property="Padding" Value="4,2,4,2"/>
@@ -1561,42 +1555,45 @@ VERIFY_XAML = u"""
     <Style x:Key="edit" TargetType="TextBlock">
       <Setter Property="TextWrapping" Value="Wrap"/>
       <Setter Property="Padding" Value="4,2,4,2"/>
-      <Setter Property="Background" Value="#1E3150"/>
+      <Setter Property="Background" Value="{StaticResource oca.AccentSoft}"/>
       <Setter Property="FontFamily" Value="Consolas"/>
     </Style>
     <Style x:Key="lbl" TargetType="TextBlock">
-      <Setter Property="Foreground" Value="#65E3FF"/>
-      <Setter Property="FontFamily" Value="Segoe UI"/>
+      <Setter Property="Foreground" Value="{StaticResource oca.Accent}"/>
       <Setter Property="FontWeight" Value="SemiBold"/>
       <Setter Property="VerticalAlignment" Value="Center"/>
       <Setter Property="Margin" Value="0,0,16,0"/>
     </Style>
     <Style x:Key="small" TargetType="TextBlock">
-      <Setter Property="Foreground" Value="#CFE3FF"/>
-      <Setter Property="FontFamily" Value="Segoe UI"/>
+      <Setter Property="Foreground" Value="{StaticResource oca.Ink}"/>
       <Setter Property="VerticalAlignment" Value="Center"/>
     </Style>
-    <Style x:Key="head" TargetType="DataGridColumnHeader">
-      <Setter Property="Background" Value="#13203A"/>
-      <Setter Property="Foreground" Value="#65E3FF"/>
-      <Setter Property="FontWeight" Value="SemiBold"/>
-      <Setter Property="Padding" Value="6,6,6,6"/>
-      <Setter Property="BorderBrush" Value="#2A4A66"/>
-      <Setter Property="BorderThickness" Value="0,0,1,1"/>
+    <Style x:Key="sec" TargetType="Border">
+      <Setter Property="Background" Value="{StaticResource oca.Surface}"/>
+      <Setter Property="BorderBrush" Value="{StaticResource oca.Line}"/>
+      <Setter Property="BorderThickness" Value="1"/>
+      <Setter Property="CornerRadius" Value="{StaticResource oca.RadiusGroup}"/>
+      <Setter Property="Padding" Value="6,4,8,4"/>
     </Style>
-    <Style x:Key="row" TargetType="DataGridRow">
-      <Setter Property="Background" Value="#0E1526"/>
+    <Style x:Key="toggle" TargetType="Button" BasedOn="{StaticResource oca.Compact}">
+      <Setter Property="Width" Value="28"/>
+      <Setter Property="Padding" Value="0"/>
+      <Setter Property="Margin" Value="0,0,8,0"/>
+    </Style>
+    <Style x:Key="head" TargetType="DataGridColumnHeader" BasedOn="{StaticResource {x:Type DataGridColumnHeader}}"/>
+    <Style x:Key="row" TargetType="DataGridRow" BasedOn="{StaticResource {x:Type DataGridRow}}">
+      <Setter Property="Background" Value="{StaticResource oca.Field}"/>
       <Style.Triggers>
         <Trigger Property="AlternationIndex" Value="1">
-          <Setter Property="Background" Value="#111C31"/>
+          <Setter Property="Background" Value="{StaticResource oca.Surface2}"/>
         </Trigger>
         <DataTrigger Binding="{Binding Kind}" Value="blocked">
-          <Setter Property="Foreground" Value="#7A8FA9"/>
+          <Setter Property="Foreground" Value="{StaticResource oca.Ink2}"/>
         </DataTrigger>
         <!-- tabela 2: keynote encontrada no Excel (correspondência, não "gravado") -->
         <DataTrigger Binding="{Binding Kind}" Value="match">
-          <Setter Property="Background" Value="#123B47"/>
-          <Setter Property="BorderBrush" Value="#3FB6C9"/>
+          <Setter Property="Background" Value="{StaticResource oca.AccentSoft}"/>
+          <Setter Property="BorderBrush" Value="{StaticResource oca.Accent}"/>
           <Setter Property="BorderThickness" Value="3,0,0,0"/>
         </DataTrigger>
         <!-- linha de título do grupo (Agrupar por), na largura toda da tabela -->
@@ -1605,10 +1602,9 @@ VERIFY_XAML = u"""
           <Setter Property="Template">
             <Setter.Value>
               <ControlTemplate TargetType="DataGridRow">
-                <Border Background="#1B2A47" BorderBrush="#2A4A66" BorderThickness="0,1,0,1"
-                        Padding="8,5,8,5">
-                  <TextBlock Text="{Binding Grp}" Foreground="#65E3FF" FontWeight="Bold"
-                             FontFamily="Segoe UI"/>
+                <Border Background="{StaticResource oca.Surface2}" BorderBrush="{StaticResource oca.Line}"
+                        BorderThickness="0,1,0,1" Padding="8,5,8,5">
+                  <TextBlock Text="{Binding Grp}" Foreground="{StaticResource oca.Accent}" FontWeight="Bold"/>
                 </Border>
               </ControlTemplate>
             </Setter.Value>
@@ -1618,64 +1614,44 @@ VERIFY_XAML = u"""
     </Style>
     """ + _mark_style(u"mPt", u"PtMark") + u"""
     """ + _mark_style(u"mEn", u"EnMark") + u"""
-    """ + _mark_style(u"mKey", u"KeyMark") + u"""
-  </Window.Resources>
-  <DockPanel Margin="16,12,4,12">
+    """ + _mark_style(u"mKey", u"KeyMark")
+
+VERIFY_BODY = u"""
+  <DockPanel>
     <StackPanel DockPanel.Dock="Top" Margin="0,0,12,0">
-      <TextBlock Text="ATUALIZAÇÃO DAS DESCRIÇÕES DO MODELO POR KEYNOTE   ·   Excel &gt; Modelo"
-                 FontSize="15" FontWeight="SemiBold" Foreground="#65E3FF" FontFamily="Segoe UI"/>
-      <TextBlock x:Name="info" TextWrapping="Wrap" FontSize="12" Foreground="#CFE3FF"
-                 FontFamily="Segoe UI" Margin="0,6,0,0"/>
+      <Border Style="{StaticResource oca.Msg.Info}" Margin="0" Visibility="{Binding Visibility, ElementName=info}">
+        <TextBlock x:Name="info" Style="{StaticResource oca.MsgText}"/>
+      </Border>
       <WrapPanel Margin="0,10,0,0">
-        <TextBlock Text="Buscar " Style="{StaticResource small}"/>
-        <TextBox x:Name="f_text" Width="300" Height="26" Margin="0,0,8,0" Padding="4,3,4,2"/>
-        <Button x:Name="b_search" Content="Buscar" Height="26"/>
-        <Button x:Name="b_clear" Content="Limpar busca" Height="26"/>
-        <TextBlock x:Name="searchinfo" Style="{StaticResource small}" Foreground="#7A8FA9"
+        <TextBlock Text="Buscar" Style="{StaticResource oca.Label}"/>
+        <TextBox x:Name="f_text" Width="300" Margin="0,0,8,0"/>
+        <Button x:Name="b_search" Content="Buscar" Margin="0,0,8,0"/>
+        <Button x:Name="b_clear" Content="Limpar busca" Margin="0,0,8,0"/>
+        <TextBlock x:Name="searchinfo" Style="{StaticResource small}" Foreground="{StaticResource oca.Ink2}"
                    Margin="8,0,0,0"/>
       </WrapPanel>
-      <TextBlock x:Name="viewinfo" TextWrapping="Wrap" FontSize="12" Foreground="#7BE3A0"
-                 FontFamily="Segoe UI" Margin="0,4,0,0"/>
+      <Border Style="{StaticResource oca.Msg.Ok}" Visibility="{Binding Visibility, ElementName=viewinfo}">
+        <TextBlock x:Name="viewinfo" Style="{StaticResource oca.MsgText}"/>
+      </Border>
     </StackPanel>
-    <Grid DockPanel.Dock="Bottom" Margin="0,10,12,0">
-      <Grid.ColumnDefinitions>
-        <ColumnDefinition Width="Auto"/>
-        <ColumnDefinition Width="*"/>
-        <ColumnDefinition Width="Auto"/>
-        <ColumnDefinition Width="Auto"/>
-        <ColumnDefinition Width="Auto"/>
-      </Grid.ColumnDefinitions>
-      <Button x:Name="b_back" Grid.Column="0" Content="←  Voltar" MinWidth="100"
-              Margin="0,0,14,0" ToolTip="Volta para a primeira aba (planilha e TXT)"/>
-      <TextBlock x:Name="counter" Grid.Column="1" VerticalAlignment="Center" Margin="0,0,12,0"
-                 Foreground="#CFE3FF" FontFamily="Segoe UI" TextWrapping="Wrap"/>
-      <Button x:Name="b_dash" Grid.Column="2" Content="Dashboard HTML" MinWidth="130"
-              Margin="0,0,10,0"
-              ToolTip="Abre no navegador o painel de qualidade dos dados da última análise (não altera o modelo)"/>
-      <Button x:Name="b_apply" Grid.Column="3" Content="Gravar marcados" MinWidth="150"
-              Margin="0,0,10,0" ToolTip="Grava no modelo as linhas marcadas (pede confirmação)"/>
-      <Button x:Name="b_finish" Grid.Column="4" Content="Finalizar" MinWidth="110"
-              Margin="0" FontWeight="SemiBold" ToolTip="Fecha o comando sem gravar nada"/>
-    </Grid>
+    <TextBlock x:Name="counter" DockPanel.Dock="Bottom" Margin="0,10,12,0" TextWrapping="Wrap"
+               Foreground="{StaticResource oca.Ink}"/>
     <ScrollViewer x:Name="scroll" VerticalScrollBarVisibility="Visible"
                   HorizontalScrollBarVisibility="Disabled" Margin="0,8,0,0">
       <StackPanel Margin="0,0,12,0">
-        <Border Background="#13203A" BorderBrush="#2A4A66" BorderThickness="1"
-                Padding="6,4,8,4" Margin="0,4,0,0">
+        <Border Style="{StaticResource sec}" Margin="0,4,0,0">
           <DockPanel LastChildFill="False">
-            <Button x:Name="tg1" Content="▼" Width="28" Height="24" Padding="0" Margin="0,0,8,0"
-                    ToolTip="Recolher / expandir a tabela"/>
+            <Button x:Name="tg1" Content="▼" Style="{StaticResource toggle}" ToolTip="Recolher / expandir a tabela"/>
             <TextBlock x:Name="tt1" Style="{StaticResource lbl}" Margin="0,0,8,0" Cursor="Hand"
                        Text="1 · EXCEL &gt; MODELO"/>
             <TextBlock x:Name="h1" Style="{StaticResource small}" Margin="0,0,18,0"
-                       Foreground="#7A8FA9"/>
+                       Foreground="{StaticResource oca.Ink2}"/>
             <TextBlock Text="Agrupar por " Style="{StaticResource small}"/>
-            <ComboBox x:Name="f_mode1" Width="150" Height="26" Margin="0,0,14,0"/>
+            <ComboBox x:Name="f_mode1" Width="150" Margin="0,0,14,0"/>
           </DockPanel>
         </Border>
         <StackPanel x:Name="body1" Margin="0,6,0,0">
-            <TextBlock Style="{StaticResource small}" FontSize="11" Foreground="#7A8FA9"
-                       TextWrapping="Wrap"
+            <TextBlock Style="{StaticResource oca.Hint}"
                        Text="Uma linha por tipo (família + tipo): tipos diferentes com a mesma keynote ficam em linhas separadas. Clique numa linha para selecionar o tipo no Revit.   Célula verde = preenche vazio  ·  Âmbar = substitui o valor atual  ·  Cinza = não pode ser gravado"/>
             <DataGrid x:Name="grid" """ + _GRID_STYLE + u""">
               <DataGrid.Columns>""" + _CHECK_COL + u"""
@@ -1692,24 +1668,21 @@ VERIFY_XAML = u"""
               </DataGrid.Columns>
             </DataGrid>
         </StackPanel>
-        <Border Background="#13203A" BorderBrush="#2A4A66" BorderThickness="1"
-                Padding="6,4,8,4" Margin="0,16,0,0">
+        <Border Style="{StaticResource sec}" Margin="0,16,0,0">
           <DockPanel LastChildFill="False">
-            <Button x:Name="tg2" Content="▼" Width="28" Height="24" Padding="0" Margin="0,0,8,0"
-                    ToolTip="Recolher / expandir a tabela"/>
+            <Button x:Name="tg2" Content="▼" Style="{StaticResource toggle}" ToolTip="Recolher / expandir a tabela"/>
             <TextBlock x:Name="tt2" Style="{StaticResource lbl}" Margin="0,0,8,0" Cursor="Hand"
                        Text="2 · ELEMENTOS SEM KEYNOTE OU SEM DESCRIÇÃO"/>
             <TextBlock x:Name="h2" Style="{StaticResource small}" Margin="0,0,18,0"
-                       Foreground="#7A8FA9"/>
+                       Foreground="{StaticResource oca.Ink2}"/>
             <TextBlock Text="Agrupar por " Style="{StaticResource small}"/>
-            <ComboBox x:Name="f_mode2" Width="150" Height="26" Margin="0,0,14,0"/>
-            <Button x:Name="b2_check" Content="Verificar no Excel" Height="26"/>
+            <ComboBox x:Name="f_mode2" Width="150" Margin="0,0,14,0"/>
+            <Button x:Name="b2_check" Content="Verificar no Excel"/>
           </DockPanel>
         </Border>
         <StackPanel x:Name="body2" Margin="0,6,0,0">
-            <TextBlock Style="{StaticResource small}" FontSize="11" Foreground="#7A8FA9"
-                       TextWrapping="Wrap"
-                       Text="Clique duas vezes no Keynote para digitar. Linha azul-esverdeada = keynote encontrada no Excel (só indica correspondência; nada é gravado até 'Gravar marcados'). 'Verificar no Excel' traz a Descrição e a Descrição em IN da planilha para os campos vazios.   Célula azul = keynote digitado  ·  Verde = vem do Excel e será gravado  ·  Âmbar = Excel difere do modelo (mantido)"/>
+            <TextBlock Style="{StaticResource oca.Hint}"
+                       Text="Clique duas vezes no Keynote para digitar. Linha destacada (faixa verde-azulada à esquerda) = keynote encontrada no Excel (só indica correspondência; nada é gravado até 'Atualizar descrições'). 'Verificar no Excel' traz a Descrição e a Descrição em IN da planilha para os campos vazios.   Texto lilás = keynote digitado  ·  Verde = vem do Excel e será gravado  ·  Âmbar = Excel difere do modelo (mantido)"/>
             <DataGrid x:Name="grid2" """ + _GRID_STYLE + u""">
               <DataGrid.Columns>""" + _CHECK_COL + u"""
                 """ + _col(u"Categoria", u"Categoria", 105) + u"""
@@ -1725,22 +1698,19 @@ VERIFY_XAML = u"""
               </DataGrid.Columns>
             </DataGrid>
         </StackPanel>
-        <Border Background="#13203A" BorderBrush="#2A4A66" BorderThickness="1"
-                Padding="6,4,8,4" Margin="0,16,0,0">
+        <Border Style="{StaticResource sec}" Margin="0,16,0,0">
           <DockPanel LastChildFill="False">
-            <Button x:Name="tg3" Content="▼" Width="28" Height="24" Padding="0" Margin="0,0,8,0"
-                    ToolTip="Recolher / expandir a tabela"/>
+            <Button x:Name="tg3" Content="▼" Style="{StaticResource toggle}" ToolTip="Recolher / expandir a tabela"/>
             <TextBlock x:Name="tt3" Style="{StaticResource lbl}" Margin="0,0,8,0" Cursor="Hand"
                        Text="3 · ELEMENTOS COM KEYNOTE QUE NÃO ESTÁ NO EXCEL"/>
             <TextBlock x:Name="h3" Style="{StaticResource small}" Margin="0,0,18,0"
-                       Foreground="#7A8FA9"/>
+                       Foreground="{StaticResource oca.Ink2}"/>
             <TextBlock Text="Agrupar por " Style="{StaticResource small}"/>
-            <ComboBox x:Name="f_mode3" Width="150" Height="26" Margin="0,0,14,0"/>
+            <ComboBox x:Name="f_mode3" Width="150" Margin="0,0,14,0"/>
           </DockPanel>
         </Border>
         <StackPanel x:Name="body3" Margin="0,6,0,8">
-            <TextBlock Style="{StaticResource small}" FontSize="11" Foreground="#7A8FA9"
-                       TextWrapping="Wrap"
+            <TextBlock Style="{StaticResource oca.Hint}"
                        Text="Só consulta: inclua o código na planilha do Excel e rode o comando de novo."/>
             <DataGrid x:Name="grid3" """ + _GRID_STYLE + u""" IsReadOnly="True">
               <DataGrid.Columns>
@@ -1757,9 +1727,28 @@ VERIFY_XAML = u"""
         </StackPanel>
       </StackPanel>
     </ScrollViewer>
-  </DockPanel>
-</Window>
-"""
+  </DockPanel>"""
+
+# rodapé: Voltar à esquerda; à direita o botão principal primeiro
+VERIFY_FOOTER_LEFT = u"""
+  <Button x:Name="b_back" Content="←  Voltar" Style="{StaticResource oca.Ghost}"
+          ToolTip="Volta para a primeira aba (planilha e TXT)"/>"""
+
+VERIFY_FOOTER = u"""
+  <Button x:Name="b_apply" Content="Atualizar descrições" MinWidth="150" Style="{StaticResource oca.Primary}"
+          ToolTip="Grava no modelo as linhas marcadas (pede confirmação)"/>
+  <Button x:Name="b_dash" Content="Dashboard HTML" MinWidth="130" Margin="8,0,0,0"
+          ToolTip="Abre no navegador o painel de qualidade dos dados da última análise (não altera o modelo)"/>
+  <Button x:Name="b_finish" Content="Finalizar" MinWidth="110" Margin="8,0,0,0"
+          ToolTip="Fecha o comando sem gravar nada"/>"""
+
+VERIFY_XAML = build_xaml(title=__title__ + u" · Verificação",
+                         subtitle=u"Excel > Modelo: confira as tabelas e grave só o que marcar "
+                                  u"(nada é gravado sem confirmação).",
+                         body=VERIFY_BODY, footer_right=VERIFY_FOOTER,
+                         footer_left=VERIFY_FOOTER_LEFT, resources=VERIFY_RESOURCES,
+                         size="L", height=980, width=1450,
+                         min_width=900, min_height=620)   # mínimos da janela original
 
 GROUP_MODES = [u"Sem agrupamento", u"Keynote", u"Categoria"]
 COLS1 = ("Grupo", "Categoria", "Familia", "Tipo", "Keynote", "PtAtual", "PtNova",
@@ -1787,7 +1776,7 @@ def _key_label(key):
     return u"{}   ·   {} ({})".format(key, grp, cat)
 
 
-def _ask(owner, text, title=u"Atualização das Descrições por Keynote"):
+def _ask(owner, text, title=ALERT_TITLE):
     """Pergunta Sim/Não (janela WPF; pode ser chamada com a tabela aberta)."""
     from System.Windows import MessageBox, MessageBoxButton, MessageBoxImage, MessageBoxResult
     try:
@@ -1798,7 +1787,7 @@ def _ask(owner, text, title=u"Atualização das Descrições por Keynote"):
     return res == MessageBoxResult.Yes
 
 
-def _tell(owner, text, title=u"Atualização das Descrições por Keynote", warn=False):
+def _tell(owner, text, title=ALERT_TITLE, warn=False):
     from System.Windows import MessageBox, MessageBoxButton, MessageBoxImage
     img = MessageBoxImage.Warning if warn else MessageBoxImage.Information
     try:
@@ -2219,7 +2208,7 @@ class VerifyWindow(forms.WPFWindow):
         finally:
             self._busy = False
         self.viewinfo.Text = (u"Verificado no Excel: {} de {} linha(s) com keynote encontrada. "
-                              u"Nada foi gravado - confira e use 'Gravar marcados'.".format(
+                              u"Nada foi gravado - confira e use 'Atualizar descrições'.".format(
                                   n_match, len(self.inc)))
 
     # ---- comum ----
@@ -2287,7 +2276,7 @@ class VerifyWindow(forms.WPFWindow):
         try:
             path = write_dashboard()
         except Exception as ex:
-            _tell(self, u"Não foi possível gerar o dashboard:\n{}".format(to_unicode(ex)),
+            _tell(self, u"Não foi possível gerar o dashboard.\n\n{}".format(to_unicode(ex)),
                   warn=True)
             return
         if open_in_browser(path):
@@ -2414,15 +2403,16 @@ def offer_in_binding():
     clash = sorted(set(h["category"] for hs in MODEL.values() for h in hs if h["en_clash"]))
     if missing_cats:
         msg = (u"O parâmetro compartilhado '{}' (GUID {}) não está disponível em:\n\n"
-               u"{}\n\nVincular ao projeto como parâmetro de TIPO nessas categorias?\n"
-               u"(sem ele, a descrição em inglês não é gravada nesses itens)").format(
+               u"{}\n\nSem ele, a descrição em inglês não é gravada nesses itens.").format(
                    PARAM_IN_NAME, PARAM_IN_GUID_STR,
                    u"\n".join(u"  • " + to_unicode(c.Name) for c in missing_cats))
         if clash:
             msg += (u"\n\nAtenção: em {} já existe um parâmetro '{}' que NÃO é o "
                     u"compartilhado do escritório (GUID diferente). Ele será ignorado."
                     ).format(u", ".join(clash), PARAM_IN_NAME)
-        if forms.alert(msg, yes=True, no=True):
+        if forms.alert(u"Vincular o parâmetro '{}' ao projeto como parâmetro de TIPO nessas "
+                       u"categorias?".format(PARAM_IN_NAME), sub_msg=msg, title=ALERT_TITLE,
+                       yes=True, no=True):
             ok, info = bind_in_param(missing_cats)
             output.print_md(u"- Parâmetro **{}**: {}{}".format(
                 PARAM_IN_NAME, u"" if ok else u":warning: não vinculado - ", info))
@@ -2481,7 +2471,7 @@ info_text = u""
 
 
 # ------------------------------------------------------------------
-# 5i. "Gravar marcados" (depois da confirmação): grava, reanalisa e ATUALIZA
+# 5i. "Atualizar descrições" (antes "Gravar marcados"; depois da confirmação): grava, reanalisa e ATUALIZA
 #     as tabelas (a janela continua aberta). Roda via ExternalEvent.
 #     "Finalizar" só fecha a interface (nada é gravado nem gerado).
 # ------------------------------------------------------------------
@@ -2546,8 +2536,8 @@ def save_run(chosen_rows, chosen_inc):
             t.RollBack()
             del changes[n_before:]            # nada desta transação ficou no modelo
             failed_rows.update(r["rid"] for r in chosen_rows)
-            forms.alert(u"Gravação da tabela 1 desfeita (rollback) - nada foi alterado:\n{}"
-                        .format(to_unicode(ex)))
+            forms.alert(u"Gravação da tabela 1 desfeita (rollback). Nada foi alterado no modelo.",
+                        sub_msg=to_unicode(ex), title=ALERT_TITLE)
 
     for r in VROWS:
         if r["rid"] in failed_rows:
@@ -2621,8 +2611,8 @@ def save_run(chosen_rows, chosen_inc):
             del changes[n_before2:]
             for r in to_write:
                 r["status"], r["written"] = u"Não gravado (rollback)", []
-            forms.alert(u"Gravação da tabela 2 desfeita (rollback) - nada foi alterado:\n{}"
-                        .format(to_unicode(ex)))
+            forms.alert(u"Gravação da tabela 2 desfeita (rollback). Nada foi alterado no modelo.",
+                        sub_msg=to_unicode(ex), title=ALERT_TITLE)
 
     # guarda o que foi gravado nesta rodada
     for r in chosen_rows:
@@ -2737,7 +2727,7 @@ def write_dashboard():
     if not os.path.isfile(template):
         raise IOError(u"Modelo do dashboard não encontrado: {}".format(template))
     with codecs.open(template, "r", encoding="utf-8") as f:
-        html = f.read()
+        html = brand_report(f.read())     # cores --oca-* do tema do Revit + logo
     data = json.dumps(build_dashboard_data(), ensure_ascii=False,
                       default=lambda o: to_unicode(o))
     html = html.replace("__DATA__", data.replace(u"</", u"<\\/"))
@@ -2800,10 +2790,10 @@ def cleanup_old_colors():
              for v, ids in found[:12]]
     if len(found) > 12:
         lines.append(u"  • ... e mais {} vista(s)".format(len(found) - 12))
-    if forms.alert(u"As versões anteriores deste comando deixaram cores no modelo "
-                   u"({} elemento(s) em {} vista(s)):\n\n{}\n\nRemover agora? A "
-                   u"sobreposição gráfica desses elementos volta ao padrão da vista."
-                   .format(n, len(found), u"\n".join(lines)), yes=True, no=True):
+    if forms.alert(u"Remover as cores deixadas no modelo por versões anteriores deste comando?",
+                   sub_msg=u"{} elemento(s) em {} vista(s):\n\n{}\n\nA sobreposição gráfica desses "
+                   u"elementos volta ao padrão da vista."
+                   .format(n, len(found), u"\n".join(lines)), title=ALERT_TITLE, yes=True, no=True):
         ok, bad = clear_old_highlight(found)
         output.print_md(u"- Cores antigas do comando removidas: **{}** elemento(s){}.".format(
             ok, u" · {} não puderam ser limpos (vista emprestada por outro usuário?)"
@@ -2825,13 +2815,13 @@ def make_keynote_txt():
         text, warns = build_keynote_txt()
     except Exception as ex:
         msg = u"TXT de Keynote não gerado: {}".format(to_unicode(ex))
-        forms.alert(msg)
+        forms.alert(u"O TXT de Keynote não foi gerado.", sub_msg=to_unicode(ex), title=ALERT_TITLE)
         return msg
     try:
         backup, enc = write_keynote_txt(path, text)
     except Exception as ex:
         msg = u"TXT de Keynote não gravado: {}".format(to_unicode(ex))
-        forms.alert(msg)
+        forms.alert(u"O TXT de Keynote não foi gravado.", sub_msg=to_unicode(ex), title=ALERT_TITLE)
         return msg
     ok, info = load_keynote_txt(path)
     msg = u"TXT de Keynote gravado ({}){} e {}.{}".format(
@@ -2839,7 +2829,8 @@ def make_keynote_txt():
         info if ok else u"NÃO carregado no projeto: " + info,
         u"  {} aviso(s): {}".format(len(warns), u"; ".join(warns[:3])) if warns else u"")
     if not ok:
-        forms.alert(msg)
+        forms.alert(u"O TXT de Keynote foi gravado, mas não foi carregado no projeto.",
+                    sub_msg=msg, title=ALERT_TITLE)
     return msg
 
 
@@ -2855,8 +2846,8 @@ def start_session(new_opts):
     try:
         XL = read_excel(XLSX_PATH)
     except Exception as ex:
-        forms.alert(u"Não foi possível ler a planilha:\n{}\n\n{}".format(
-            XLSX_PATH, to_unicode(ex)))
+        forms.alert(u"Não foi possível ler a planilha.", sub_msg=u"{}\n\n{}".format(
+            XLSX_PATH, to_unicode(ex)), title=ALERT_TITLE)
         return False
     txt_msg = make_keynote_txt()          # TXT do Excel -> carrega no projeto
     MODEL = collect_model(use_view, opts["materials"])

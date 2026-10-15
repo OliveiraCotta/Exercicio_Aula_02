@@ -1,28 +1,33 @@
 <!doctype html>
-<html lang="pt-BR">
+<html lang="pt-BR" data-theme="__OCA_THEME__">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Qualidade dos dados · Keynotes</title>
 <!-- Dashboard gerado pelo comando pyRevit "Atualização das Descrições por Keynote".
      Arquivo independente: CSS, JavaScript e gráficos (SVG) embutidos, sem internet.
-     __DATA__ é trocado pelos dados da análise. -->
+     O marcador de dados (no script abaixo) é trocado pelos dados da análise. Cores, tema (claro/escuro, o do Revit)
+     e logo: Design System OCA (lib/oca_ds/report.py, brand_report). -->
 <style>
-  :root{
-    --bg:#F4F6FA; --panel:#FFFFFF; --ink:#18212F; --muted:#5E6B7E; --line:#E1E6EE;
-    --ok:#1E9E5A; --miss:#D64545; --div:#D98200; --unv:#8792A6; --accent:#1F6FD1;
-    --chip:#EEF2F8;
+  /* tokens --oca-* do tema do Revit (claro ou escuro), injetados na geração */
+  /* valores padrão (tema claro) se o modelo for aberto sem a marca aplicada */
+  :root{ --oca-Accent:#1D7266;--oca-AccentInk:#FFFFFF;--oca-AccentSoft:#E3F4F1;--oca-Bg:#F3F5F6;--oca-Brand:#2FBAA7;--oca-BrandInk:#0E2226;--oca-Err:#AE251D;--oca-ErrSoft:#FCE4E2;--oca-Field:#FFFFFF;--oca-FieldLine:#808C94;--oca-Ink:#1D2428;--oca-Ink2:#5A666D;--oca-Line:#D5DBDF;--oca-Ok:#1D7438;--oca-OkSoft:#E5F3E9;--oca-Surface:#FFFFFF;--oca-Surface2:#EEF1F2;--oca-Violet:#6A55C2;--oca-Warn:#8A5100;--oca-WarnSoft:#FCF0DB; }
+  :root{ /*__OCA_TOKENS__*/
+    --bg:var(--oca-Bg); --panel:var(--oca-Surface); --ink:var(--oca-Ink); --muted:var(--oca-Ink2);
+    --line:var(--oca-Line); --ok:var(--oca-Ok); --miss:var(--oca-Err); --div:var(--oca-Warn);
+    --unv:var(--oca-Ink2); --accent:var(--oca-Accent); --chip:var(--oca-Surface2);
+    --track:var(--oca-Line); --on-color:var(--oca-AccentInk);
+    color-scheme:light;
   }
-  @media (prefers-color-scheme: dark){
-    :root{ --bg:#0E1526; --panel:#152036; --ink:#E6EEF8; --muted:#9AAAC2; --line:#26385A;
-           --ok:#3CCB7F; --miss:#F06A6A; --div:#F2A93B; --unv:#93A0B8; --accent:#5AA2FF;
-           --chip:#1C2A45; }
-  }
+  html[data-theme="dark"]{color-scheme:dark}
   *{box-sizing:border-box}
   body{margin:0; background:var(--bg); color:var(--ink);
        font:14px/1.45 "Segoe UI",system-ui,-apple-system,Roboto,Arial,sans-serif}
   .wrap{max-width:1360px; margin:0 auto; padding:24px 16px 48px}
   header h1{margin:0; font-size:22px; letter-spacing:.2px}
+  .brand{display:flex; align-items:center; gap:16px; padding-bottom:12px; border-bottom:2px solid var(--oca-Brand)}
+  .brand .oca-logo{height:40px; width:auto; flex:none}
+  .oca-logo[src=""]{display:none}
   header .sub{color:var(--muted); margin-top:4px}
   .stamp{margin-top:10px; padding:10px 14px; border:1px solid var(--line); border-left:4px solid var(--accent);
          background:var(--panel); border-radius:8px; font-size:13px}
@@ -46,14 +51,14 @@
   .legend b{margin-left:auto; font-variant-numeric:tabular-nums}
   .bars .row{display:grid; grid-template-columns:minmax(150px,240px) 1fr 70px; gap:10px;
              align-items:center; padding:5px 0}
-  .bars .track{background:var(--chip); border-radius:6px; height:16px; overflow:hidden}
+  .bars .track{background:var(--track); border-radius:6px; height:16px; overflow:hidden}
   .bars .fill{height:100%; border-radius:6px}
   .bars .n{text-align:right; font-variant-numeric:tabular-nums; color:var(--muted)}
   .sec{margin-top:14px}
   .toolbar{display:flex; flex-wrap:wrap; gap:8px; align-items:center; margin-bottom:10px}
   .chipbtn{border:1px solid var(--line); background:var(--chip); color:var(--ink); border-radius:999px;
            padding:5px 12px; cursor:pointer; font:inherit; font-size:13px}
-  .chipbtn.on{background:var(--accent); color:#fff; border-color:var(--accent)}
+  .chipbtn.on{background:var(--accent); color:var(--on-color); border-color:var(--accent)}
   input[type=search]{border:1px solid var(--line); background:var(--panel); color:var(--ink);
            border-radius:8px; padding:7px 10px; min-width:260px; font:inherit}
   .count{color:var(--muted); font-size:13px}
@@ -64,7 +69,7 @@
      font-size:12px; text-transform:uppercase; letter-spacing:.04em}
   td.mono{font-family:Consolas,monospace}
   .tag{display:inline-block; padding:2px 8px; border-radius:999px; font-size:12px; font-weight:600;
-       color:#fff; white-space:nowrap}
+       color:var(--on-color); white-space:nowrap}
   .reason{display:inline-block; background:var(--chip); border-radius:6px; padding:1px 6px; margin:1px 2px 1px 0; font-size:12px}
   .none{color:var(--muted); font-style:italic}
   .empty{padding:24px; text-align:center; color:var(--muted)}
@@ -76,8 +81,13 @@
 <body>
 <div class="wrap">
   <header>
-    <h1>Qualidade dos dados · Keynotes do modelo</h1>
-    <div class="sub" id="sub"></div>
+    <div class="brand">
+      <img class="oca-logo" src="__OCA_LOGO__" alt="OCA" onerror="this.style.display='none'">
+      <div>
+        <h1>Qualidade dos dados · Keynotes do modelo</h1>
+        <div class="sub" id="sub"></div>
+      </div>
+    </div>
     <div class="stamp" id="stamp"></div>
   </header>
 
@@ -151,7 +161,7 @@ $("foot").textContent = `Arquivo de origem: ${DATA.excelPath}`;
 function ring(value, total, size, stroke, color, label){
   const r = (size - stroke) / 2, c = 2 * Math.PI * r, f = total ? value / total : 0;
   return `<svg width="${size}" height="${size}" viewBox="0 0 ${size} ${size}" role="img" aria-label="${esc(label)}">
-    <circle cx="${size/2}" cy="${size/2}" r="${r}" fill="none" stroke="${css("--chip")}" stroke-width="${stroke}"/>
+    <circle cx="${size/2}" cy="${size/2}" r="${r}" fill="none" stroke="${css("--track")}" stroke-width="${stroke}"/>
     <circle cx="${size/2}" cy="${size/2}" r="${r}" fill="none" stroke="${color}" stroke-width="${stroke}"
       stroke-dasharray="${(c*f).toFixed(2)} ${c.toFixed(2)}" stroke-linecap="${f > 0 && f < 1 ? "round" : "butt"}"
       transform="rotate(-90 ${size/2} ${size/2})"/>
