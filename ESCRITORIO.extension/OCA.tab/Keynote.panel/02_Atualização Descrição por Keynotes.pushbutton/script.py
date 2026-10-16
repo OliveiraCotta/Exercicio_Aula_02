@@ -128,6 +128,7 @@ NOT_APPLICABLE = u"Não aplicável"   # Descrição IN inexistente no tipo (≠ 
 MATERIALS_LABEL = u"Materiais"     # categoria usada no relatório p/ materiais
 
 TOOL_TITLE = u"ATUALIZAÇÃO DAS DESCRIÇÕES DO MODELO POR KEYNOTE"
+SCRIPT_VERSION = u"2026.10.16"     # aparece na janela e no log: confira se é a cópia nova
 # fluxo único: Excel -> Modelo (o Excel é só lido)
 MODES = OrderedDict([("to_model", u"Excel → Modelo")])
 MODE_DIRS = {"to_model": ("model",)}
@@ -1280,7 +1281,11 @@ from System.Collections.Generic import List
 
 
 class _RevitAction(IExternalEventHandler):
-    """Fila de funções executadas no contexto da API do Revit (ExternalEvent).
+    """Fila de funções executadas no contexto da API do Revit.
+    Dois "executores" esvaziam a MESMA fila - o que rodar primeiro executa:
+      1. ExternalEvent (Raise) - o caminho normal;
+      2. evento Idling do Revit - reserva, para o caso de o ExternalEvent não
+         ser executado (cada ação sai da fila uma única vez).
     Antes de cada ação confere se o documento do comando ainda está aberto;
     toda exceção é registrada no log com traceback e mostrada ao usuário -
     nunca sobe para o Revit."""
@@ -1288,23 +1293,28 @@ class _RevitAction(IExternalEventHandler):
     def __init__(self):
         self.queue = []
         self.uiapp = None
+        self.started = {}           # nome da ação -> momento em que começou
 
     def Execute(self, uiapp):
+        self.run_pending(uiapp, u"ExternalEvent")
+
+    def run_pending(self, uiapp, source):
         self.uiapp = uiapp
         while self.queue:
             name, fn = self.queue.pop(0)
-            LOG.info(u"ExternalEvent: executando '{}'".format(name))
+            self.started[name] = time.time()
+            LOG.info(u"{}: executando '{}'".format(source, name))
             try:
                 if not doc.IsValidObject:
-                    LOG.warn(u"ExternalEvent: documento do comando foi fechado - "
-                             u"ação '{}' ignorada".format(name))
+                    LOG.warn(u"{}: documento do comando foi fechado - ação '{}' "
+                             u"ignorada".format(source, name))
                     continue
                 fn()
-                LOG.info(u"ExternalEvent: '{}' concluída".format(name))
+                LOG.info(u"{}: '{}' concluída".format(source, name))
             except SystemExit:
                 pass
             except Exception as ex:
-                LOG.exc(u"ExternalEvent: '{}' falhou".format(name))
+                LOG.exc(u"{}: '{}' falhou".format(source, name))
                 try:
                     forms.alert(u"Não foi possível concluir a ação '{}'.".format(name),
                                 sub_msg=u"{}\n\nDetalhes no log:\n{}".format(
@@ -1319,22 +1329,72 @@ class _RevitAction(IExternalEventHandler):
 
 REVIT_ACTION = _RevitAction()
 REVIT_EVENT = ExternalEvent.Create(REVIT_ACTION)
+IDLING = {"on": False, "stop": False, "delegate": None}
+
+
+def _on_idling(sender, args):
+    """Executor reserva (evento Idling): roda o que ficou na fila. Quando a
+    janela fecha e a fila está vazia, ele mesmo se desliga."""
+    try:
+        if REVIT_ACTION.queue:
+            REVIT_ACTION.run_pending(sender, u"Idling")
+        elif IDLING["stop"] and IDLING["on"]:
+            sender.Idling -= IDLING["delegate"]
+            IDLING["on"] = False
+            LOG.info(u"Idling: executor reserva desligado")
+    except Exception:
+        LOG.exc(u"Idling")
+
+
+def idling_start():
+    """Liga o executor reserva. Precisa rodar no contexto da API (início do
+    comando ou dentro de uma ação)."""
+    IDLING["stop"] = False
+    if IDLING["on"]:
+        return
+    try:
+        from System import EventHandler
+        from Autodesk.Revit.UI.Events import IdlingEventArgs
+        IDLING["delegate"] = EventHandler[IdlingEventArgs](_on_idling)
+        try:
+            uiapp = __revit__
+        except NameError:
+            from pyrevit import HOST_APP
+            uiapp = HOST_APP.uiapp
+        uiapp.Idling += IDLING["delegate"]
+        IDLING["on"] = True
+        LOG.info(u"Idling: executor reserva ligado")
+    except Exception:
+        LOG.exc(u"Idling: não foi possível ligar o executor reserva")
+
+
+def idling_stop():
+    """Pede o desligamento (feito pelo próprio handler, no contexto da API)."""
+    IDLING["stop"] = True
 
 
 def run_in_revit(fn, name=u"ação"):
     """Enfileira fn para rodar no contexto da API. -> True se o Revit aceitou
-    o pedido (Accepted/Pending); False se recusou (Denied/TimedOut)."""
+    o pedido (Accepted/Pending) ou se o executor reserva (Idling) está ligado;
+    False se nenhum dos dois pode executar."""
     REVIT_ACTION.queue.append((name, fn))
+    REVIT_ACTION.started.pop(name, None)
+    res = None
     try:
         res = REVIT_EVENT.Raise()
     except Exception:
         LOG.exc(u"ExternalEvent.Raise('{}')".format(name))
-        return False
     ok = res in (ExternalEventRequest.Accepted, ExternalEventRequest.Pending)
-    (LOG.info if ok else LOG.warn)(u"ExternalEvent.Raise('{}') -> {}".format(name, res))
-    if not ok:
+    (LOG.info if ok else LOG.warn)(u"ExternalEvent.Raise('{}') -> {} · reserva Idling: {}".format(
+        name, res, u"ligada" if IDLING["on"] else u"desligada"))
+    if not ok and not IDLING["on"]:
         REVIT_ACTION.queue[:] = [q for q in REVIT_ACTION.queue if q[1] is not fn]
-    return ok
+        return False
+    return True
+
+
+def action_started(name):
+    return name in REVIT_ACTION.started
 
 
 def _active_uidoc():
@@ -1876,13 +1936,16 @@ VERIFY_FOOTER = u"""
   <Button x:Name="b_finish" Content="Finalizar" MinWidth="110" Margin="8,0,0,0"
           ToolTip="Fecha o comando sem gravar nada"/>"""
 
-VERIFY_XAML = build_xaml(title=__title__ + u" · Verificação",
-                         subtitle=u"Excel > Modelo: confira as tabelas e grave só o que marcar "
-                                  u"(nada é gravado sem confirmação).",
-                         body=VERIFY_BODY, footer_right=VERIFY_FOOTER,
-                         footer_left=VERIFY_FOOTER_LEFT, resources=VERIFY_RESOURCES,
-                         size="L", height=980, width=1450,
-                         min_width=900, min_height=620)   # mínimos da janela original
+_VERIFY_KW = dict(title=__title__ + u" · Verificação",
+                  subtitle=u"Excel > Modelo: confira as tabelas e grave só o que marcar "
+                           u"(nada é gravado sem confirmação).  ·  versão " + SCRIPT_VERSION,
+                  body=VERIFY_BODY, footer_right=VERIFY_FOOTER,
+                  footer_left=VERIFY_FOOTER_LEFT, resources=VERIFY_RESOURCES,
+                  size="L", height=980, width=1450)
+try:                                       # mínimos da janela (oca_ds mais novo)
+    VERIFY_XAML = build_xaml(min_width=900, min_height=620, **_VERIFY_KW)
+except TypeError:                          # oca_ds mais antigo, sem min_width
+    VERIFY_XAML = build_xaml(**_VERIFY_KW)
 
 GROUP_MODES = [u"Sem agrupamento", u"Keynote", u"Categoria"]
 COLS1 = ("Grupo", "Categoria", "Familia", "Tipo", "Keynote", "PtAtual", "PtNova",
@@ -2057,6 +2120,8 @@ class VerifyWindow(forms.WPFWindow):
         LOG.info(u"Janela de verificação fechada{}".format(
             u" (Voltar)" if self.closing_for_back else u""))
         self._watch_unhandled(False)
+        if not self.closing_for_back:
+            idling_stop()
 
     # ---- montagem das tabelas ----
     @staticmethod
@@ -2507,6 +2572,37 @@ class VerifyWindow(forms.WPFWindow):
             self.b_apply.IsEnabled = True
             self.viewinfo.Text = (u"O Revit não aceitou a gravação agora (comando ou edição em "
                                   u"andamento?). Nada foi gravado - tente de novo.")
+            return
+        self._watch_action(u"Atualizar descrições", 8)
+
+    def _watch_action(self, name, seconds):
+        """Se a ação não começar em alguns segundos, avisa na janela e no log
+        (o Revit só executa ações externas quando está livre)."""
+        try:
+            from System import TimeSpan
+            from System.Windows.Threading import DispatcherTimer
+        except Exception:
+            return
+        timer = DispatcherTimer()
+        timer.Interval = TimeSpan.FromSeconds(seconds)
+        win = self
+
+        def tick(sender, args):
+            timer.Stop()
+            try:
+                if action_started(name):
+                    return
+                LOG.warn(u"'{}' ainda não começou após {} s (ExternalEvent e Idling "
+                         u"sem execução)".format(name, seconds))
+                win.viewinfo.Text = (
+                    u"O Revit ainda não executou '{}'. Ele só executa quando está livre: "
+                    u"termine o comando ativo (Esc), feche diálogos abertos e passe o mouse "
+                    u"sobre a área de desenho. A gravação acontece assim que o Revit "
+                    u"liberar.".format(name))
+            except Exception:
+                LOG.exc(u"_watch_action")
+        timer.Tick += tick
+        timer.Start()
 
     def _dashboard(self, sender, args):
         """Dashboard HTML com os dados da última análise (não lê nem grava o
@@ -2859,13 +2955,6 @@ def run_transaction(name, body):
         LOG.exc(u"run_transaction: checagem do documento")
     t = DB.Transaction(doc, name)
     fc = _FailureCollector()
-    try:
-        fho = t.GetFailureHandlingOptions()
-        fho.SetFailuresPreprocessor(fc)
-        fho.SetClearAfterRollback(True)
-        t.SetFailureHandlingOptions(fho)
-    except Exception:
-        LOG.exc(u"run_transaction: opções de falha")
     LOG.info(u"Transação '{}': Start".format(name))
     try:
         st = t.Start()
@@ -2875,6 +2964,13 @@ def run_transaction(name, body):
     if st != DB.TransactionStatus.Started:
         LOG.error(u"Transação '{}': Start devolveu {}".format(name, st))
         return False, u"o Revit não iniciou a transação ({})".format(to_unicode(st))
+    try:                                   # depois do Start, como no exemplo da API
+        fho = t.GetFailureHandlingOptions()
+        fho.SetFailuresPreprocessor(fc)
+        fho.SetClearAfterRollback(True)
+        t.SetFailureHandlingOptions(fho)
+    except Exception:
+        LOG.exc(u"run_transaction: opções de falha")
     try:
         body()
     except Exception as ex:
@@ -3450,6 +3546,7 @@ def start_session(new_opts):
         return False
     VW = win
     VW.viewinfo.Text = txt_msg
+    idling_start()
     try:
         VW.Show()
         LOG.info(u"Janela de verificação exibida")
@@ -3483,6 +3580,7 @@ DIAG_OPTIONS = OrderedDict([
     ("F", u"F · Execução completa com log detalhado"),
     ("G", u"G · Completa SEM limpeza de cores e SEM recarga do TXT"),
     ("H", u"H · Completa com títulos de grupo simples (teste da interface)"),
+    ("I", u"I · Teste de gravação da Description (grava e DESFAZ - não altera o modelo)"),
     ("L", u"Abrir a pasta dos logs"),
 ])
 
@@ -3513,12 +3611,99 @@ def _demo_data():
     return rows, inc, notx
 
 
+def write_selftest(source):
+    """Teste de gravação SEM alterar o modelo: grava um valor de teste na
+    Description (e na Descrição IN, se existir) de um tipo, relê e DESFAZ a
+    transação (RollBack). -> lista de linhas para o relatório/log."""
+    lines = [u"Executor: {}".format(source)]
+    target = None
+    for info in scan_types():
+        try:
+            p = desc_param(info["t"])
+            if p is not None and not p.IsReadOnly and not owned_by_other(info["t"]):
+                target = (info, p)
+                break
+        except Exception:
+            continue
+    if target is None:
+        return lines + [u"Nenhum tipo com Description editável foi encontrado no modelo."]
+    info, p = target
+    t = info["t"]
+    lines.append(u"Tipo usado: {} · {} · {} (id {})".format(
+        info["category"], family_name(t), elem_name(t), eid_int(t.Id)))
+    before_pt = param_text(p)
+    ip = in_param(t)
+    before_en = param_text(ip) if ip is not None else None
+    val = u"OCA_TESTE_{}".format(datetime.now().strftime("%H%M%S"))
+    tx = DB.Transaction(doc, u"Teste de gravação - Keynotes (desfeito)")
+    try:
+        st = tx.Start()
+        lines.append(u"Transaction.Start: {}".format(st))
+        ok = p.Set(val)
+        lines.append(u"Description.Set: {}".format(ok))
+        if ip is not None and not ip.IsReadOnly:
+            lines.append(u"{}.Set: {}".format(PARAM_IN_NAME, ip.Set(val)))
+        else:
+            lines.append(u"{}: não aplicável neste tipo".format(PARAM_IN_NAME))
+        try:
+            doc.Regenerate()
+        except Exception:
+            pass
+        now = param_text(desc_param(t))
+        lines.append(u"Releitura da Description: {}".format(
+            u"OK (valor de teste gravado)" if now == val else u"FALHOU - mostra '{}'".format(now)))
+    except Exception as ex:
+        LOG.exc(u"Teste de gravação")
+        lines.append(u"ERRO: {}".format(to_unicode(ex)))
+    finally:
+        try:
+            if tx.HasStarted() and not tx.HasEnded():
+                tx.RollBack()
+                lines.append(u"RollBack: feito (o modelo não foi alterado)")
+        except Exception as ex:
+            lines.append(u"RollBack: ERRO {}".format(to_unicode(ex)))
+    after_pt = param_text(desc_param(t))
+    after_en = param_text(ip) if ip is not None else None
+    lines.append(u"Valores depois do teste: {}".format(
+        u"iguais aos originais" if (after_pt, after_en) == (before_pt, before_en)
+        else u"ATENÇÃO - diferentes dos originais"))
+    for ln in lines:
+        LOG.info(u"Teste de gravação: " + ln)
+    return lines
+
+
+def diagnostic_write_test():
+    """Opção I: testa a gravação direto no comando e depois pelo mesmo caminho
+    do botão 'Atualizar descrições' (ExternalEvent / Idling)."""
+    env = u"Revit {} · build {} · pyRevit {}".format(
+        ENV_INFO.get("revit_update"), ENV_INFO.get("revit_build"), ENV_INFO.get("pyrevit"))
+    direct = write_selftest(u"direto no comando")
+    t0 = time.time()
+
+    def via_event():
+        lines = write_selftest(u"ação externa (mesmo caminho do botão)")
+        lines.insert(1, u"Tempo até executar: {:.1f} s".format(time.time() - t0))
+        forms.alert(u"Teste de gravação - parte 2 de 2 (caminho do botão)",
+                    sub_msg=u"{}\n\n{}\n\nLog: {}".format(env, u"\n".join(lines), LOG.path),
+                    title=ALERT_TITLE)
+        idling_stop()
+    idling_start()
+    queued = run_in_revit(via_event, u"Teste de gravação")
+    forms.alert(u"Teste de gravação - parte 1 de 2 (direto no comando)",
+                sub_msg=u"{}\n\n{}\n\n{}".format(
+                    env, u"\n".join(direct),
+                    u"A parte 2 abre sozinha em seguida. Se ela NÃO aparecer em até 10 s, "
+                    u"o Revit não está executando ações externas - me envie o log."
+                    if queued else u"A parte 2 NÃO pôde ser enfileirada (ver log)."),
+                title=ALERT_TITLE)
+
+
 def diagnostic_mode():
     LOG.info(u"Modo de diagnóstico")
     pick = forms.CommandSwitchWindow.show(
         list(DIAG_OPTIONS.values()),
-        message=u"Modo de diagnóstico - use numa CÓPIA do modelo. Log: {}".format(
-            LOG.path or u"(indisponível)"))
+        message=u"Modo de diagnóstico (versão {}) - use numa CÓPIA do modelo. Log: {}".format(
+            SCRIPT_VERSION, LOG.path or u"(indisponível)"))
     if not pick:
         return
     code = [k for k, v in DIAG_OPTIONS.items() if v == pick][0]
@@ -3528,6 +3713,9 @@ def diagnostic_mode():
         folder = os.path.dirname(LOG.path) if LOG.path else None
         if folder and not open_in_browser(folder):
             forms.alert(u"Pasta dos logs:", sub_msg=folder, title=ALERT_TITLE)
+        return
+    if code == "I":
+        _step(u"I. Teste de gravação", diagnostic_write_test)
         return
     if code == "A":
         ok, _r = _step(u"A. Limpeza de cores antigas", cleanup_old_colors)
@@ -3590,8 +3778,8 @@ def main():
 
 
 ENV_INFO = revit_env_info()
-LOG.info(u"===== Início: {} ({}) · log: {} =====".format(
-    TOOL_TITLE, u"diagnóstico" if CONFIG_MODE else u"normal", LOG.path))
+LOG.info(u"===== Início: {} versão {} ({}) · log: {} =====".format(
+    TOOL_TITLE, SCRIPT_VERSION, u"diagnóstico" if CONFIG_MODE else u"normal", LOG.path))
 try:
     if CONFIG_MODE:
         diagnostic_mode()

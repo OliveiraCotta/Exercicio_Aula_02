@@ -76,6 +76,36 @@ apontam se foi um evento da janela, uma ação do ExternalEvent ou algo do próp
 - A conferência ignora diferenças apenas de espaço ou quebra de linha, que o Revit pode
   normalizar, para não acusar falha num valor que foi gravado.
 
+### 2.1c "Atualizar descrições" sem gravar no 2026.4 (revisão de 16/10, versão 2026.10.16)
+
+O caminho da gravação foi relido inteiro: plano → `Parameter.Set` → `Commit` → releitura.
+Não há erro de lógica que impeça a Description de ser gravada **quando a ação roda**.
+O que sobra, e que só aparece no Revit real:
+
+1. **O Revit não executa a ação externa.** A janela fica aberta enquanto você usa o
+   Revit, então a gravação depende do `ExternalEvent`. Se ele não roda, nada é gravado e
+   nada é avisado. **Correção:** um segundo executor (evento `Idling` do Revit) esvazia a
+   mesma fila; o primeiro que rodar executa, e cada ação roda uma vez só. Um vigia avisa
+   na janela se a gravação não começar em 8 s. O log mostra por qual caminho cada ação
+   rodou.
+2. **Ordem das opções de falha da transação.** O preprocessador de falhas agora é
+   definido **depois** do `Start()`, como no exemplo da API.
+3. **`oca_ds` em versões diferentes.** Se a `lib/oca_ds` instalada não aceitar
+   `min_width`, o comando monta a janela sem esse parâmetro em vez de parar.
+4. **Cópia antiga do script.** A janela de verificação mostra "versão 2026.10.16" no
+   subtítulo, e o log também. Se não aparecer, o Revit está rodando um script antigo.
+
+**Teste de gravação por versão (Shift+Clique > I):** grava um valor de teste na
+Description (e na Descrição IN, se existir) de um tipo, relê e **desfaz**; o modelo não
+muda. Roda duas vezes: direto no comando e pelo mesmo caminho do botão. Mostra a versão
+e o build do Revit. Interpretação:
+
+| Parte 1 (direto) | Parte 2 (botão) | Conclusão |
+|------------------|-----------------|-----------|
+| OK | OK | A gravação funciona nesta versão. Se a tabela não grava, o motivo está no resumo e no log (linhas "Não gravado"). |
+| OK | não aparece em 10 s | O Revit não executa ações externas: me envie o log. |
+| `Set: False` ou releitura falhou | — | O Revit recusa a Description desse tipo (somente leitura, workshared, família). |
+
 ### 2.2 Gravação no modelo (`save_run`, `run_transaction`, `_set_param`)
 
 - `run_transaction`:
@@ -165,6 +195,8 @@ O **modo de diagnóstico** abre com Shift+Clique no botão.
 
 Rode **F, G, H, I e J** em cada uma. A versão exata está em Ajuda > Sobre e no log
 (`revit_build`, `revit_update`).
+
+Em cada versão, rode primeiro o **teste I** (1 minuto) e depois os demais.
 
 | Revit | Builds a cobrir |
 |-------|-----------------|
