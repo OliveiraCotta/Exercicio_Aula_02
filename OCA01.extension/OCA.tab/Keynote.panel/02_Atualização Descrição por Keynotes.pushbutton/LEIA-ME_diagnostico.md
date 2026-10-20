@@ -1,4 +1,4 @@
-# Atualização das Descrições por Keynote — auditoria técnica (versão 2026.10.20)
+# Atualização das Descrições por Keynote — auditoria técnica (versão 2026.10.20b)
 
 > **Nada disto foi executado dentro do Revit.** Este ambiente é Linux, sem Revit, sem
 > pyRevit e sem IronPython. A validação foi feita com:
@@ -11,7 +11,45 @@
 
 ---
 
-## 0. Leia primeiro: a cópia instalada está desatualizada
+## 0a. pyRevit 6.x: a janela abre, mas os eventos não funcionam (revisão 2026.10.20b)
+
+**Sintomas no pyRevit 6.5.5 + Revit 2025.2** (print de 20/10):
+- trocar "Agrupar por" não muda a tabela;
+- clicar numa linha não pré-seleciona nada (Propriedades continua em "3D View");
+- digitar a Keynote na tabela 2 e clicar em "Verificar no Excel" não faz nada;
+- nenhuma mensagem de erro aparece.
+
+**Causa provável (hipótese forte, não reproduzida no Revit):** o motor Python não fica
+vivo depois que o script termina.
+- O botão declarava o motor persistente só pelo `__persistentengine__ = True` dentro do
+  `script.py`.
+- No pyRevit 6.x/7.x, o loader lê essa configuração do `bundle.yaml` do botão
+  (`engine: persistent: true`). É assim que está no exemplo oficial de janela não modal
+  do pyRevit. As notas do 7.0 dizem que o `bundle.yaml` é lido primeiro e que a leitura
+  das variáveis do script ficou desligada por padrão.
+- Sem a configuração, a janela abre (isso acontece enquanto o script ainda roda), mas o
+  motor é descartado em seguida. A partir daí, **nenhum evento da janela roda** — nem o
+  tratamento de erro, por isso nada aparece.
+
+Os três sintomas têm essa mesma causa. O agrupamento, em si, não mudou.
+
+**Correções:**
+- `bundle.yaml` novo na pasta do botão, com `engine: persistent: true`, título e dica.
+- **Autoteste** 2 s depois de a janela abrir:
+  - confere se o motor Python continua vivo;
+  - executa uma ação externa sem transação.
+  - Se algo falhar, a linha verde mostra "ATENÇÃO: o pyRevit encerrou o motor…" ou "o
+    Revit não executou o autoteste…". **O comando não falha mais em silêncio.**
+- A seleção tem um vigia de 5 s: avisa se o Revit não executar.
+- O log registra `bundle_persistent`, `engine_id`, `engine_ver` e `cached_engine`, e
+  avisa se o `bundle.yaml` faltar.
+- **Filtros por coluna removidos**, a pedido. Ficaram a busca geral (Buscar / Enter /
+  Limpar busca) e o "Agrupar por".
+
+**Depois de copiar os arquivos, recarregue o pyRevit (Reload)**, porque o `bundle.yaml` só
+é lido no carregamento. Se o aviso continuar, feche e abra o Revit.
+
+## 0. Leia primeiro: a cópia instalada estava desatualizada
 
 O zip enviado (`…950c`) e o `main` do repositório estão no commit `75cf66d`. As correções
 de 15/10 e 16/10 foram feitas em `ESCRITORIO.extension/…`, e o `main` apagou essa pasta
@@ -20,7 +58,7 @@ quando moveu o comando para `OCA01.extension/…`. **Por isso nenhuma correção
 "versão …".
 
 Esta versão está em `OCA01.extension/OCA.tab/Keynote.panel/02_Atualização Descrição por
-Keynotes.pushbutton/`. A janela de verificação mostra **"versão 2026.10.20"** no subtítulo,
+Keynotes.pushbutton/`. A janela de verificação mostra **"versão 2026.10.20b"** no subtítulo,
 e o log também. Se o texto não aparecer, o Revit está rodando outra cópia.
 
 ---
@@ -65,7 +103,8 @@ mostra onde o comando estava), e o journal do Revit (seção H.3).
    TXT com erro (item 9).
 5. **TXT ANSI estrito e backup conferido** (itens 4, 5 e 11).
 6. **Relatório final e regras de negócio** (item 10 e seção D).
-7. **Interface**: cabeçalho fixo, filtros por coluna e seleção (itens 7 e 8, seção C.3).
+7. **Interface**: cabeçalho fixo e seleção (itens 7 e 8, seção C.3). Os filtros por coluna
+   entraram e foram retirados na 2026.10.20b, a pedido.
 8. **Log**: ambiente completo (pyRevit, motor, .NET, documento, workshared). Arquivo, backup,
    recarga, transação e `ExternalEvent` registrados.
 
@@ -141,13 +180,8 @@ O disco e o projeto voltam a ficar iguais.
   (`_wheel`). Não há duas barras disputando a mesma roda.
 - Mantidos: seções recolhíveis, colunas ajustáveis, visual OCA DS e virtualização das
   linhas.
-- **Filtros por coluna:** cada tabela tem uma linha "Filtrar:" com Agrupamento,
-  Categoria, Família, Tipo e Keynote.
-  - Os filtros se combinam entre si e com a busca geral, e só são aplicados com
-    **Buscar** ou **Enter**, como a busca.
-  - **Limpar** zera tudo.
-  - A linha de status mostra quantos filtros estão ativos e quantas linhas foram
-    encontradas.
+- **Busca:** a busca geral continua (Buscar / Enter / Limpar busca). Os filtros por
+  coluna foram retirados na 2026.10.20b.
 - **Seleção:**
   - só seleciona se o documento ativo for o do comando;
   - ignora elementos apagados;
@@ -306,7 +340,7 @@ Se quiser, faço isso num commit separado.
 
 | Cenário | O que confere |
 |---------|---------------|
-| `full` | Fluxo completo. Agrupamentos, busca, filtros por coluna (sozinhos, combinados e sem resultado) e Limpar. Seleção visível e **não visível** (pré-seleção mantida). Dashboard. Gravação recusada (`sets 0`) e confirmada: 11 gravados e conferidos. Finalizar. |
+| `full` | Fluxo completo. Agrupamentos, busca e Limpar. Seleção visível e **não visível** (pré-seleção mantida). Dashboard. Gravação recusada (`sets 0`) e confirmada: 11 gravados e conferidos. Finalizar. |
 | `noin` | Modelo sem Descrição IN: Description grava, IN = "Não aplicável". |
 | `typeonly` | Keynote digitada na tabela 2 e gravada sem "Verificar". |
 | `back` | Voltar e reabrir. |
@@ -316,6 +350,11 @@ Se quiser, faço isso num commit separado.
 | `uiexc` | Exceção da interface tratada. O único traceback é proposital, registrado no log. |
 | `diag_A` … `diag_I`, `diag_L` | Todos os modos de diagnóstico. |
 | `realds_repo` / `realds_old` | Com a `oca_ds` real do repositório e com a cópia antiga (sem `min_width`). |
+
+**Autoteste do motor (2026.10.20b):**
+- `--probe`: o motor está vivo e o ExternalEvent é executado (log "Autoteste").
+- `--dead`: as variáveis do script são apagadas depois que a janela abre, simulando o
+  pyRevit descartando o motor. A linha verde mostra o "ATENÇÃO…".
 
 **Extras do TXT:**
 - `--syntaxerr` / `--txfail=Carregar`: recarga desfeita, TXT anterior restaurado,
@@ -364,7 +403,7 @@ Use **cópias** dos modelos. A ordem sugerida em cada combinação de pyRevit e 
 4. **Interface**:
    - role tabelas longas e confira se o cabeçalho fica fixo e a roda do mouse não briga
      entre a tabela e a página;
-   - teste os filtros e Limpar;
+   - teste a busca e Limpar busca;
    - redimensione colunas e recolha seções.
 5. **Seleção**:
    - linha com elemento visível: seleciona e enquadra;
@@ -398,13 +437,14 @@ Anote em cada teste: a versão (do log), o teste, o resultado e, se o Revit fech
 
 **Como substituir o script:**
 1. Feche a janela do comando no Revit.
-2. Substitua `script.py`, `keynotes.html` e este LEIA-ME em
+2. Substitua `script.py`, `bundle.yaml` (novo), `keynotes.html` e este LEIA-ME em
    `…\OCA01.extension\OCA.tab\Keynote.panel\02_Atualização Descrição por Keynotes.pushbutton\`.
 3. Apague a pasta antiga `ESCRITORIO.extension\…\02_Atualização Descrição por
    Keynotes.pushbutton` se ela ainda existir **e** estiver registrada no pyRevit. Duas
    cópias do botão causam exatamente o problema do item 1.
 4. pyRevit → **Reload**.
-5. Abra o comando e confira **"versão 2026.10.20"** no subtítulo.
+5. Abra o comando e confira **"versão 2026.10.20b"** no subtítulo. Espere 3 s: não pode
+   aparecer nenhum "ATENÇÃO" na linha verde.
 
 **Como testar com segurança:**
 - use uma cópia do .rvt;

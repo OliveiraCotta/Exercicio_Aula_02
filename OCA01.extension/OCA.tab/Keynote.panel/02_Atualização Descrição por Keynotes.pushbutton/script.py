@@ -41,8 +41,9 @@
 # <nome>_AAAAMMDD_HHMMSS.txt, conferido antes da troca; backups nunca são
 # apagados nem sobrescritos. Se o Revit recusar o TXT novo, a recarga é desfeita
 # e o anterior volta ao lugar (o recusado fica em Obsoletos\..._REJEITADO.txt).
-# Filtros por coluna (Agrupamento, Categoria, Família, Tipo, Keynote) e
-# cabeçalho fixo: cada tabela rola por dentro.
+# Cabeçalho fixo: cada tabela rola por dentro.
+# pyRevit 6.x: o motor persistente é declarado no bundle.yaml (engine:
+# persistent: true) - sem ele a janela abre, mas os eventos param de funcionar.
 # Botões da 2ª aba: Voltar (1ª aba) · Dashboard HTML (qualidade dos dados,
 # offline) · Atualizar descrições (antes "Gravar marcados": pede confirmação,
 # grava e atualiza as tabelas) · Finalizar (só fecha - não grava nem gera nada).
@@ -134,7 +135,7 @@ NOT_APPLICABLE = u"Não aplicável"   # Descrição IN inexistente no tipo (≠ 
 MATERIALS_LABEL = u"Materiais"     # categoria usada no relatório p/ materiais
 
 TOOL_TITLE = u"ATUALIZAÇÃO DAS DESCRIÇÕES DO MODELO POR KEYNOTE"
-SCRIPT_VERSION = u"2026.10.20"     # aparece na janela e no log: confira se é a cópia nova
+SCRIPT_VERSION = u"2026.10.20b"     # aparece na janela e no log: confira se é a cópia nova
 # fluxo único: Excel -> Modelo (o Excel é só lido)
 MODES = OrderedDict([("to_model", u"Excel → Modelo")])
 MODE_DIRS = {"to_model": ("model",)}
@@ -303,10 +304,28 @@ def revit_env_info():
     except Exception:
         info["engine"] = u"IronPython" if sys.platform == "cli" else u"?"
     info["py2"] = to_unicode(PY2)
+    # motor persistente: no pyRevit 6.x/7.x vale o bundle.yaml do botão
     try:
-        info["persistent_engine"] = to_unicode(bool(__persistentengine__))
-    except NameError:
-        info["persistent_engine"] = u"(variável ausente)"
+        by = os.path.join(os.path.dirname(os.path.abspath(__file__)), u"bundle.yaml")
+        if os.path.isfile(by):
+            with codecs.open(by, "r", "utf-8") as f:
+                txt = f.read()
+            info["bundle_persistent"] = to_unicode(
+                re.search(r"^\s*persistent:\s*true", txt, re.M | re.I) is not None)
+        else:
+            info["bundle_persistent"] = u"bundle.yaml AUSENTE"
+    except Exception:
+        info["bundle_persistent"] = u"?"
+    try:
+        from pyrevit import EXEC_PARAMS
+        for key, attr in (("engine_id", "engine_id"), ("engine_ver", "engine_ver"),
+                          ("cached_engine", "cached_engine")):
+            try:
+                info[key] = to_unicode(getattr(EXEC_PARAMS, attr))
+            except Exception:
+                pass
+    except Exception:
+        pass
     try:
         import System
         info["dotnet"] = to_unicode(System.Environment.Version)
@@ -330,6 +349,9 @@ def revit_env_info():
     except Exception:
         info["supported"] = u"?"
     LOG.info(u"Ambiente: " + u" · ".join(u"{}={}".format(k, v) for k, v in info.items()))
+    if info.get("bundle_persistent") != u"True":
+        LOG.warn(u"bundle.yaml sem 'engine: persistent: true' - no pyRevit 6.x a janela "
+                 u"abre, mas os eventos podem parar quando o script termina")
     return info
 
 
@@ -1861,7 +1883,6 @@ VERIFY_BODY = u"""
         <StackPanel x:Name="body1" Margin="0,6,0,0">
             <TextBlock Style="{StaticResource oca.Hint}"
                        Text="Uma linha por tipo (família + tipo): tipos diferentes com a mesma keynote ficam em linhas separadas. Clique numa linha para selecionar o tipo no Revit.   Célula verde = preenche vazio  ·  Âmbar = substitui o valor atual  ·  Cinza = não pode ser gravado"/>
-            <WrapPanel Margin="0,4,0,2"><TextBlock Text="Filtrar:" Style="{StaticResource small}" FontWeight="SemiBold" Margin="0,0,8,0"/><TextBlock Text="Agrupamento" Style="{StaticResource small}" Margin="0,0,4,0"/><TextBox x:Name="f1_grp" Width="130" Margin="0,0,10,0" ToolTip="Filtra a coluna (parte do texto, sem acento). Enter aplica."/><TextBlock Text="Categoria" Style="{StaticResource small}" Margin="0,0,4,0"/><TextBox x:Name="f1_cat" Width="120" Margin="0,0,10,0" ToolTip="Filtra a coluna (parte do texto, sem acento). Enter aplica."/><TextBlock Text="Família" Style="{StaticResource small}" Margin="0,0,4,0"/><TextBox x:Name="f1_fam" Width="130" Margin="0,0,10,0" ToolTip="Filtra a coluna (parte do texto, sem acento). Enter aplica."/><TextBlock Text="Tipo" Style="{StaticResource small}" Margin="0,0,4,0"/><TextBox x:Name="f1_typ" Width="140" Margin="0,0,10,0" ToolTip="Filtra a coluna (parte do texto, sem acento). Enter aplica."/><TextBlock Text="Keynote" Style="{StaticResource small}" Margin="0,0,4,0"/><TextBox x:Name="f1_key" Width="90" Margin="0,0,10,0" ToolTip="Filtra a coluna (parte do texto, sem acento). Enter aplica."/></WrapPanel>
             <DataGrid x:Name="grid" """ + _GRID_STYLE + u""">
               <DataGrid.Columns>""" + _CHECK_COL + u"""
                 """ + _col(u"Agrupamento", u"Grupo", 150) + u"""
@@ -1892,7 +1913,6 @@ VERIFY_BODY = u"""
         <StackPanel x:Name="body2" Margin="0,6,0,0">
             <TextBlock Style="{StaticResource oca.Hint}"
                        Text="Clique duas vezes no Keynote para digitar. Linha destacada (faixa verde-azulada à esquerda) = keynote encontrada no Excel (só indica correspondência; nada é gravado até 'Atualizar descrições'). Ao digitar a Keynote, a Description e a Descrição em IN do Excel já ficam propostas; marque a linha e use 'Atualizar descrições' (grava Keynote e descrições juntos). 'Verificar no Excel' marca todas as linhas com algo a gravar.   Texto lilás = keynote digitado  ·  Verde = preenche campo vazio  ·  Âmbar = substitui o valor atual"/>
-            <WrapPanel Margin="0,4,0,2"><TextBlock Text="Filtrar:" Style="{StaticResource small}" FontWeight="SemiBold" Margin="0,0,8,0"/><TextBlock Text="Agrupamento" Style="{StaticResource small}" Margin="0,0,4,0"/><TextBox x:Name="f2_grp" Width="130" Margin="0,0,10,0" ToolTip="Filtra a coluna (parte do texto, sem acento). Enter aplica."/><TextBlock Text="Categoria" Style="{StaticResource small}" Margin="0,0,4,0"/><TextBox x:Name="f2_cat" Width="120" Margin="0,0,10,0" ToolTip="Filtra a coluna (parte do texto, sem acento). Enter aplica."/><TextBlock Text="Família" Style="{StaticResource small}" Margin="0,0,4,0"/><TextBox x:Name="f2_fam" Width="130" Margin="0,0,10,0" ToolTip="Filtra a coluna (parte do texto, sem acento). Enter aplica."/><TextBlock Text="Tipo" Style="{StaticResource small}" Margin="0,0,4,0"/><TextBox x:Name="f2_typ" Width="140" Margin="0,0,10,0" ToolTip="Filtra a coluna (parte do texto, sem acento). Enter aplica."/><TextBlock Text="Keynote" Style="{StaticResource small}" Margin="0,0,4,0"/><TextBox x:Name="f2_key" Width="90" Margin="0,0,10,0" ToolTip="Filtra a coluna (parte do texto, sem acento). Enter aplica."/></WrapPanel>
             <DataGrid x:Name="grid2" """ + _GRID_STYLE + u""">
               <DataGrid.Columns>""" + _CHECK_COL + u"""
                 """ + _col(u"Categoria", u"Categoria", 105) + u"""
@@ -1922,7 +1942,6 @@ VERIFY_BODY = u"""
         <StackPanel x:Name="body3" Margin="0,6,0,8">
             <TextBlock Style="{StaticResource oca.Hint}"
                        Text="Só consulta: inclua o código na planilha do Excel e rode o comando de novo."/>
-            <WrapPanel Margin="0,4,0,2"><TextBlock Text="Filtrar:" Style="{StaticResource small}" FontWeight="SemiBold" Margin="0,0,8,0"/><TextBlock Text="Agrupamento" Style="{StaticResource small}" Margin="0,0,4,0"/><TextBox x:Name="f3_grp" Width="130" Margin="0,0,10,0" ToolTip="Filtra a coluna (parte do texto, sem acento). Enter aplica."/><TextBlock Text="Categoria" Style="{StaticResource small}" Margin="0,0,4,0"/><TextBox x:Name="f3_cat" Width="120" Margin="0,0,10,0" ToolTip="Filtra a coluna (parte do texto, sem acento). Enter aplica."/><TextBlock Text="Família" Style="{StaticResource small}" Margin="0,0,4,0"/><TextBox x:Name="f3_fam" Width="130" Margin="0,0,10,0" ToolTip="Filtra a coluna (parte do texto, sem acento). Enter aplica."/><TextBlock Text="Tipo" Style="{StaticResource small}" Margin="0,0,4,0"/><TextBox x:Name="f3_typ" Width="140" Margin="0,0,10,0" ToolTip="Filtra a coluna (parte do texto, sem acento). Enter aplica."/><TextBlock Text="Keynote" Style="{StaticResource small}" Margin="0,0,4,0"/><TextBox x:Name="f3_key" Width="90" Margin="0,0,10,0" ToolTip="Filtra a coluna (parte do texto, sem acento). Enter aplica."/></WrapPanel>
             <DataGrid x:Name="grid3" """ + _GRID_STYLE + u""" IsReadOnly="True">
               <DataGrid.Columns>
                 """ + _col(u"Categoria", u"Categoria", 120) + u"""
@@ -1972,7 +1991,6 @@ COLS2 = ("Categoria", "Familia", "Tipo", "Qtd", "Keynote", "PtAtual", "PtExcel",
 COLS3 = ("Categoria", "Familia", "Tipo", "Qtd", "Keynote", "Descricao", "DescricaoIN",
          "Verificacao")
 MARKS = ("PtMark", "EnMark", "KeyMark")
-FILTER_CODES = ("grp", "cat", "fam", "typ", "key")   # filtros por coluna (f<n>_<código>)
 
 NO_KEY = u"(sem keynote)"
 TYPE_INST = {}        # id do tipo -> [ElementId das instâncias] (modelo inteiro)
@@ -2035,7 +2053,6 @@ class VerifyWindow(forms.WPFWindow):
         self.viewinfo.Text = u""
         self.searchinfo.Text = u""
         self._query = u""                 # termo aplicado pelo botão Buscar
-        self._colf = {1: {}, 2: {}, 3: {}}  # filtros por coluna aplicados
         self._last_ids = []
         self.t1 = self.t2 = self.t3 = None
         self.d1, self.d2, self.d3 = {}, {}, {}
@@ -2055,11 +2072,6 @@ class VerifyWindow(forms.WPFWindow):
         self.b_search.Click += sf(self._search, u"Buscar")
         self.b_clear.Click += sf(self._clear_search, u"Limpar busca")
         self.f_text.KeyDown += sf(self._on_key, u"Busca (tecla)")
-        for n in (1, 2, 3):
-            for code in FILTER_CODES:
-                box = getattr(self, "f%d_%s" % (n, code), None)
-                if box is not None:
-                    box.KeyDown += sf(self._on_key, u"Filtro (tecla)")
         self.Loaded += sf(self._fit_tables, u"Ajustar tabelas")
         self.scroll.SizeChanged += sf(self._fit_tables, u"Ajustar tabelas")
         self.grid.SelectionChanged += sf(self._on_select1, u"Seleção tabela 1")
@@ -2172,36 +2184,11 @@ class VerifyWindow(forms.WPFWindow):
         return u""
 
     def _matches(self, n, vals, grp, key):
-        """Busca geral (todas as colunas) E filtros por coluna da tabela n."""
-        if self._query:
-            hay = u" ".join(to_unicode(v) for k, v in vals.items() if not k.startswith(u"_"))
-            if self._query not in _fold(hay + u" " + grp):
-                return False
-        flt = self._colf.get(n) or {}
-        if not flt:
+        """Busca geral: o termo aparece em alguma coluna da linha (sem acento)."""
+        if not self._query:
             return True
-        fields = {"grp": _key_label(clean(key)) + u" " + to_unicode(vals.get("Grupo", u"")),
-                  "cat": vals.get("Categoria", u""), "fam": vals.get("Familia", u""),
-                  "typ": vals.get("Tipo", u""), "key": vals.get("Keynote", u"")}
-        for code, q in flt.items():
-            if q not in _fold(fields.get(code, u"")):
-                return False
-        return True
-
-    def _read_filters(self):
-        """Lê as caixas de filtro das três tabelas -> {n: {código: texto}}."""
-        out = {}
-        for n in (1, 2, 3):
-            d = {}
-            for code in FILTER_CODES:
-                box = getattr(self, "f%d_%s" % (n, code), None)
-                if box is None:
-                    continue
-                v = _fold(to_unicode(box.Text).strip())
-                if v:
-                    d[code] = v
-            out[n] = d
-        return out
+        hay = u" ".join(to_unicode(v) for k, v in vals.items() if not k.startswith(u"_"))
+        return self._query in _fold(hay + u" " + grp)
 
     def _fill(self, n, tb, store, items, mode, key_of, values_of, sort_key):
         """Monta a tabela n: filtra pela busca, ordena e, se houver
@@ -2363,30 +2350,19 @@ class VerifyWindow(forms.WPFWindow):
 
     # ---- busca: só ao clicar em Buscar (ou Enter); Limpar busca restaura ----
     def _search(self, sender, args):
-        """Aplica a busca geral e os filtros por coluna (Buscar ou Enter)."""
+        """Aplica a busca geral (Buscar ou Enter)."""
         self._query = _fold(to_unicode(self.f_text.Text).strip())
-        self._colf = self._read_filters()
         self._rebuild()
-        n_f = sum(len(v) for v in self._colf.values())
-        if self._query or n_f:
-            self.searchinfo.Text = u"{}{}{} linha(s) encontrada(s)".format(
-                u"Busca '{}' · ".format(to_unicode(self.f_text.Text).strip())
-                if self._query else u"",
-                u"{} filtro(s) de coluna · ".format(n_f) if n_f else u"",
-                sum(len(v) for v in self._vis.values()))
+        if self._query:
+            self.searchinfo.Text = u"Busca '{}' · {} linha(s) encontrada(s)".format(
+                to_unicode(self.f_text.Text).strip(), sum(len(v) for v in self._vis.values()))
         else:
             self.searchinfo.Text = u""
 
     def _clear_search(self, sender, args):
-        """Limpa a busca geral e todos os filtros por coluna."""
+        """Limpa a busca e mostra tudo de novo."""
         self.f_text.Text = u""
-        for n in (1, 2, 3):
-            for code in FILTER_CODES:
-                box = getattr(self, "f%d_%s" % (n, code), None)
-                if box is not None:
-                    box.Text = u""
         self._query = u""
-        self._colf = {1: {}, 2: {}, 3: {}}
         self.searchinfo.Text = u""
         self._rebuild()
 
@@ -2515,6 +2491,8 @@ class VerifyWindow(forms.WPFWindow):
         if not run_in_revit(act, u"Selecionar na vista"):
             self.viewinfo.Text = (u"O Revit não aceitou o pedido agora (comando ou edição em "
                                   u"andamento?). Termine a operação no Revit e clique de novo.")
+        else:
+            self._watch_action(u"Selecionar na vista", 5)
 
     # ---- tabela 1 ----
     def _check1(self, rid, value):
@@ -2676,7 +2654,45 @@ class VerifyWindow(forms.WPFWindow):
             return
         self._watch_action(u"Atualizar descrições", 8)
 
-    def _watch_action(self, name, seconds):
+    def engine_probe(self, seconds=2):
+        """Autoteste, alguns segundos depois de a janela abrir (o script já
+        terminou): confere se o motor Python continua vivo e se o Revit executa
+        uma ação externa (sem transação). Se o pyRevit descartou o motor, os
+        eventos da janela param - o aviso usa só variáveis locais para
+        conseguir aparecer mesmo assim."""
+        try:
+            from System import TimeSpan
+            from System.Windows.Threading import DispatcherTimer
+        except Exception:
+            return
+        timer = DispatcherTimer()
+        timer.Interval = TimeSpan.FromSeconds(seconds)
+        box = self.viewinfo
+        dead = (u"ATENÇÃO: o pyRevit encerrou o motor Python deste comando - agrupar, "
+                u"selecionar, digitar e gravar NÃO vão funcionar nesta janela. Confira se o "
+                u"arquivo bundle.yaml (engine: persistent: true) está na pasta do botão, "
+                u"recarregue o pyRevit e abra o comando de novo.")
+        win = self
+
+        def tick(sender, args):
+            timer.Stop()
+            try:
+                LOG.info(u"Autoteste: motor Python ativo depois do fim do script")
+                run_in_revit(lambda: LOG.info(u"Autoteste: ExternalEvent executado"),
+                             u"Autoteste")
+                win._watch_action(u"Autoteste", 6, (
+                    u"ATENÇÃO: o Revit não executou o autoteste da janela - seleção e "
+                    u"gravação não vão funcionar até isso ser resolvido (veja o log). "
+                    u"Termine o comando ativo no Revit (Esc) e abra a janela de novo."))
+            except Exception:
+                try:
+                    box.Text = dead
+                except Exception:
+                    pass
+        timer.Tick += tick
+        timer.Start()
+
+    def _watch_action(self, name, seconds, msg=None):
         """Se a ação não começar em alguns segundos, avisa na janela e no log
         (o Revit só executa ações externas quando está livre)."""
         try:
@@ -2695,10 +2711,10 @@ class VerifyWindow(forms.WPFWindow):
                     return
                 LOG.warn(u"'{}' ainda não começou após {} s (ExternalEvent pendente)".format(
                     name, seconds))
-                win.viewinfo.Text = (
+                win.viewinfo.Text = msg or (
                     u"O Revit ainda não executou '{}'. Ele só executa quando está livre: "
                     u"termine o comando ativo (Esc), feche diálogos abertos e passe o mouse "
-                    u"sobre a área de desenho. A gravação acontece assim que o Revit "
+                    u"sobre a área de desenho. A ação acontece assim que o Revit "
                     u"liberar.".format(name))
             except Exception:
                 LOG.exc(u"_watch_action")
@@ -3905,6 +3921,7 @@ def start_session(new_opts):
     try:
         VW.Show()
         LOG.info(u"Janela de verificação exibida")
+        VW.engine_probe()
     except Exception:
         LOG.exc(u"Exibir janela")
         raise
