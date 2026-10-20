@@ -1,10 +1,13 @@
 # -*- coding: utf-8 -*-
-u"""Visualizador de IFC - abre o visualizador web IFC//HUD no navegador, pronto para carregar um arquivo .ifc.
-
-O visualizador (ifc-hud-viewer.html, na mesma pasta deste script) lê o IFC
-localmente no navegador - nada é enviado para a internet -, mas carrega as
-bibliotecas three.js e web-ifc de cdn.jsdelivr.net, então precisa de acesso à internet.
-"""
+# Visualizador de IFC - abre o visualizador web IFC//HUD no navegador, pronto para carregar um arquivo .ifc.
+#
+# O visualizador (ifc-hud-viewer.html, na mesma pasta deste script) lê o IFC
+# localmente no navegador - nada é enviado para a internet -, mas carrega as
+# bibliotecas three.js e web-ifc de cdn.jsdelivr.net, então precisa de acesso à internet.
+#
+# A descrição fica em comentário (e não em docstring) de propósito: o
+# pyRevit 5.2 lê a docstring do módulo com .decode('utf-8'), que falha com
+# acentos no IronPython e deixa o botão sem tooltip. O tooltip é só __doc__.
 __title__ = u"Visualizador\nde IFC"
 __doc__ = u"Abre o visualizador de IFC (modelo 3D, ambientes, áreas e dados IFC) no navegador. Depois arraste ou selecione um arquivo .ifc para carregar."
 
