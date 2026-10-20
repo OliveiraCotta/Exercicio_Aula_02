@@ -36,7 +36,13 @@
 #   enquadra na vista ativa (sem transação, a janela continua aberta).
 #
 # Ao executar a 1ª aba, o TXT de Keynote é gerado do Excel e recarregado no
-# projeto (arquivo existente é substituído; o anterior vira backup com data/hora).
+# projeto em ANSI / Windows-1252 sem BOM (caractere fora do Windows-1252 é
+# listado e o TXT NÃO é gravado). O anterior vai para <pasta>\Obsoletos\
+# <nome>_AAAAMMDD_HHMMSS.txt, conferido antes da troca; backups nunca são
+# apagados nem sobrescritos. Se o Revit recusar o TXT novo, a recarga é desfeita
+# e o anterior volta ao lugar (o recusado fica em Obsoletos\..._REJEITADO.txt).
+# Filtros por coluna (Agrupamento, Categoria, Família, Tipo, Keynote) e
+# cabeçalho fixo: cada tabela rola por dentro.
 # Botões da 2ª aba: Voltar (1ª aba) · Dashboard HTML (qualidade dos dados,
 # offline) · Atualizar descrições (antes "Gravar marcados": pede confirmação,
 # grava e atualiza as tabelas) · Finalizar (só fecha - não grava nem gera nada).
@@ -66,6 +72,7 @@ __doc__ = ("Confere as Keynotes dos tipos do modelo com a planilha de materiais 
 
 import os
 import re
+import sys
 import json
 import codecs
 from datetime import datetime
@@ -95,7 +102,6 @@ for _asm in ("System.IO.Compression",
         pass
 from System import Guid
 from System.IO import StreamReader, File
-from System.IO.Compression import ZipFile
 from System.Text import UTF8Encoding
 from System.Xml import XmlDocument, XmlNamespaceManager
 
@@ -128,7 +134,7 @@ NOT_APPLICABLE = u"Não aplicável"   # Descrição IN inexistente no tipo (≠ 
 MATERIALS_LABEL = u"Materiais"     # categoria usada no relatório p/ materiais
 
 TOOL_TITLE = u"ATUALIZAÇÃO DAS DESCRIÇÕES DO MODELO POR KEYNOTE"
-SCRIPT_VERSION = u"2026.10.16"     # aparece na janela e no log: confira se é a cópia nova
+SCRIPT_VERSION = u"2026.10.20"     # aparece na janela e no log: confira se é a cópia nova
 # fluxo único: Excel -> Modelo (o Excel é só lido)
 MODES = OrderedDict([("to_model", u"Excel → Modelo")])
 MODE_DIRS = {"to_model": ("model",)}
@@ -137,20 +143,37 @@ MODE_DIRS = {"to_model": ("model",)}
 # ------------------------------------------------------------------
 # Helpers (mesmo padrão das outras ferramentas OCA)
 # ------------------------------------------------------------------
+# Compatibilidade de motor: o pyRevit roda este script em IronPython 2.7 por
+# padrão; se o motor padrão do pyRevit for trocado (IronPython 3.4 / CPython 3),
+# 'unicode' e 'unichr' não existem - os nomes abaixo funcionam nos três.
+try:
+    unicode
+except NameError:
+    unicode = str
+try:
+    unichr
+except NameError:
+    unichr = chr
+PY2 = sys.version_info[0] == 2
+
+
 def to_unicode(value):
     """Coerce any Revit / .NET / byte value into clean unicode text."""
     if value is None:
         return u""
     if isinstance(value, unicode):
         return value
-    if isinstance(value, str):
+    if isinstance(value, (bytes, bytearray)) and not isinstance(value, unicode):
         for enc in ("utf-8", "cp1252", "latin-1"):
             try:
-                return value.decode(enc)
+                return bytes(value).decode(enc)
             except (UnicodeDecodeError, LookupError):
                 continue
-        return value.decode("ascii", "replace")
-    return unicode(value)
+        return bytes(value).decode("ascii", "replace")
+    try:
+        return unicode(value)
+    except Exception:
+        return unicode(repr(value))
 
 
 # ------------------------------------------------------------------
@@ -161,7 +184,6 @@ def to_unicode(value):
 #   Pasta: %LOCALAPPDATA%\OCA\pyRevit\logs\Keynotes  (ou a pasta TEMP).
 #   Um arquivo por dia; uma execução = um "run" com identificador próprio.
 # ------------------------------------------------------------------
-import sys
 import time
 import traceback
 
@@ -267,7 +289,24 @@ def revit_env_info():
             info["pyrevit"] = to_unicode(getattr(pyrevit, "__version__", u"?"))
         except Exception:
             info["pyrevit"] = u"?"
+    if info["pyrevit"] in (u"?", u"", u"None"):
+        try:                                     # pyRevit 6/7: sessioninfo
+            from pyrevit.loader import sessioninfo
+            info["pyrevit"] = to_unicode(sessioninfo.get_runtime_info().pyrevit_version)
+        except Exception:
+            pass
     info["python"] = to_unicode(sys.version.split("\n")[0])
+    try:
+        import platform
+        info["engine"] = u"{} {}".format(platform.python_implementation(),
+                                         platform.python_version())
+    except Exception:
+        info["engine"] = u"IronPython" if sys.platform == "cli" else u"?"
+    info["py2"] = to_unicode(PY2)
+    try:
+        info["persistent_engine"] = to_unicode(bool(__persistentengine__))
+    except NameError:
+        info["persistent_engine"] = u"(variável ausente)"
     try:
         import System
         info["dotnet"] = to_unicode(System.Environment.Version)
@@ -649,8 +688,36 @@ HEADER_ALIASES = {
 }
 
 
+def open_xlsx(path):
+    """Abre o .xlsx só para leitura, permitindo que o Excel (ou outro programa)
+    esteja com o arquivo aberto - ZipFile.OpenRead falha nesse caso. Lê o que
+    está SALVO no disco. Erros viram mensagens claras."""
+    from System.IO import FileStream, FileMode, FileAccess, FileShare
+    from System.IO.Compression import ZipArchive, ZipArchiveMode
+    if not os.path.isfile(path):
+        raise IOError(u"arquivo não encontrado: {}".format(path))
+    if not path.lower().endswith(u".xlsx"):
+        raise IOError(u"o arquivo não é .xlsx (salve a planilha como Pasta de Trabalho do "
+                      u"Excel .xlsx): {}".format(path))
+    share = getattr(FileShare, "ReadWrite") | getattr(FileShare, "Delete")
+    try:
+        stream = FileStream(path, FileMode.Open, FileAccess.Read, share)
+    except Exception as ex:
+        raise IOError(u"não foi possível abrir a planilha (sem permissão ou bloqueada): "
+                      u"{}".format(to_unicode(ex)))
+    try:
+        return ZipArchive(stream, ZipArchiveMode.Read, False)
+    except Exception as ex:
+        try:
+            stream.Dispose()
+        except Exception:
+            pass
+        raise IOError(u"a planilha está corrompida ou não é um .xlsx válido: {}".format(
+            to_unicode(ex)))
+
+
 def read_excel(path):
-    archive = ZipFile.OpenRead(path)
+    archive = open_xlsx(path)
     try:
         sheets = resolve_sheets(archive)
         shared = read_shared_strings(archive)
@@ -988,17 +1055,6 @@ skipped = []     # {"key","where","id","eid","reason"}
 # ------------------------------------------------------------------
 # 5a. Backup de arquivos gravados (TXT de Keynotes)
 # ------------------------------------------------------------------
-def backup_path(path):
-    """<arquivo>_backup_AAAAMMDD_HHMMSS.<ext>, sem colidir com um backup já existente."""
-    base, ext = os.path.splitext(path)
-    stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    cand, n = u"{}_backup_{}{}".format(base, stamp, ext), 1
-    while os.path.exists(cand):
-        n += 1
-        cand = u"{}_backup_{}_{}{}".format(base, stamp, n, ext)
-    return cand
-
-
 # ------------------------------------------------------------------
 # 5b. Excel -> Modelo
 # ------------------------------------------------------------------
@@ -1281,11 +1337,10 @@ from System.Collections.Generic import List
 
 
 class _RevitAction(IExternalEventHandler):
-    """Fila de funções executadas no contexto da API do Revit.
-    Dois "executores" esvaziam a MESMA fila - o que rodar primeiro executa:
-      1. ExternalEvent (Raise) - o caminho normal;
-      2. evento Idling do Revit - reserva, para o caso de o ExternalEvent não
-         ser executado (cada ação sai da fila uma única vez).
+    """Fila de funções executadas no contexto da API do Revit (ExternalEvent).
+    Sem assinatura permanente de eventos do Revit (como Idling): um handler
+    que fica assinado pode ser chamado depois de o pyRevit recarregar e
+    descartar este motor Python, o que é um risco de encerramento do Revit.
     Antes de cada ação confere se o documento do comando ainda está aberto;
     toda exceção é registrada no log com traceback e mostrada ao usuário -
     nunca sobe para o Revit."""
@@ -1329,54 +1384,10 @@ class _RevitAction(IExternalEventHandler):
 
 REVIT_ACTION = _RevitAction()
 REVIT_EVENT = ExternalEvent.Create(REVIT_ACTION)
-IDLING = {"on": False, "stop": False, "delegate": None}
-
-
-def _on_idling(sender, args):
-    """Executor reserva (evento Idling): roda o que ficou na fila. Quando a
-    janela fecha e a fila está vazia, ele mesmo se desliga."""
-    try:
-        if REVIT_ACTION.queue:
-            REVIT_ACTION.run_pending(sender, u"Idling")
-        elif IDLING["stop"] and IDLING["on"]:
-            sender.Idling -= IDLING["delegate"]
-            IDLING["on"] = False
-            LOG.info(u"Idling: executor reserva desligado")
-    except Exception:
-        LOG.exc(u"Idling")
-
-
-def idling_start():
-    """Liga o executor reserva. Precisa rodar no contexto da API (início do
-    comando ou dentro de uma ação)."""
-    IDLING["stop"] = False
-    if IDLING["on"]:
-        return
-    try:
-        from System import EventHandler
-        from Autodesk.Revit.UI.Events import IdlingEventArgs
-        IDLING["delegate"] = EventHandler[IdlingEventArgs](_on_idling)
-        try:
-            uiapp = __revit__
-        except NameError:
-            from pyrevit import HOST_APP
-            uiapp = HOST_APP.uiapp
-        uiapp.Idling += IDLING["delegate"]
-        IDLING["on"] = True
-        LOG.info(u"Idling: executor reserva ligado")
-    except Exception:
-        LOG.exc(u"Idling: não foi possível ligar o executor reserva")
-
-
-def idling_stop():
-    """Pede o desligamento (feito pelo próprio handler, no contexto da API)."""
-    IDLING["stop"] = True
-
-
 def run_in_revit(fn, name=u"ação"):
-    """Enfileira fn para rodar no contexto da API. -> True se o Revit aceitou
-    o pedido (Accepted/Pending) ou se o executor reserva (Idling) está ligado;
-    False se nenhum dos dois pode executar."""
+    """Enfileira fn para rodar no contexto da API (ExternalEvent).
+    -> True se o Revit aceitou o pedido (Accepted/Pending); False se recusou -
+    nesse caso a ação sai da fila e nada fica pendente."""
     REVIT_ACTION.queue.append((name, fn))
     REVIT_ACTION.started.pop(name, None)
     res = None
@@ -1385,12 +1396,10 @@ def run_in_revit(fn, name=u"ação"):
     except Exception:
         LOG.exc(u"ExternalEvent.Raise('{}')".format(name))
     ok = res in (ExternalEventRequest.Accepted, ExternalEventRequest.Pending)
-    (LOG.info if ok else LOG.warn)(u"ExternalEvent.Raise('{}') -> {} · reserva Idling: {}".format(
-        name, res, u"ligada" if IDLING["on"] else u"desligada"))
-    if not ok and not IDLING["on"]:
+    (LOG.info if ok else LOG.warn)(u"ExternalEvent.Raise('{}') -> {}".format(name, res))
+    if not ok:
         REVIT_ACTION.queue[:] = [q for q in REVIT_ACTION.queue if q[1] is not fn]
-        return False
-    return True
+    return ok
 
 
 def action_started(name):
@@ -1441,16 +1450,19 @@ def show_in_view(ids):
     if not is_graphic:
         return (u"{} elemento(s) selecionado(s). A vista ativa não é uma vista de modelo; "
                 u"abra uma planta, corte ou 3D para enquadrar.".format(len(ids)))
+    # só os elementos da linha (não percorre a vista inteira a cada clique)
     try:
-        visible = set(eid_int(i) for i in DB.FilteredElementCollector(doc, view.Id)
-                      .WhereElementIsNotElementType().ToElementIds())
+        visible = set(eid_int(i) for i in DB.FilteredElementCollector(
+            doc, List[DB.ElementId](ids)).WherePasses(
+                DB.VisibleInViewFilter(doc, view.Id)).ToElementIds())
     except Exception:
         LOG.exc(u"show_in_view: elementos visíveis")
         visible = set()
     vis = [i for i in ids if eid_int(i) in visible]
     if not vis:
-        return (u"{} elemento(s) selecionado(s), mas nenhum está visível na vista ativa "
-                u"({}). Abra uma vista 3D e clique na linha de novo.".format(
+        return (u"{} elemento(s) PRÉ-SELECIONADO(S) no Revit, mas nenhum está visível na vista "
+                u"ativa ({}). A seleção continua: abra outra vista (ex.: 3D) - ou clique na "
+                u"linha de novo depois de trocar de vista para enquadrar.".format(
                     len(ids), to_unicode(view.Name)))
     try:
         uidoc.ShowElements(List[DB.ElementId](vis))
@@ -1660,8 +1672,9 @@ for _asm in ("PresentationFramework", "PresentationCore", "WindowsBase", "System
 import System
 from System.Data import DataTable
 
-# tabela com altura do conteúdo: quem rola é a janela (barra à direita);
-# sem virtualização, para o agrupamento sempre redesenhar todas as linhas
+# cada tabela rola por dentro (o cabeçalho das colunas fica fixo) com altura
+# máxima ajustada à janela (_fit_tables); a página rola entre as seções.
+# Virtualização ligada: modelos grandes não criam todas as linhas de uma vez.
 # (cores, contorno e fonte: estilos implícitos do Design System - lib/oca_ds/wpf.py)
 _GRID_STYLE = u"""
               AutoGenerateColumns="False" CanUserAddRows="False"
@@ -1670,11 +1683,12 @@ _GRID_STYLE = u"""
               CanUserResizeRows="False" HeadersVisibility="Column" SelectionMode="Single"
               SelectionUnit="FullRow" GridLinesVisibility="Horizontal"
               AlternationCount="2" Margin="0,4,0,0"
-              VerticalScrollBarVisibility="Disabled" HorizontalScrollBarVisibility="Auto"
-              EnableRowVirtualization="False" EnableColumnVirtualization="False"
-              VirtualizingPanel.IsVirtualizing="False"
-              VirtualizingPanel.IsVirtualizingWhenGrouping="False"
-              ScrollViewer.CanContentScroll="False"
+              VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Auto"
+              MinHeight="120" MaxHeight="520"
+              EnableRowVirtualization="True" EnableColumnVirtualization="False"
+              VirtualizingPanel.IsVirtualizing="True" VirtualizingPanel.VirtualizationMode="Standard"
+              VirtualizingPanel.ScrollUnit="Pixel"
+              ScrollViewer.CanContentScroll="True"
               ColumnHeaderStyle="{StaticResource head}" RowStyle="{StaticResource row}" """
 
 # cor da CÉLULA que vai mudar (coluna "<campo>Mark" da linha):
@@ -1847,6 +1861,7 @@ VERIFY_BODY = u"""
         <StackPanel x:Name="body1" Margin="0,6,0,0">
             <TextBlock Style="{StaticResource oca.Hint}"
                        Text="Uma linha por tipo (família + tipo): tipos diferentes com a mesma keynote ficam em linhas separadas. Clique numa linha para selecionar o tipo no Revit.   Célula verde = preenche vazio  ·  Âmbar = substitui o valor atual  ·  Cinza = não pode ser gravado"/>
+            <WrapPanel Margin="0,4,0,2"><TextBlock Text="Filtrar:" Style="{StaticResource small}" FontWeight="SemiBold" Margin="0,0,8,0"/><TextBlock Text="Agrupamento" Style="{StaticResource small}" Margin="0,0,4,0"/><TextBox x:Name="f1_grp" Width="130" Margin="0,0,10,0" ToolTip="Filtra a coluna (parte do texto, sem acento). Enter aplica."/><TextBlock Text="Categoria" Style="{StaticResource small}" Margin="0,0,4,0"/><TextBox x:Name="f1_cat" Width="120" Margin="0,0,10,0" ToolTip="Filtra a coluna (parte do texto, sem acento). Enter aplica."/><TextBlock Text="Família" Style="{StaticResource small}" Margin="0,0,4,0"/><TextBox x:Name="f1_fam" Width="130" Margin="0,0,10,0" ToolTip="Filtra a coluna (parte do texto, sem acento). Enter aplica."/><TextBlock Text="Tipo" Style="{StaticResource small}" Margin="0,0,4,0"/><TextBox x:Name="f1_typ" Width="140" Margin="0,0,10,0" ToolTip="Filtra a coluna (parte do texto, sem acento). Enter aplica."/><TextBlock Text="Keynote" Style="{StaticResource small}" Margin="0,0,4,0"/><TextBox x:Name="f1_key" Width="90" Margin="0,0,10,0" ToolTip="Filtra a coluna (parte do texto, sem acento). Enter aplica."/></WrapPanel>
             <DataGrid x:Name="grid" """ + _GRID_STYLE + u""">
               <DataGrid.Columns>""" + _CHECK_COL + u"""
                 """ + _col(u"Agrupamento", u"Grupo", 150) + u"""
@@ -1877,6 +1892,7 @@ VERIFY_BODY = u"""
         <StackPanel x:Name="body2" Margin="0,6,0,0">
             <TextBlock Style="{StaticResource oca.Hint}"
                        Text="Clique duas vezes no Keynote para digitar. Linha destacada (faixa verde-azulada à esquerda) = keynote encontrada no Excel (só indica correspondência; nada é gravado até 'Atualizar descrições'). Ao digitar a Keynote, a Description e a Descrição em IN do Excel já ficam propostas; marque a linha e use 'Atualizar descrições' (grava Keynote e descrições juntos). 'Verificar no Excel' marca todas as linhas com algo a gravar.   Texto lilás = keynote digitado  ·  Verde = preenche campo vazio  ·  Âmbar = substitui o valor atual"/>
+            <WrapPanel Margin="0,4,0,2"><TextBlock Text="Filtrar:" Style="{StaticResource small}" FontWeight="SemiBold" Margin="0,0,8,0"/><TextBlock Text="Agrupamento" Style="{StaticResource small}" Margin="0,0,4,0"/><TextBox x:Name="f2_grp" Width="130" Margin="0,0,10,0" ToolTip="Filtra a coluna (parte do texto, sem acento). Enter aplica."/><TextBlock Text="Categoria" Style="{StaticResource small}" Margin="0,0,4,0"/><TextBox x:Name="f2_cat" Width="120" Margin="0,0,10,0" ToolTip="Filtra a coluna (parte do texto, sem acento). Enter aplica."/><TextBlock Text="Família" Style="{StaticResource small}" Margin="0,0,4,0"/><TextBox x:Name="f2_fam" Width="130" Margin="0,0,10,0" ToolTip="Filtra a coluna (parte do texto, sem acento). Enter aplica."/><TextBlock Text="Tipo" Style="{StaticResource small}" Margin="0,0,4,0"/><TextBox x:Name="f2_typ" Width="140" Margin="0,0,10,0" ToolTip="Filtra a coluna (parte do texto, sem acento). Enter aplica."/><TextBlock Text="Keynote" Style="{StaticResource small}" Margin="0,0,4,0"/><TextBox x:Name="f2_key" Width="90" Margin="0,0,10,0" ToolTip="Filtra a coluna (parte do texto, sem acento). Enter aplica."/></WrapPanel>
             <DataGrid x:Name="grid2" """ + _GRID_STYLE + u""">
               <DataGrid.Columns>""" + _CHECK_COL + u"""
                 """ + _col(u"Categoria", u"Categoria", 105) + u"""
@@ -1906,6 +1922,7 @@ VERIFY_BODY = u"""
         <StackPanel x:Name="body3" Margin="0,6,0,8">
             <TextBlock Style="{StaticResource oca.Hint}"
                        Text="Só consulta: inclua o código na planilha do Excel e rode o comando de novo."/>
+            <WrapPanel Margin="0,4,0,2"><TextBlock Text="Filtrar:" Style="{StaticResource small}" FontWeight="SemiBold" Margin="0,0,8,0"/><TextBlock Text="Agrupamento" Style="{StaticResource small}" Margin="0,0,4,0"/><TextBox x:Name="f3_grp" Width="130" Margin="0,0,10,0" ToolTip="Filtra a coluna (parte do texto, sem acento). Enter aplica."/><TextBlock Text="Categoria" Style="{StaticResource small}" Margin="0,0,4,0"/><TextBox x:Name="f3_cat" Width="120" Margin="0,0,10,0" ToolTip="Filtra a coluna (parte do texto, sem acento). Enter aplica."/><TextBlock Text="Família" Style="{StaticResource small}" Margin="0,0,4,0"/><TextBox x:Name="f3_fam" Width="130" Margin="0,0,10,0" ToolTip="Filtra a coluna (parte do texto, sem acento). Enter aplica."/><TextBlock Text="Tipo" Style="{StaticResource small}" Margin="0,0,4,0"/><TextBox x:Name="f3_typ" Width="140" Margin="0,0,10,0" ToolTip="Filtra a coluna (parte do texto, sem acento). Enter aplica."/><TextBlock Text="Keynote" Style="{StaticResource small}" Margin="0,0,4,0"/><TextBox x:Name="f3_key" Width="90" Margin="0,0,10,0" ToolTip="Filtra a coluna (parte do texto, sem acento). Enter aplica."/></WrapPanel>
             <DataGrid x:Name="grid3" """ + _GRID_STYLE + u""" IsReadOnly="True">
               <DataGrid.Columns>
                 """ + _col(u"Categoria", u"Categoria", 120) + u"""
@@ -1955,6 +1972,8 @@ COLS2 = ("Categoria", "Familia", "Tipo", "Qtd", "Keynote", "PtAtual", "PtExcel",
 COLS3 = ("Categoria", "Familia", "Tipo", "Qtd", "Keynote", "Descricao", "DescricaoIN",
          "Verificacao")
 MARKS = ("PtMark", "EnMark", "KeyMark")
+FILTER_CODES = ("grp", "cat", "fam", "typ", "key")   # filtros por coluna (f<n>_<código>)
+
 NO_KEY = u"(sem keynote)"
 TYPE_INST = {}        # id do tipo -> [ElementId das instâncias] (modelo inteiro)
 
@@ -2016,6 +2035,7 @@ class VerifyWindow(forms.WPFWindow):
         self.viewinfo.Text = u""
         self.searchinfo.Text = u""
         self._query = u""                 # termo aplicado pelo botão Buscar
+        self._colf = {1: {}, 2: {}, 3: {}}  # filtros por coluna aplicados
         self._last_ids = []
         self.t1 = self.t2 = self.t3 = None
         self.d1, self.d2, self.d3 = {}, {}, {}
@@ -2035,6 +2055,13 @@ class VerifyWindow(forms.WPFWindow):
         self.b_search.Click += sf(self._search, u"Buscar")
         self.b_clear.Click += sf(self._clear_search, u"Limpar busca")
         self.f_text.KeyDown += sf(self._on_key, u"Busca (tecla)")
+        for n in (1, 2, 3):
+            for code in FILTER_CODES:
+                box = getattr(self, "f%d_%s" % (n, code), None)
+                if box is not None:
+                    box.KeyDown += sf(self._on_key, u"Filtro (tecla)")
+        self.Loaded += sf(self._fit_tables, u"Ajustar tabelas")
+        self.scroll.SizeChanged += sf(self._fit_tables, u"Ajustar tabelas")
         self.grid.SelectionChanged += sf(self._on_select1, u"Seleção tabela 1")
         self.grid2.SelectionChanged += sf(self._on_select2, u"Seleção tabela 2")
         self.grid3.SelectionChanged += sf(self._on_select3, u"Seleção tabela 3")
@@ -2120,8 +2147,6 @@ class VerifyWindow(forms.WPFWindow):
         LOG.info(u"Janela de verificação fechada{}".format(
             u" (Voltar)" if self.closing_for_back else u""))
         self._watch_unhandled(False)
-        if not self.closing_for_back:
-            idling_stop()
 
     # ---- montagem das tabelas ----
     @staticmethod
@@ -2146,11 +2171,37 @@ class VerifyWindow(forms.WPFWindow):
             return category or u"(sem categoria)"
         return u""
 
-    def _matches(self, vals, grp):
-        if not self._query:
+    def _matches(self, n, vals, grp, key):
+        """Busca geral (todas as colunas) E filtros por coluna da tabela n."""
+        if self._query:
+            hay = u" ".join(to_unicode(v) for k, v in vals.items() if not k.startswith(u"_"))
+            if self._query not in _fold(hay + u" " + grp):
+                return False
+        flt = self._colf.get(n) or {}
+        if not flt:
             return True
-        hay = u" ".join(to_unicode(v) for k, v in vals.items() if not k.startswith(u"_"))
-        return self._query in _fold(hay + u" " + grp)
+        fields = {"grp": _key_label(clean(key)) + u" " + to_unicode(vals.get("Grupo", u"")),
+                  "cat": vals.get("Categoria", u""), "fam": vals.get("Familia", u""),
+                  "typ": vals.get("Tipo", u""), "key": vals.get("Keynote", u"")}
+        for code, q in flt.items():
+            if q not in _fold(fields.get(code, u"")):
+                return False
+        return True
+
+    def _read_filters(self):
+        """Lê as caixas de filtro das três tabelas -> {n: {código: texto}}."""
+        out = {}
+        for n in (1, 2, 3):
+            d = {}
+            for code in FILTER_CODES:
+                box = getattr(self, "f%d_%s" % (n, code), None)
+                if box is None:
+                    continue
+                v = _fold(to_unicode(box.Text).strip())
+                if v:
+                    d[code] = v
+            out[n] = d
+        return out
 
     def _fill(self, n, tb, store, items, mode, key_of, values_of, sort_key):
         """Monta a tabela n: filtra pela busca, ordena e, se houver
@@ -2161,7 +2212,7 @@ class VerifyWindow(forms.WPFWindow):
         for r in items:
             g = self._grp_of(mode, key_of(r), r["category"])
             vals = values_of(r)
-            if self._matches(vals, g):
+            if self._matches(n, vals, g, key_of(r)):
                 entries.append((g, r, vals))
         if mode == GROUP_MODES[0]:
             entries.sort(key=lambda e: sort_key(e[1]))
@@ -2312,18 +2363,30 @@ class VerifyWindow(forms.WPFWindow):
 
     # ---- busca: só ao clicar em Buscar (ou Enter); Limpar busca restaura ----
     def _search(self, sender, args):
+        """Aplica a busca geral e os filtros por coluna (Buscar ou Enter)."""
         self._query = _fold(to_unicode(self.f_text.Text).strip())
+        self._colf = self._read_filters()
         self._rebuild()
-        if self._query:
-            self.searchinfo.Text = u"Busca '{}': {} linha(s) encontrada(s)".format(
-                to_unicode(self.f_text.Text).strip(),
+        n_f = sum(len(v) for v in self._colf.values())
+        if self._query or n_f:
+            self.searchinfo.Text = u"{}{}{} linha(s) encontrada(s)".format(
+                u"Busca '{}' · ".format(to_unicode(self.f_text.Text).strip())
+                if self._query else u"",
+                u"{} filtro(s) de coluna · ".format(n_f) if n_f else u"",
                 sum(len(v) for v in self._vis.values()))
         else:
             self.searchinfo.Text = u""
 
     def _clear_search(self, sender, args):
+        """Limpa a busca geral e todos os filtros por coluna."""
         self.f_text.Text = u""
+        for n in (1, 2, 3):
+            for code in FILTER_CODES:
+                box = getattr(self, "f%d_%s" % (n, code), None)
+                if box is not None:
+                    box.Text = u""
         self._query = u""
+        self._colf = {1: {}, 2: {}, 3: {}}
         self.searchinfo.Text = u""
         self._rebuild()
 
@@ -2344,9 +2407,47 @@ class VerifyWindow(forms.WPFWindow):
         body.Visibility = Visibility.Visible if show else Visibility.Collapsed
         btn.Content = u"▼" if show else u"▶"
 
+    @staticmethod
+    def _inner_scroll(grid):
+        """ScrollViewer interno do DataGrid (onde ficam as linhas)."""
+        try:
+            from System.Windows.Media import VisualTreeHelper
+            from System.Windows.Controls import ScrollViewer
+            stack = [grid]
+            while stack:
+                el = stack.pop(0)
+                if isinstance(el, ScrollViewer):
+                    return el
+                for i in range(VisualTreeHelper.GetChildrenCount(el)):
+                    stack.append(VisualTreeHelper.GetChild(el, i))
+        except Exception:
+            pass
+        return None
+
     def _wheel(self, sender, args):
+        """Roda do mouse sobre uma tabela: rola as linhas da tabela; quando ela
+        chega ao início/fim, rola a página (sem barras brigando)."""
+        sv = self._inner_scroll(sender)
+        if sv is not None and sv.ScrollableHeight > 0:
+            up = args.Delta > 0
+            if (up and sv.VerticalOffset > 0) or (not up and sv.VerticalOffset <
+                                                  sv.ScrollableHeight):
+                return                     # a própria tabela rola
         args.Handled = True
         self.scroll.ScrollToVerticalOffset(self.scroll.VerticalOffset - args.Delta * 0.4)
+
+    def _fit_tables(self, sender=None, args=None):
+        """Altura máxima de cada tabela = área visível da página menos os
+        títulos: uma tabela aberta ocupa a tela com o cabeçalho sempre à vista."""
+        try:
+            h = self.scroll.ViewportHeight
+            if not h or h != h:            # 0 ou NaN antes de a janela aparecer
+                return
+            mh = max(220.0, h - 150.0)
+            for g in (self.grid, self.grid2, self.grid3):
+                g.MaxHeight = mh
+        except Exception:
+            LOG.exc(u"_fit_tables")
 
     def _commit(self):
         """Confirma células/linhas em edição (tabelas 1 e 2) antes de ler os
@@ -2592,8 +2693,8 @@ class VerifyWindow(forms.WPFWindow):
             try:
                 if action_started(name):
                     return
-                LOG.warn(u"'{}' ainda não começou após {} s (ExternalEvent e Idling "
-                         u"sem execução)".format(name, seconds))
+                LOG.warn(u"'{}' ainda não começou após {} s (ExternalEvent pendente)".format(
+                    name, seconds))
                 win.viewinfo.Text = (
                     u"O Revit ainda não executou '{}'. Ele só executa quando está livre: "
                     u"termine o comando ativo (Esc), feche diálogos abertos e passe o mouse "
@@ -2652,15 +2753,19 @@ def _txt_field(text):
     return u" ".join(to_unicode(text).replace(u"\t", u" ").split())
 
 
+TXT_BUILD = {"entries": []}       # última montagem: [(chave, texto, pai, origem)]
+
+
 def build_keynote_txt():
     """-> (texto, avisos). Estrutura idêntica ao TXT do escritório. As linhas
-    passam por validate_keynote_entries antes de virar texto."""
+    passam por validate_keynote_entries antes de virar texto; cada entrada
+    guarda a origem (aba/linha do Excel) para as mensagens de erro."""
     entries, warns = [], []
     for cat, plist in XL["kn_headers"]:
-        entries.append((cat, plist, u""))
+        entries.append((cat, plist, u"", u"aba {}".format(KN_SHEET_NAME)))
     known = set()
     for pf, grp, cat in XL["dados_rows"]:
-        entries.append((pf, grp, cat))
+        entries.append((pf, grp, cat, u"aba {}".format(DATA_SHEET_NAME)))
         known.add(clean(pf))
     seen = set(known) | set(clean(c) for c, _ in XL["kn_headers"])
     for rec in XL["rows"]:
@@ -2676,13 +2781,204 @@ def build_keynote_txt():
         if not parent:
             warns.append(u"{}: prefixo '{}' não está em DADOS - entra sem agrupamento".format(
                 key, prefix))
-        entries.append((_txt_field(key), text, parent))
+        entries.append((_txt_field(key), text, parent,
+                        u"aba {} linha {}".format(XL.get("sheet", SHEET_NAME), rec["row"])))
     entries, vwarns = validate_keynote_entries(entries)
     warns.extend(vwarns)
+    TXT_BUILD["entries"] = entries
     # texto como está no Excel (só tabulação/quebra de linha viram espaço), para
     # o arquivo continuar idêntico ao TXT do escritório
-    lines = [u"{}\t{}\t{}".format(*(_no_tab(v) for v in e)) for e in entries]
+    lines = [u"{}\t{}\t{}".format(*(_no_tab(v) for v in e[:3])) for e in entries]
     return u"\r\n".join(lines) + u"\r\n", warns
+
+
+# ---- Windows-1252 (ANSI) sem depender do codec do motor Python ----
+# 0x00-0x7F e 0xA0-0xFF são iguais ao Unicode; 0x80-0x9F têm 27 caracteres
+# próprios (€ “ ” – — … etc.). Os 5 códigos indefinidos (81, 8D, 8F, 90, 9D)
+# e qualquer outro caractere NÃO são representáveis: nada vira "?".
+_CP1252_HIGH = {0x20AC: 0x80, 0x201A: 0x82, 0x0192: 0x83, 0x201E: 0x84, 0x2026: 0x85,
+                0x2020: 0x86, 0x2021: 0x87, 0x02C6: 0x88, 0x2030: 0x89, 0x0160: 0x8A,
+                0x2039: 0x8B, 0x0152: 0x8C, 0x017D: 0x8E, 0x2018: 0x91, 0x2019: 0x92,
+                0x201C: 0x93, 0x201D: 0x94, 0x2022: 0x95, 0x2013: 0x96, 0x2014: 0x97,
+                0x02DC: 0x98, 0x2122: 0x99, 0x0161: 0x9A, 0x203A: 0x9B, 0x0153: 0x9C,
+                0x017E: 0x9E, 0x0178: 0x9F}
+_CP1252_BACK = dict((v, k) for k, v in _CP1252_HIGH.items())
+# sugestões para os casos mais comuns em descrições técnicas
+_CP1252_HINT = {0x2265: u">=", 0x2264: u"<=", 0x2248: u"~", 0x2260: u"<>", 0x03BC: u"µ",
+                0x2212: u"-", 0x00A0: u" ", 0x2032: u"'", 0x2033: u'"', 0x2715: u"x",
+                0x2716: u"x", 0x2192: u"->", 0x2190: u"<-", 0x221E: u"infinito",
+                0x2205: u"Ø", 0x2300: u"Ø", 0x03A9: u"Ohm", 0x2126: u"Ohm"}
+
+
+def cp1252_encode(text):
+    """-> (lista de bytes, [(índice, caractere)] não representáveis)."""
+    out, bad = [], []
+    for i, ch in enumerate(text):
+        o = ord(ch)
+        if o in (9, 10, 13) or 0x20 <= o < 0x7F or 0xA0 <= o <= 0xFF:
+            out.append(o)
+        elif o == 0x7F or o < 0x20:
+            bad.append((i, ch))           # caractere de controle (ex.: vindo do Excel)
+        elif o in _CP1252_HIGH:
+            out.append(_CP1252_HIGH[o])
+        else:
+            bad.append((i, ch))
+    return out, bad
+
+
+def cp1252_decode(data):
+    return u"".join(unichr(_CP1252_BACK.get(b, b)) for b in data)
+
+
+def non_cp1252_report(entries):
+    """Caracteres que impedem gravar o TXT em Windows-1252.
+    -> [{"char", "code", "key", "origin", "hint"}]"""
+    found = []
+    for k, t, p, origin in [(e + (u"",))[:4] for e in entries]:
+        for field in (k, t, p):
+            _b, bad = cp1252_encode(_no_tab(field))
+            for _i, ch in bad:
+                found.append({"char": ch, "code": u"U+{:04X}".format(ord(ch)), "key": _txt_field(k),
+                              "origin": origin,
+                              "hint": _CP1252_HINT.get(ord(ch), u"")})
+    return found
+
+
+def _bytes_of(path):
+    return [int(b) for b in File.ReadAllBytes(path)]
+
+
+def validate_txt_bytes(data, expected_lines):
+    """Confere o arquivo gravado: Windows-1252 sem BOM, quebra de linha CRLF,
+    3 campos por linha (chave, texto, pai) e a quantidade de entradas.
+    -> lista de problemas (vazia = ok)."""
+    probs = []
+    if data[:3] == [0xEF, 0xBB, 0xBF] or data[:2] in ([0xFF, 0xFE], [0xFE, 0xFF]):
+        probs.append(u"o arquivo começa com BOM (deveria ser ANSI puro)")
+    for b in (0x81, 0x8D, 0x8F, 0x90, 0x9D):
+        if b in data:
+            probs.append(u"byte 0x{:02X} não existe no Windows-1252".format(b))
+    text = cp1252_decode(data)
+    if u"\r\n" not in text and text:
+        probs.append(u"quebras de linha não são CRLF")
+    body = text.replace(u"\r\n", u"\n")
+    if u"\r" in body:
+        probs.append(u"há CR solto (quebra de linha inválida)")
+    lines = body.split(u"\n")
+    if lines and lines[-1] == u"":
+        lines = lines[:-1]
+    if len(lines) != expected_lines:
+        probs.append(u"{} linha(s) no arquivo, esperado {}".format(len(lines), expected_lines))
+    for n, ln in enumerate(lines, 1):
+        if not ln.strip():
+            probs.append(u"linha {} vazia".format(n))
+        elif ln.count(u"\t") != 2:
+            probs.append(u"linha {} com {} tabulação(ões) (esperado 2)".format(n, ln.count(u"\t")))
+        if len(probs) > 20:
+            break
+    return probs
+
+
+OBSOLETE_DIR = u"Obsoletos"        # subpasta dos backups, ao lado do TXT
+
+
+def obsolete_backup_path(path):
+    """<pasta do TXT>\\Obsoletos\\<nome>_AAAAMMDD_HHMMSS.txt - nunca repete um nome
+    existente (acrescenta _2, _3...)."""
+    folder = os.path.join(os.path.dirname(path), OBSOLETE_DIR)
+    base, ext = os.path.splitext(os.path.basename(path))
+    stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    cand, n = os.path.join(folder, u"{}_{}{}".format(base, stamp, ext)), 1
+    while File.Exists(cand):
+        n += 1
+        cand = os.path.join(folder, u"{}_{}_{}{}".format(base, stamp, n, ext))
+    return folder, cand
+
+
+def _io_message(ex):
+    """Texto claro para os erros de arquivo mais comuns."""
+    name = type(ex).__name__
+    txt = to_unicode(ex)
+    if u"UnauthorizedAccess" in name or u"denied" in txt.lower() or u"negado" in txt.lower():
+        return u"sem permissão para gravar nessa pasta ou arquivo somente leitura ({})".format(txt)
+    if u"being used" in txt or u"sendo usado" in txt or u"IOException" in name:
+        return u"arquivo em uso ou bloqueado por outro programa ({})".format(txt)
+    if u"DirectoryNotFound" in name or u"could not find" in txt.lower():
+        return u"pasta não encontrada ({})".format(txt)
+    return txt
+
+
+def write_keynote_txt(path, text, expected_lines):
+    """Grava o TXT em ANSI / Windows-1252 SEM BOM, com segurança:
+      1. codifica (para se houver caractere fora do Windows-1252);
+      2. grava um .tmp na mesma pasta e confere os bytes e a estrutura;
+      3. se o TXT já existe: copia para <pasta>\\Obsoletos\\<nome>_<data_hora>.txt
+         e confere a cópia - se o backup falhar, o TXT original NÃO é trocado;
+      4. substitui o TXT e confere os bytes finais (se falhar, restaura o backup).
+    -> (backup, codificação). Exceções com mensagem clara."""
+    import System
+    data, bad = cp1252_encode(text)
+    if bad:
+        raise ValueError(u"{} caractere(s) fora do Windows-1252 - o TXT não foi gravado".format(
+            len(bad)))
+    folder = os.path.dirname(path) or u"."
+    if not System.IO.Directory.Exists(folder):
+        raise IOError(u"pasta do TXT não encontrada: {}".format(folder))
+    arr = System.Array[System.Byte](data)
+    tmp = path + u".tmp"
+    try:
+        File.WriteAllBytes(tmp, arr)
+    except Exception as ex:
+        raise IOError(u"não foi possível gravar o arquivo temporário: " + _io_message(ex))
+    try:
+        if _bytes_of(tmp) != data:
+            raise IOError(u"conferência do arquivo temporário falhou (bytes diferentes)")
+        probs = validate_txt_bytes(data, expected_lines)
+        if probs:
+            raise IOError(u"estrutura inválida: " + u"; ".join(probs[:5]))
+        backup = u""
+        if File.Exists(path):
+            obs, backup = obsolete_backup_path(path)
+            try:
+                System.IO.Directory.CreateDirectory(obs)
+                original = _bytes_of(path)
+                File.Copy(path, backup, False)          # nunca sobrescreve um backup
+                if _bytes_of(backup) != original:
+                    raise IOError(u"a cópia de backup não confere com o original")
+            except Exception as ex:
+                LOG.exc(u"TXT: backup")
+                try:                    # cópia ruim não pode parecer backup válido
+                    if File.Exists(backup):
+                        bad_name = os.path.splitext(backup)[0] + u"_FALHOU.txt"
+                        File.Move(backup, bad_name)
+                        LOG.warn(u"TXT: cópia de backup que não conferiu renomeada: " + bad_name)
+                except Exception:
+                    LOG.exc(u"TXT: renomear backup que falhou")
+                raise IOError(u"backup em '{}' falhou - o TXT original NÃO foi substituído: "
+                              u"{}".format(obs, _io_message(ex)))
+            LOG.info(u"TXT: backup conferido em {}".format(backup))
+        try:
+            File.Copy(tmp, path, True)
+        except Exception as ex:
+            raise IOError(u"não foi possível substituir o TXT (o original continua): " +
+                          _io_message(ex))
+        if _bytes_of(path) != data:
+            if backup:
+                try:
+                    File.Copy(backup, path, True)
+                    LOG.warn(u"TXT: gravação não conferiu - original restaurado do backup")
+                except Exception:
+                    LOG.exc(u"TXT: restaurar backup")
+            raise IOError(u"o TXT gravado não confere com o gerado")
+    finally:
+        try:
+            if File.Exists(tmp):
+                File.Delete(tmp)
+        except Exception:
+            LOG.exc(u"TXT: apagar temporário")
+    LOG.info(u"TXT: gravado e conferido {} ({} bytes, Windows-1252 sem BOM, {} linhas)".format(
+        path, len(data), expected_lines))
+    return backup, u"ANSI (Windows-1252)"
 
 
 def _no_tab(text):
@@ -2696,7 +2992,9 @@ def validate_keynote_entries(entries):
     sempre com aviso. -> (entradas, avisos)"""
     warns, out, keys = [], [], set()
     nk = _txt_field                        # comparação sem espaços extras
-    for k, t, p in entries:
+    for ent in entries:
+        k, t, p = ent[0], ent[1], ent[2]
+        origin = ent[3] if len(ent) > 3 else u""
         if not nk(k):
             warns.append(u"linha sem keynote descartada ('{}')".format(nk(t)[:30]))
             continue
@@ -2704,7 +3002,7 @@ def validate_keynote_entries(entries):
             warns.append(u"{}: chave repetida no TXT - descartada".format(nk(k)))
             continue
         keys.add(nk(k))
-        out.append([k, t, p])
+        out.append([k, t, p, origin])
     for e in out:
         if nk(e[2]) and nk(e[2]) not in keys:
             warns.append(u"{}: pai '{}' não existe - vai para o nível de cima".format(
@@ -2725,40 +3023,10 @@ def validate_keynote_entries(entries):
     return [tuple(e) for e in out], warns
 
 
-def write_keynote_txt(path, text):
-    """Grava em ANSI (cp1252, como o arquivo atual do escritório); se houver
-    caractere fora do cp1252, grava em Unicode (UTF-16), que o Revit também lê.
-    Segurança: grava primeiro num arquivo temporário e confere; só então copia
-    o atual para o backup (data/hora) e substitui. Se algo falhar, o TXT
-    anterior continua intacto. -> (backup, codificação)"""
-    try:
-        data, enc = text.encode("cp1252"), u"ANSI (cp1252)"
-    except UnicodeEncodeError:
-        data, enc = codecs.BOM_UTF16_LE + text.encode("utf-16-le"), u"Unicode (UTF-16)"
-    tmp = path + u".tmp"
-    with open(tmp, "wb") as f:
-        f.write(data)
-    with open(tmp, "rb") as f:
-        if f.read() != data:
-            raise IOError(u"conferência do arquivo temporário falhou")
-    backup = u""
-    if os.path.isfile(path):
-        backup = backup_path(path)
-        File.Copy(path, backup, False)
-        LOG.info(u"TXT: backup do anterior em {}".format(backup))
-    File.Copy(tmp, path, True)
-    try:
-        os.remove(tmp)
-    except Exception:
-        pass
-    LOG.info(u"TXT: gravado {} ({} bytes, {})".format(path, len(data), enc))
-    return backup, enc
-
-
 def load_keynote_txt(path, expected=None):
-    """Carrega o TXT como tabela de keynotes do projeto e confere o resultado.
-    -> (ok, mensagem). ok=False se o Revit não confirmou a transação, se
-    houve erro de sintaxe no arquivo ou se a tabela carregada não bate."""
+    """Carrega o TXT como tabela de keynotes do projeto e confere o resultado
+    contra as entradas geradas (chave, texto e pai). -> (ok, mensagem). ok=False
+    se o Revit não confirmou a transação ou encontrou erro de sintaxe."""
     holder = {}
 
     def body():
@@ -2769,6 +3037,13 @@ def load_keynote_txt(path, expected=None):
         res = DB.KeyBasedTreeEntriesLoadResults()
         DB.KeynoteTable.GetKeynoteTable(doc).LoadFrom(ref, res)
         holder["res"] = res
+        try:
+            n_syntax = len(list(res.GetFileSyntaxErrors()))
+        except Exception:
+            n_syntax = 0
+        if n_syntax:                      # desfaz: o projeto fica com a tabela anterior
+            raise Exception(u"o Revit encontrou {} erro(s) de sintaxe no arquivo - "
+                            u"recarga desfeita".format(n_syntax))
     LOG.begin(u"Recarga do TXT", path)
     ok, why = run_transaction(u"Carregar TXT de Keynotes", body)
     if not ok:
@@ -2788,22 +3063,39 @@ def load_keynote_txt(path, expected=None):
         LOG.warn(u"TXT: erro de sintaxe informado pelo Revit: {}".format(x))
     for x in entry_errs:
         LOG.warn(u"TXT: erro de entrada informado pelo Revit: {}".format(x))
-    loaded = None
+    # conferência: a tabela do projeto tem as mesmas chaves/textos/pais do arquivo
+    loaded, diffs = {}, []
     try:
-        loaded = len(list(DB.KeynoteTable.GetKeynoteTable(doc).GetKeyBasedTreeEntries()))
+        for e in DB.KeynoteTable.GetKeynoteTable(doc).GetKeyBasedTreeEntries():
+            try:
+                loaded[clean(e.Key)] = (clean(e.KeynoteText), clean(e.ParentKey))
+            except Exception:
+                continue
+        for ent in TXT_BUILD.get("entries") or []:
+            k, t, p = clean(ent[0]), clean(ent[1]), clean(ent[2])
+            got = loaded.get(k)
+            if got is None:
+                diffs.append(u"{}: não está na tabela do projeto".format(k))
+            elif u" ".join(got[0].split()) != u" ".join(t.split()) or got[1] != p:
+                diffs.append(u"{}: texto/pai diferente no projeto".format(k))
     except Exception:
-        LOG.exc(u"TXT: conferir entradas carregadas")
-    LOG.end(u"Recarga do TXT", u"entradas no projeto: {} (esperado {}) · sintaxe: {} · "
-            u"entradas com erro: {}".format(loaded, expected, len(syntax), len(entry_errs)))
+        LOG.exc(u"TXT: conferir tabela de keynotes do projeto")
+        loaded = None
+    for d in diffs[:20]:
+        LOG.warn(u"TXT x projeto: " + d)
+    LOG.end(u"Recarga do TXT", u"entradas no projeto: {} (esperado {}) · diferenças: {} · "
+            u"sintaxe: {} · entradas com erro: {}".format(
+                len(loaded) if loaded is not None else u"?", expected, len(diffs),
+                len(syntax), len(entry_errs)))
     if syntax:
         return False, u"o Revit encontrou {} erro(s) de sintaxe no arquivo".format(len(syntax))
-    msg = u"carregado no projeto"
-    if expected is not None and loaded is not None:
-        msg += u" ({} de {} entradas)".format(loaded, expected)
-        if loaded != expected:
-            msg += u" - quantidade diferente do arquivo, ver log"
+    msg = u"recarregado no projeto"
+    if loaded is not None and expected is not None:
+        msg += u" e conferido ({} de {} entradas{})".format(
+            len(loaded), expected,
+            u", {} diferença(s) - ver log".format(len(diffs)) if diffs else u", iguais ao arquivo")
     if entry_errs:
-        msg += u" com {} aviso(s) do Revit".format(len(entry_errs))
+        msg += u" · {} aviso(s) do Revit".format(len(entry_errs))
     return True, msg
 
 
@@ -3035,7 +3327,10 @@ def save_run(chosen_rows, chosen_inc):
         len(chosen_rows), len(chosen_inc)))
     n_before = len(changes)
     written = []          # (Parameter, valor, registro de 'changes') para conferir
-    problems = []         # (onde, motivo)
+    problems = []         # (onde, motivo, "bloqueio" | "erro")
+    # ignorados: linhas da tabela 1 que podiam ser gravadas e não foram marcadas
+    n_ignored = len([r for r in VROWS if r["enabled"] and not r["sel"]]) + \
+        len([r for r in chosen_inc if not inc_changed(r)])
     try:
         # ---- Tabela 1 (Excel -> Modelo): grava os tipos das linhas marcadas ----
         chosen_ids = set(r["rid"] for r in chosen_rows)
@@ -3062,13 +3357,13 @@ def save_run(chosen_rows, chosen_inc):
                         "category": h["category"], "old": old, "new": new,
                         "where": where_label(h), "id": h["id"]}))
                 else:
-                    problems.append((where_label(h) + u" · " + it["label"], why))
+                    problems.append((where_label(h) + u" · " + it["label"], why, u"erro"))
         if chosen_items:
             ok, msg = run_transaction(u"Atualizar descrições por Keynote", write1)
             if ok:
                 written.extend(pend1)
             else:
-                problems.append((u"Tabela 1", msg))
+                problems.append((u"Tabela 1", msg, u"erro"))
 
         # ---- Tabela 2 (tipos sem Keynote / sem Descrição) ----
         fields2 = (("key", u"Keynote", lambda t: t.get_Parameter(BIP.KEYNOTE_PARAM)),
@@ -3088,7 +3383,7 @@ def save_run(chosen_rows, chosen_inc):
                 where = u"{}: {}{}".format(r["category"], (r["family"] + u" - ")
                                            if r["family"] else u"", r["name"])
                 if owned_by_other(tp):
-                    problems.append((where, u"tipo emprestado por outro usuário (workshared)"))
+                    problems.append((where, u"tipo emprestado por outro usuário (workshared)", u"bloqueio"))
                     continue
                 for f, label, getp in fields2:
                     new, old = clean(r[f]), r[f + "0"]
@@ -3102,13 +3397,13 @@ def save_run(chosen_rows, chosen_inc):
                         p = None
                     if p is None:
                         if f != "en":             # IN ausente / GUID diferente: ignora
-                            problems.append((where, u"parâmetro '{}' não existe".format(label)))
+                            problems.append((where, u"parâmetro '{}' não existe".format(label), u"bloqueio"))
                         continue
                     if param_text(p) == new:
                         r["written"].append(f)    # já gravado pela tabela 1
                         continue
                     if p.IsReadOnly:
-                        problems.append((where, u"'{}' somente leitura".format(label)))
+                        problems.append((where, u"'{}' somente leitura".format(label), u"bloqueio"))
                         continue
                     ok, why = _set_param(p, new)
                     if ok:
@@ -3118,7 +3413,7 @@ def save_run(chosen_rows, chosen_inc):
                             "fieldKey": "inc_" + f, "category": r["category"],
                             "old": old, "new": new, "where": where, "id": r["id"]}, r, f))
                     else:
-                        problems.append((where + u" · " + label, why))
+                        problems.append((where + u" · " + label, why, u"erro"))
         if to_write:
             ok, msg = run_transaction(u"Completar Keynote / Descrição dos tipos", write2)
             if ok:
@@ -3126,7 +3421,7 @@ def save_run(chosen_rows, chosen_inc):
                     r["written"].append(f)
                     written.append((p, new, rec))
             else:
-                problems.append((u"Tabela 2", msg))
+                problems.append((u"Tabela 2", msg, u"erro"))
 
         # ---- conferência: relê cada parâmetro gravado ----
         def same(a, b):                    # ignora diferença só de espaço/quebra de linha
@@ -3144,7 +3439,7 @@ def save_run(chosen_rows, chosen_inc):
                     rec["where"], rec["field"], rec["old"], now))
             else:
                 problems.append((rec["where"] + u" · " + rec["field"],
-                                 u"depois de gravar o modelo mostra '{}'".format(now)))
+                                 u"depois de gravar o modelo mostra '{}'".format(now), u"erro"))
         for r in chosen_inc:
             if r["status"] == u"Não marcado":
                 r["status"] = u"Gravado" if r.get("written") else u"Não gravado"
@@ -3156,8 +3451,10 @@ def save_run(chosen_rows, chosen_inc):
         for r in chosen_inc:
             INC_LOG.append(inc_view(r))
         n_saved = len(changes) - n_before
-        for where, why in problems:
-            LOG.warn(u"Não gravado: {} - {}".format(where, why))
+        blocks = [x for x in problems if x[2] == u"bloqueio"]
+        errors = [x for x in problems if x[2] == u"erro"]
+        for where, why, kind in problems:
+            LOG.warn(u"Não gravado ({}): {} - {}".format(kind, where, why))
         LOG.end(u"Gravar", u"{} parâmetro(s) gravado(s) e conferido(s) · {} problema(s)"
                 .format(n_saved, len(problems)))
 
@@ -3170,17 +3467,24 @@ def save_run(chosen_rows, chosen_inc):
                u"{} {} · Keynote {}.".format(n_saved, by_field["pt"], PARAM_IN_NAME,
                                             by_field["en"], by_field["key"]))
         if problems:
-            msg += u" {} item(ns) NÃO gravado(s) - veja o resumo.".format(len(problems))
+            msg += u" {} bloqueio(s) e {} erro(s) - veja o resumo.".format(len(blocks), len(errors))
         if VW is not None:
             VW.reload(VROWS, INC, NOTX, make_info_text(),
                       msg + u" Tabelas atualizadas - grave mais ou clique em Finalizar.")
-            summary = msg
-            if problems:
-                summary += u"\n\nNão gravado:\n" + u"\n".join(
-                    u"• {} - {}".format(w, why) for w, why in problems[:12])
-                if len(problems) > 12:
-                    summary += u"\n• ... e mais {} (ver log)".format(len(problems) - 12)
-            elif n_saved == 0:
+            summary = (u"Concluído: {} parâmetro(s) gravado(s) e conferido(s) "
+                       u"(Description {} · {} {} · Keynote {})\n"
+                       u"Ignorados (não marcados / sem alteração): {}\n"
+                       u"Bloqueados (somente leitura, emprestado, parâmetro ausente): {}\n"
+                       u"Erros (Revit recusou ou desfez): {}").format(
+                n_saved, by_field["pt"], PARAM_IN_NAME, by_field["en"], by_field["key"],
+                n_ignored, len(blocks), len(errors))
+            for title, lst in ((u"Bloqueados", blocks), (u"Erros", errors)):
+                if lst:
+                    summary += u"\n\n{}:\n".format(title) + u"\n".join(
+                        u"• {} - {}".format(w, why) for w, why, _k in lst[:10])
+                    if len(lst) > 10:
+                        summary += u"\n• ... e mais {} (ver log)".format(len(lst) - 10)
+            if not problems and n_saved == 0:
                 summary += (u"\n\nNada foi alterado: as linhas marcadas não tinham valor "
                             u"novo para gravar (Excel vazio ou igual ao modelo).")
             _tell(VW, summary, warn=bool(problems))
@@ -3438,10 +3742,11 @@ def cleanup_old_colors():
 
 def make_keynote_txt(reload_txt=True):
     """Ao executar a 1ª aba: gera o TXT de Keynote a partir do Excel (mesma
-    estrutura de sempre) e carrega no projeto. Se o arquivo já existe, é
-    SEMPRE substituído, sem perguntar; antes, o atual é copiado para um backup
-    com data/hora na mesma pasta (write_keynote_txt). -> mensagem.
-    Só diz "carregado" depois que o Revit confirma."""
+    estrutura de sempre), grava em ANSI / Windows-1252 e recarrega no projeto.
+    Arquivo existente: substituído sem perguntar, depois de copiado e conferido
+    em <pasta>\\Obsoletos. Caractere fora do Windows-1252: o TXT NÃO é gravado
+    e os caracteres são listados (nada vira "?"). -> mensagem para a janela.
+    Só diz "recarregado" depois que o Revit confirma."""
     path = opts["txt_path"]
     LOG.begin(u"Geração do TXT", path)
     try:
@@ -3449,36 +3754,87 @@ def make_keynote_txt(reload_txt=True):
     except Exception as ex:
         LOG.exc(u"Geração do TXT")
         forms.alert(u"O TXT de Keynote não foi gerado.", sub_msg=to_unicode(ex), title=ALERT_TITLE)
-        return u"TXT de Keynote não gerado: {}".format(to_unicode(ex))
-    n_entries = len([ln for ln in text.splitlines() if ln.strip()])
+        return u"TXT de Keynote NÃO gerado: {}".format(to_unicode(ex))
+    entries = TXT_BUILD["entries"]
+    n_entries = len(entries)
     for w in warns:
         LOG.warn(u"TXT: " + w)
     LOG.end(u"Geração do TXT", u"{} entrada(s) · {} aviso(s)".format(n_entries, len(warns)))
     if n_entries == 0:
-        return u"TXT de Keynote não gerado: nenhuma entrada no Excel (o arquivo atual foi mantido)."
+        return u"TXT de Keynote NÃO gerado: nenhuma entrada no Excel (o arquivo atual foi mantido)."
+    # Windows-1252: confere ANTES de tocar em qualquer arquivo
+    bad = non_cp1252_report(entries)
+    if bad:
+        for b in bad:
+            LOG.error(u"TXT: caractere fora do Windows-1252 {} '{}' na keynote {} ({})".format(
+                b["code"], b["char"], b["key"], b["origin"]))
+        lines = [u"• '{}' ({}) em {} - {}{}".format(
+            b["char"], b["code"], b["key"] or u"(sem chave)", b["origin"],
+            u" · sugestão: troque por '{}'".format(b["hint"]) if b["hint"] else u"")
+            for b in bad[:15]]
+        if len(bad) > 15:
+            lines.append(u"• ... e mais {} (ver log)".format(len(bad) - 15))
+        forms.alert(u"O TXT de Keynote NÃO foi gravado: há caracteres que não existem no "
+                    u"Windows-1252 (ANSI).",
+                    sub_msg=u"Corrija no Excel, salve e use Voltar > Executar. O TXT anterior "
+                            u"continua como estava.\n\n" + u"\n".join(lines),
+                    title=ALERT_TITLE)
+        return (u"TXT de Keynote NÃO gravado: {} caractere(s) fora do Windows-1252 no Excel "
+                u"(ex.: '{}' em {}). O TXT anterior continua carregado.".format(
+                    len(bad), bad[0]["char"], bad[0]["key"]))
     LOG.begin(u"Gravação do TXT")
     try:
-        backup, enc = write_keynote_txt(path, text)
+        backup, enc = write_keynote_txt(path, text, n_entries)
     except Exception as ex:
         LOG.exc(u"Gravação do TXT")
         forms.alert(u"O TXT de Keynote não foi gravado (o arquivo anterior foi mantido).",
                     sub_msg=to_unicode(ex), title=ALERT_TITLE)
-        return u"TXT de Keynote não gravado: {}".format(to_unicode(ex))
+        LOG.end(u"Gravação do TXT", u"FALHOU")
+        return u"TXT de Keynote NÃO gravado: {}".format(to_unicode(ex))
     LOG.end(u"Gravação do TXT")
     if reload_txt:
         ok, info = load_keynote_txt(path, n_entries)
     else:
         ok, info = True, u"NÃO recarregado (modo de diagnóstico)"
         LOG.warn(u"TXT: recarga pulada (modo de diagnóstico)")
-    msg = u"TXT de Keynote gravado ({}){} e {}.{}".format(
-        enc, u", backup: " + os.path.basename(backup) if backup else u"",
-        info if ok else u"NÃO carregado no projeto: " + info,
+    msg = u"TXT de Keynote gravado em {}{} e {}.{}".format(
+        enc, u" · anterior em {}\\{}".format(OBSOLETE_DIR, os.path.basename(backup))
+        if backup else u"", info if ok else u"NÃO recarregado no projeto: " + info,
         u"  {} aviso(s): {}".format(len(warns), u"; ".join(warns[:3])) if warns else u"")
     if not ok:
-        forms.alert(u"O TXT de Keynote foi gravado, mas não foi carregado no projeto.",
-                    sub_msg=msg + (u"\n\nBackup do anterior: {}".format(backup) if backup else u""),
-                    title=ALERT_TITLE)
+        restored = restore_txt_after_failed_reload(path, backup)
+        msg += u" " + restored
+        forms.alert(u"O TXT de Keynote NÃO foi recarregado no projeto - o projeto continua "
+                    u"com a tabela de keynotes anterior.",
+                    sub_msg=msg, title=ALERT_TITLE)
     return msg
+
+
+def restore_txt_after_failed_reload(path, backup):
+    """TXT e modelo não são atômicos: se o Revit não aceitou o TXT novo, o
+    arquivo volta a ser o anterior (o que o projeto ainda usa). O TXT recusado
+    é guardado em Obsoletos\<nome>_<data>_REJEITADO.txt. Nada é apagado.
+    -> mensagem"""
+    if not backup:
+        return (u"Não havia TXT anterior para restaurar: o arquivo novo ficou na pasta, "
+                u"mas o projeto não o carregou.")
+    try:
+        obs, rej = obsolete_backup_path(path)
+        rej = os.path.splitext(rej)[0] + u"_REJEITADO.txt"
+        File.Copy(path, rej, False)
+        File.Copy(backup, path, True)
+        if _bytes_of(path) != _bytes_of(backup):
+            raise IOError(u"o TXT restaurado não confere com o backup")
+        LOG.warn(u"TXT: recarga falhou - anterior restaurado de {} · recusado guardado em {}"
+                 .format(backup, rej))
+        return (u"O TXT anterior foi restaurado (igual ao projeto); o gerado ficou em "
+                u"{}\{}.".format(OBSOLETE_DIR, os.path.basename(rej)))
+    except Exception as ex:
+        LOG.exc(u"TXT: restaurar após recarga falhar")
+        return (u"ATENÇÃO: não foi possível restaurar o TXT anterior ({}). Copie manualmente "
+                u"{} sobre {}.".format(_io_message(ex), backup, path))
+
+
 
 
 def _step(name, fn, *args):
@@ -3546,7 +3902,6 @@ def start_session(new_opts):
         return False
     VW = win
     VW.viewinfo.Text = txt_msg
-    idling_start()
     try:
         VW.Show()
         LOG.info(u"Janela de verificação exibida")
@@ -3686,8 +4041,6 @@ def diagnostic_write_test():
         forms.alert(u"Teste de gravação - parte 2 de 2 (caminho do botão)",
                     sub_msg=u"{}\n\n{}\n\nLog: {}".format(env, u"\n".join(lines), LOG.path),
                     title=ALERT_TITLE)
-        idling_stop()
-    idling_start()
     queued = run_in_revit(via_event, u"Teste de gravação")
     forms.alert(u"Teste de gravação - parte 1 de 2 (direto no comando)",
                 sub_msg=u"{}\n\n{}\n\n{}".format(

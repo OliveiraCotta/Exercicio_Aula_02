@@ -1,235 +1,420 @@
-# Atualização das Descrições por Keynote — diagnóstico, alterações e testes
+# Atualização das Descrições por Keynote — auditoria técnica (versão 2026.10.20)
 
-Revisão de 15/10/2026. **Nada disto foi executado dentro do Revit.** A validação foi feita
-com compilação do script, análise estática e um simulador da API do Revit/WPF em Python.
-O que depende do Revit real está marcado como "testar no Revit".
-
----
-
-## 1. Diagnóstico
-
-### 1.1 Evidências (fatos observados nos prints e no código)
-
-| # | Evidência | O que indica |
-|---|-----------|--------------|
-| E1 | A janela de verificação abriu com as três tabelas cheias e a linha verde dizendo "TXT … carregado no projeto". | As etapas 1 a 10 terminaram: leitura do Excel, TXT, recarga, coleta, análise e janela. O encerramento aconteceu **depois**, com a janela aberta (interação ou ociosidade), e não durante a recarga. Não dá para descartar um efeito tardio da recarga, como o redesenho das vistas com as novas keynotes. |
-| E2 | Mensagem do Revit 2026: "An unrecoverable error has occurred". Em outro modelo: "Revit has experienced a fatal error". | No Revit, esse texto costuma aparecer quando uma exceção .NET não tratada chega à fila de eventos da interface (o *Dispatcher*), e janelas não modais de add-ins são a origem típica. |
-| E3 | Código anterior: **nenhum** evento da janela não modal tinha `try/except` (cliques, seleção de linha, edição de célula, combos, rolagem). | Qualquer erro Python num desses eventos subia direto para o Revit. Essa é a causa mais provável do encerramento (H1). |
-| E4 | Código anterior: `Parameter.Set()` devolve `False` quando o Revit recusa o valor, e o retorno era ignorado. `Transaction.Commit()` devolve `RolledBack` quando há erro, e o status também era ignorado. | Explica o "às vezes funciona mas não grava nada": a janela informava sucesso sem que o valor tivesse ficado no modelo. |
-| E5 | Código anterior: o resultado de `ExternalEvent.Raise()` era ignorado. | Se o Revit estiver ocupado (edição de esboço ou outro comando), o pedido é negado. O botão ficava travado em "Gravando no modelo..." e nada era gravado. |
-| E6 | Código anterior: `show_in_view` usava `revit.uidoc` (o documento **ativo**) com IDs do documento do comando. | Se o usuário trocasse de projeto com a janela aberta, a seleção ia para o documento errado ou dava erro. |
-| E7 | Print 1: muitos tipos com "(sem parâmetro no tipo)". | O modelo não tem "Descrição IN" em várias categorias. Na versão anterior isso gerava avisos, bloqueios e itens "não gravados". |
-| E8 | TXT gravado em UTF-16, com avisos "PF 24 / PF 25 repetido no Excel". | Há caracteres fora do cp1252 (por exemplo "≥") e chaves repetidas na planilha. O TXT anterior não validava a árvore: chave repetida, pai inexistente e ciclo. |
-
-### 1.2 Hipóteses (precisam do log ou do journal para confirmar)
-
-| # | Hipótese | Probabilidade | O que foi feito |
-|---|----------|---------------|-----------------|
-| H1 | Exceção Python num evento da janela, que chega ao Revit e encerra o programa. | Alta | Todos os eventos passam por `_safe` (registra no log e mostra na linha verde). Também há uma rede de segurança no *Dispatcher*. |
-| H2 | Exceção interna do DataGrid do WPF (.NET 8 no 2025/2026) nas linhas de título de grupo, que trocam o template da linha. | Média | Essas linhas agora são "invisíveis" ao mouse e ao teclado (`IsHitTestVisible=False`). A rede de segurança marca a exceção como tratada quando a janela do comando está em uso. O modo de diagnóstico **H** usa títulos de grupo sem troca de template, para isolar. |
-| H3 | Árvore de keynotes inválida (ciclo, pai inexistente ou chave repetida), que faz o Revit falhar ao redesenhar as tags depois da recarga. | Média-baixa | O TXT é validado e corrigido antes de gravar, com avisos no log. A recarga só é dada como feita depois do commit e da conferência das entradas. Use os testes **B** e **C** para isolar. |
-| H4 | `ShowElements` com a vista ativa sendo folha, tabela ou outro documento. | Baixa | O comando confere o documento ativo e o tipo de vista antes de selecionar e enquadrar. |
-| H5 | Varredura de cores antigas pesada em modelos grandes. | Não é a causa do encerramento: ela roda **antes** da janela (E1). | Foi otimizada mesmo assim (ver 2.3). |
-
-**Conclusão:** a correção cobre H1 a H4 e o log passa a mostrar a última etapa e a
-última ação antes de qualquer encerramento. Se o Revit ainda fechar, o log e o journal
-apontam se foi um evento da janela, uma ação do ExternalEvent ou algo do próprio Revit
-(seção 6).
+> **Nada disto foi executado dentro do Revit.** Este ambiente é Linux, sem Revit, sem
+> pyRevit e sem IronPython. A validação foi feita com:
+> - um simulador da API do Revit, do WPF e do .NET escrito em Python (CPython 3.11);
+> - testes automatizados do TXT e do backup;
+> - análise estática, incluindo a gramática do Python 2.
+>
+> Tudo que depende do Revit real está marcado como **"testar no Revit"**. Nenhum teste
+> de integração foi aprovado no Revit.
 
 ---
 
-## 2. Funções corrigidas e alterações
+## 0. Leia primeiro: a cópia instalada está desatualizada
 
-### 2.1 `Descrição IN` opcional (requisito funcional)
+O zip enviado (`…950c`) e o `main` do repositório estão no commit `75cf66d`. As correções
+de 15/10 e 16/10 foram feitas em `ESCRITORIO.extension/…`, e o `main` apagou essa pasta
+quando moveu o comando para `OCA01.extension/…`. **Por isso nenhuma correção posterior a
+`75cf66d` chegou ao seu Revit.** Os prints confirmam: o subtítulo da janela não mostra
+"versão …".
 
-- `plan_to_model`: o campo IN é ignorado quando o parâmetro não existe no tipo ou tem
-  outro GUID. Não gera bloqueio, e a Description segue normalmente.
-- `type_status`, `verify_incomplete`, `classify_type`: a ausência do parâmetro não conta
-  como falta, aviso, divergência nem "não verificado".
-- `row_view`, `_vals2`, `_vals3`, `_cmp2`: as tabelas mostram **"Não aplicável"**,
-  diferente de "(vazio)", que é campo existente sem valor.
-- `save_run`: nunca tenta gravar IN onde não existe.
-- Parâmetro com o mesmo nome e GUID diferente: aparece no log e no resumo do topo
-  ("Atenção: … não é usado"). Nunca é gravado e não bloqueia nada.
-- **Removido do fluxo e do código:** `offer_in_binding`, `bind_in_param`,
-  `_insert_binding`, `in_param_missing_categories` e `SHARED_PARAM_TXT`. O comando não
-  cria, não vincula e não pergunta mais. Saiu também a troca temporária do arquivo de
-  parâmetros compartilhados do Revit.
-- Dashboard: os tipos sem o parâmetro mostram "Não aplicável" e ficam fora de todos os
-  indicadores; os critérios explicam isso.
-
-### 2.1b Description não era gravada pela tabela 2 (correção de 15/10)
-
-- **Causa:** na tabela 2, digitar a Keynote só gravava a Keynote. A Description e a
-  Descrição IN do Excel só entravam depois de clicar em "Verificar no Excel", e só quando
-  o campo do modelo estava **vazio**. Quem digitava a Keynote e clicava direto em
-  "Atualizar descrições" gravava só a Keynote; a Description ficava para uma segunda
-  rodada pela tabela 1.
-- **Correção (`verify_incomplete`, `_cmp2`, `_on_changed2`, `analyze_model`):** com a
-  Keynote no Excel, a Description e a Descrição IN da planilha ficam **propostas** na
-  linha, tanto ao digitar quanto ao abrir. A proposta preenche campo vazio (célula verde)
-  ou substitui um valor diferente (célula âmbar), igual à tabela 1. Só é gravada com a
-  linha marcada e a confirmação. Excel vazio continua sem apagar nada.
-- A confirmação passou a mostrar quantos campos serão gravados (Description, Descrição
-  IN, Keynote). O resumo depois de gravar mostra quantos de cada um foram **gravados e
-  conferidos**, e o log registra cada valor (antes → depois).
-- A conferência ignora diferenças apenas de espaço ou quebra de linha, que o Revit pode
-  normalizar, para não acusar falha num valor que foi gravado.
-
-### 2.1c "Atualizar descrições" sem gravar no 2026.4 (revisão de 16/10, versão 2026.10.16)
-
-O caminho da gravação foi relido inteiro: plano → `Parameter.Set` → `Commit` → releitura.
-Não há erro de lógica que impeça a Description de ser gravada **quando a ação roda**.
-O que sobra, e que só aparece no Revit real:
-
-1. **O Revit não executa a ação externa.** A janela fica aberta enquanto você usa o
-   Revit, então a gravação depende do `ExternalEvent`. Se ele não roda, nada é gravado e
-   nada é avisado. **Correção:** um segundo executor (evento `Idling` do Revit) esvazia a
-   mesma fila; o primeiro que rodar executa, e cada ação roda uma vez só. Um vigia avisa
-   na janela se a gravação não começar em 8 s. O log mostra por qual caminho cada ação
-   rodou.
-2. **Ordem das opções de falha da transação.** O preprocessador de falhas agora é
-   definido **depois** do `Start()`, como no exemplo da API.
-3. **`oca_ds` em versões diferentes.** Se a `lib/oca_ds` instalada não aceitar
-   `min_width`, o comando monta a janela sem esse parâmetro em vez de parar.
-4. **Cópia antiga do script.** A janela de verificação mostra "versão 2026.10.16" no
-   subtítulo, e o log também. Se não aparecer, o Revit está rodando um script antigo.
-
-**Teste de gravação por versão (Shift+Clique > I):** grava um valor de teste na
-Description (e na Descrição IN, se existir) de um tipo, relê e **desfaz**; o modelo não
-muda. Roda duas vezes: direto no comando e pelo mesmo caminho do botão. Mostra a versão
-e o build do Revit. Interpretação:
-
-| Parte 1 (direto) | Parte 2 (botão) | Conclusão |
-|------------------|-----------------|-----------|
-| OK | OK | A gravação funciona nesta versão. Se a tabela não grava, o motivo está no resumo e no log (linhas "Não gravado"). |
-| OK | não aparece em 10 s | O Revit não executa ações externas: me envie o log. |
-| `Set: False` ou releitura falhou | — | O Revit recusa a Description desse tipo (somente leitura, workshared, família). |
-
-### 2.2 Gravação no modelo (`save_run`, `run_transaction`, `_set_param`)
-
-- `run_transaction`:
-  - confere se o documento está aberto, se não é somente leitura e se não há outra
-    transação aberta (não aninha);
-  - usa um `IFailuresPreprocessor` que descarta os avisos e desfaz a transação em caso de
-    erro, **sem abrir diálogo modal** dentro do ExternalEvent;
-  - só devolve sucesso se o `Commit` for `Committed`;
-  - registra Start, Commit e RollBack no log.
-- `_set_param`: trata `Set()` com retorno `False` como falha.
-- Depois do commit, cada parâmetro gravado é **relido**. Só entra como "gravado" o que o
-  modelo mostra de fato.
-- Ao final aparece um **resumo**: N gravados e conferidos, mais a lista do que não foi
-  gravado e o motivo de cada item (somente leitura, workshared, Revit recusou, transação
-  desfeita). Se não houver nada para gravar, o resumo explica por quê.
-- O botão "Atualizar descrições" sempre volta a ficar ativo (`finally`).
-- Se o Revit negar o pedido (`Raise` diferente de Accepted ou Pending), a janela avisa e
-  nada fica pendurado.
-
-### 2.3 Fluxo, TXT, interface e limpeza
-
-| Função | Alteração |
-|--------|-----------|
-| `RunLog` / `LOG` (novo) | Log diário em arquivo, gravado linha a linha. Cada execução tem um identificador próprio. Se o log falhar, o comando continua. |
-| `revit_env_info` (novo) | Registra a versão do Revit (ano, atualização tipo `2025.4` e família de build `24.x`/`25.x`/`26.x`), pyRevit, motor Python, .NET, sistema operacional e documento. |
-| `start_session` / `_step` (novo) | Cada etapa (1. Excel, 3-6. TXT, 7. coleta, 8-9. análise, 10. janela) tem início, fim, duração e contagens no log. Uma falha mostra a etapa e o caminho do log. |
-| `build_keynote_txt` + `validate_keynote_entries` (novo) | Valida a árvore: chave vazia, chave repetida, pai inexistente e ciclo. O conteúdo de arquivos válidos não muda: os testes deram byte a byte igual à versão anterior e ao TXT do escritório. |
-| `write_keynote_txt` | Grava num arquivo temporário e confere. Só então faz o backup com data e hora e substitui. Uma falha mantém o TXT anterior intacto. |
-| `load_keynote_txt` | Recarga feita por `run_transaction` (commit conferido). Registra erros de sintaxe e de entrada informados pelo Revit e confere quantas entradas ficaram no projeto contra quantas tem o arquivo. |
-| `make_keynote_txt` | Não grava um TXT vazio. Só diz "carregado" depois da confirmação do Revit. |
-| `_RevitAction.Execute` / `run_in_revit` | Fila com nome da ação. Confere se o documento ainda existe. Registra exceções com traceback e trata o resultado de `Raise()`. |
-| `show_in_view` / `_active_uidoc` (novo) | Usa o documento ativo **somente** se for o do comando. Ignora IDs apagados. Não enquadra em folha nem em tabela. Sem transação. |
-| `VerifyWindow._safe`, `_watch_unhandled`, `_on_ui_exception` (novos) | Todos os eventos da janela ficam protegidos. Exceções do WPF fora do Python vão para o log e são tratadas quando a janela do comando está ativa. Os handlers são removidos ao fechar. |
-| `scan_types`, `collect_model` | Elemento ou tipo inacessível é pulado, com contagem no log. Coletor iterado sem carregar a lista inteira. |
-| `analyze_model` | **Uma** passada pelo modelo, reaproveitada pelas tabelas 2 e 3, pela seleção e pelo dashboard. Antes eram três. |
-| `cleanup_old_colors` | Só confere elementos que as versões antigas pintavam e só em vistas de modelo. Varredura completa em partes de até 90 s, com o progresso salvo; depois disso, só a vista ativa. Transação conferida. Tudo registrado no log. |
-| Modo de diagnóstico (novo, **Shift+Clique** no botão) | Etapas separadas A a H, descritas na seção 4. |
-
-A interface, o Design System OCA, os temas, a busca, o agrupamento, as colunas
-ajustáveis, a seleção, o dashboard, o TXT e o backup foram preservados. As únicas
-mudanças visíveis são o texto "Não aplicável", o resumo depois da gravação e os avisos
-de diagnóstico.
+Esta versão está em `OCA01.extension/OCA.tab/Keynote.panel/02_Atualização Descrição por
+Keynotes.pushbutton/`. A janela de verificação mostra **"versão 2026.10.20"** no subtítulo,
+e o log também. Se o texto não aparecer, o Revit está rodando outra cópia.
 
 ---
 
-## 3. Matriz de compatibilidade (auditoria das APIs usadas)
+## A. Diagnóstico
 
-| Recurso | 2024 (.NET 4.8) | 2025 (.NET 8) | 2026 (.NET 8) | Observação |
-|---------|-----------------|---------------|---------------|------------|
-| `ElementId.Value` / `IntegerValue` | ok | ok | ok | `eid_int` usa `.Value` quando existe. `IntegerValue` está obsoleto desde 2024. |
-| `KeynoteTable.GetKeynoteTable`, `LoadFrom`, `KeyBasedTreeEntriesLoadResults`, `ExternalResourceReference.CreateLocalResource` | ok | ok | ok | Sem mudança de assinatura desde 2018. |
-| `Transaction`, `FailureHandlingOptions`, `IFailuresPreprocessor` | ok | ok | ok | — |
-| `ExternalEvent`, `IExternalEventHandler`, `ExternalEventRequest` | ok | ok | ok | — |
-| `UIDocument.ShowElements`, `Selection.SetElementIds` | ok | ok | ok | — |
-| `OverrideGraphicSettings` (cores e padrões) | ok | ok | ok | Propriedades de 2019 em diante; as antigas são lidas com `getattr`. |
-| `WorksharingUtils.GetCheckoutStatus` | ok | ok | ok | — |
-| `BuiltInParameterGroup` / `ParameterType` | — | — | — | **Não são mais usados** (só apareciam no vínculo removido). |
-| `System.IO.Compression` (leitura do .xlsx) | `…FileSystem` | `…ZipFile` | `…ZipFile` | O script tenta os dois nomes de assembly. |
-| WPF, `System.Data` (DataTable) | ok | ok | ok | Comportamento do DataGrid no .NET 8: **testar no Revit** (H2). |
-| pyRevit `forms.alert(sub_msg)`, `CommandSwitchWindow`, `ProgressBar`, `EXEC_PARAMS`, `get_document_data_file` | 4.8+ | 4.8+ / 5.x | 5.x | Você usa a 5.2. |
-| `lib/oca_ds` (Design System OCA) | dependência local | idem | idem | Se faltar, o comando avisa e para. |
+**Status:**
+- **Confirmado** = reproduzido no simulador ou demonstrável pela leitura do código e pelo
+  comportamento documentado da API.
+- **Hipótese** = plausível, mas só o Revit real, o log ou o journal confirmam.
 
-A compatibilidade com um ano não garante a das atualizações dele. Por isso cada execução
-grava no log o build exato (`VersionBuild`) e a atualização (`SubVersionNumber`).
+| # | Problema | Local | Causa / evidência | Impacto | Versões | Correção | Validação | Status |
+|---|----------|-------|-------------------|---------|---------|----------|-----------|--------|
+| 1 | O Revit roda o script antigo | Instalação / repositório | O zip e o `main` estão em `75cf66d`. As correções foram para `ESCRITORIO.extension`, apagada no `main`. O subtítulo não mostra versão. | Nenhuma correção nova chega ao Revit, e o comando "continua sem funcionar". | Todas | Código movido para `OCA01.extension` (merge `54c3a08`). A versão aparece na janela e no log. | Ver "versão 2026.10.20" no subtítulo. | **Confirmado** |
+| 2 | Excel aberto impede a leitura | `read_excel` (antes `ZipFile.OpenRead`) | `OpenRead` só permite que outros processos **leiam** o arquivo. Como o Excel o mantém aberto para gravação, a abertura falha ("being used by another process"). | O comando para na etapa 1. | Todas (.NET 4.8 e .NET 8) | `open_xlsx`: `FileStream` com `FileShare.ReadWrite \| Delete` e `ZipArchive` só leitura. Lê o que está **salvo**. Mensagens claras para arquivo inexistente, não-.xlsx, bloqueado ou corrompido. | Simulador ok. **Testar no Revit com a planilha aberta no Excel.** | Confirmado pelo código e pela documentação do .NET; não reproduzido no Windows |
+| 3 | `unicode` / `unichr` não existem em IronPython 3.4 / CPython | Topo do script, `to_unicode`, cp1252 | Nomes que só existem no Python 2. | Com o motor padrão do pyRevit trocado para IronPython 3.4, o comando falha **antes** de abrir qualquer janela (`NameError`). | pyRevit 5.2 a 7.0 com IronPython 3.4 selecionado | Equivalentes definidos no início; `to_unicode` trata `bytes`. | O script inteiro roda em CPython 3.11 no simulador. A gramática do Python 2 aceita o arquivo. | **Confirmado** |
+| 4 | TXT gravado em UTF-16 quando há caractere fora do Windows-1252 | `write_keynote_txt` (versão anterior) | Troca automática para UTF-16 com "≥" e símbolos parecidos. Já tinha acontecido: o print mostrava "UTF-16". | TXT fora do padrão ANSI do escritório. | Todas | O TXT **não é gravado**. O comando lista caractere, código, keynote, linha do Excel e sugestão (≥ → ">="). | 40 testes automáticos + simulador | **Confirmado** |
+| 5 | Backups misturados na pasta do TXT | `backup_path` (removida) | Os backups ficavam ao lado do TXT, com nome parecido. | Pasta poluída e risco de carregar um backup por engano. | Todas | Pasta `Obsoletos` (seção C.2). O backup é conferido byte a byte **antes** de trocar o TXT. | Testes 24–34 | **Confirmado** |
+| 6 | Executor pelo evento `Idling` (introduzido em `20a44c1`) | Fila de ações | Um handler de `Idling` inscrito pelo script continua no Revit se o pyRevit recarregar com a janela aberta. Ele aponta para um motor descartado. | Possível encerramento nativo do Revit. | Todas; o risco é maior no pyRevit 7, que compartilha o motor | **Removido.** Só `ExternalEvent`. O resultado do `Raise` é registrado, e um pedido negado sai da fila. Um vigia de 8 s avisa na janela. | Regressão (cenário `deny`) | Hipótese de risco; removido por precaução |
+| 7 | Seleção percorria a vista inteira a cada clique | `show_in_view` | `FilteredElementCollector(doc, view.Id)` em toda seleção de linha. | Lentidão em vistas grandes; parece travamento. | Todas | `VisibleInViewFilter` aplicado **só** aos IDs da linha. | Simulador (visível e não visível) | **Confirmado** |
+| 8 | O cabeçalho das colunas sumia ao rolar | XAML das três tabelas | Quem rolava era a página, não a tabela, então o cabeçalho saía da tela. | Difícil ler tabelas longas. | Todas | Cada tabela rola por dentro, com a altura ajustada à janela, e o cabeçalho fica fixo. A roda do mouse passa para a página no fim da tabela. | Simulador (eventos). **Testar no Revit (visual).** | Confirmado pelo código |
+| 9 | Recarga com erro de sintaxe era confirmada | `load_keynote_txt` | Os erros de sintaxe eram lidos **depois** do `Commit`. | O projeto podia ficar com uma tabela parcial e o disco com o TXT novo. | Todas | Erro de sintaxe → exceção **dentro** da transação → `RollBack`. O TXT anterior é restaurado do backup e o recusado vai para `Obsoletos\…_REJEITADO.txt`. | Simulador (`--syntaxerr` e `--txfail=Carregar`) | **Confirmado** |
+| 10 | O resumo final não separava os resultados | `save_run` | Bloqueios e erros apareciam numa lista só; ignorados não eram contados. | O usuário não sabia o que foi recusado e por quê. | Todas | Concluído / Ignorados / Bloqueados / Erros, com até 10 itens de cada e o restante no log. | Simulador (`refuse`, `txfail`) | **Confirmado** |
+| 11 | Uma cópia de backup que falhou na conferência parecia válida | `write_keynote_txt` | Uma cópia corrompida ficava em `Obsoletos` com o nome normal. | Restaurar dessa cópia poderia gravar um TXT ruim. | Todas | A cópia é renomeada para `_FALHOU.txt`. Nada é apagado. | Teste 32 | **Confirmado** |
+| 12 | `OCA01.extension/startup.py` (fora deste comando) | `startup.py` | `ThemeChanged` nunca é removido. Variáveis globais (`DEBUG_TXT`, `cores_paineis`) ficam no motor; o **pyRevit 7 compartilha um motor entre os scripts de inicialização de todas as extensões**. | Depois de recarregar o pyRevit, um handler antigo pode rodar ao trocar o tema: risco de erro ou encerramento. | pyRevit 7 (motor compartilhado); todas (handler) | **Não alterado** (não faz parte do pedido). Recomendação na seção G. | — | Hipótese |
+| 13 | "Unrecoverable error" com a janela aberta | Interface WPF | Ver H1 a H3 da revisão anterior. Desde `75cf66d`, os eventos da janela passam por `_safe` e há uma rede de segurança no Dispatcher. | Encerramento do Revit | 2025 e 2026 (.NET 8) | Mantido. Diagnóstico **H** (títulos de grupo simples) isola o template da linha de grupo. | **Só no Revit** | Hipótese |
+| 14 | "Não grava no 2026.4" | `save_run` | O caminho `Set` → `Commit` → releitura não tem erro de lógica no simulador. A explicação mais provável é o item 1 (código antigo). | — | 2026.4 | Diagnóstico **I** (Shift+Clique) grava, confere e **desfaz**. Mostra se o Revit aceita a gravação. | **Só no Revit** | Hipótese (causa provável: item 1) |
 
----
-
-## 4. Plano de testes (use CÓPIAS dos modelos)
-
-O **modo de diagnóstico** abre com Shift+Clique no botão.
-
-| Teste | Como | Esperado | Log |
-|-------|------|----------|-----|
-| A. Limpeza de cores antigas | Diagnóstico A | Pergunta se há cores; não fecha o Revit. | Vistas conferidas, tempo e elementos. |
-| B. TXT sem recarga | Diagnóstico B | TXT e backup na pasta; o projeto não muda. | Entradas e avisos da validação. |
-| C. Recarga sem interface | Diagnóstico C (TXT gerado no B) | "Carregado (N de N entradas)". | Commit e erros do Revit. **Depois do C, navegue por vistas com tags de keynote: se fechar aqui, é H3.** |
-| D. Coleta e análise | Diagnóstico D | Resumo com contagens. | Tipos, instâncias e Descrição IN (com / sem / GUID diferente). |
-| E. Interface com dados de teste | Diagnóstico E | Janela com linhas fictícias; clique, agrupe, busque, recolha e role. "Atualizar" não grava. | Eventos da interface. **Se fechar aqui, é interface (H1/H2), não o modelo.** |
-| F. Completa com dados reais | Diagnóstico F (ou clique normal) | Fluxo normal. | Todas as etapas. |
-| G. Gravação com confirmação | No F: marque linhas → "Atualizar descrições" → Não, depois Sim | Não = nada muda. Sim = resumo "N gravados e conferidos"; os valores aparecem nas Propriedades do tipo. | Start/Commit/RollBack e cada falha. |
-| H. Sem `Descrição IN` | Modelo sem o parâmetro | "Não aplicável" nas colunas IN; a Description grava normalmente; o dashboard sem erros de IN. | "Descrição IN: não existe neste modelo". |
-| I. IN só em algumas categorias | Modelo misto | Grava IN só onde existe; nos demais tipos aparece "Não aplicável". | "existe em X de Y tipo(s)". |
-| J. Mesmo nome, outro GUID | Parâmetro "Descrição IN" de projeto com outro GUID | Aviso no topo; nada gravado nele. | WARN "GUID diferente". |
-| Extra | Diagnóstico G (sem limpeza e sem recarga) e H (títulos de grupo simples) | Se G não fecha e F fecha, a causa está na limpeza ou na recarga. Se H não fecha e F fecha, a causa é a linha de título do DataGrid. | — |
-
-### Matriz por versão
-
-Rode **F, G, H, I e J** em cada uma. A versão exata está em Ajuda > Sobre e no log
-(`revit_build`, `revit_update`).
-
-Em cada versão, rode primeiro o **teste I** (1 minuto) e depois os demais.
-
-| Revit | Builds a cobrir |
-|-------|-----------------|
-| 2024 | build inicial (24.0) e a última atualização instalada (24.x) |
-| 2025 | build inicial (25.0), 2025.2 e 2025.4 (as suas) |
-| 2026 | build inicial (26.0) e 2026.4 (a sua) |
-
-Para cada combinação, anote: versão (do log), teste, resultado, e se fechou, a última
-linha do log.
+**Um `try/except` não impede todo encerramento do Revit.** Erros nativos não passam
+pelo Python: driver de vídeo, falta de memória, falha interna do Revit ou do WPF fora dos
+eventos tratados. Para esses casos existe o log, gravado linha a linha (a última linha
+mostra onde o comando estava), e o journal do Revit (seção H.3).
 
 ---
 
-## 5. Onde fica o log
+## B. Correções por prioridade
 
-`%LOCALAPPDATA%\OCA\pyRevit\logs\Keynotes\keynotes_AAAAMMDD.log`
+1. **Instalar a cópia certa** (item 1). Sem isso, nada do resto chega ao Revit.
+2. **Leitura do Excel aberto** (item 2): falhava na etapa 1.
+3. **Compatibilidade de motor** (item 3): falha total se o motor for trocado.
+4. **Segurança do Revit**: retirada do executor `Idling` (item 6). Desfazer a recarga do
+   TXT com erro (item 9).
+5. **TXT ANSI estrito e backup conferido** (itens 4, 5 e 11).
+6. **Relatório final e regras de negócio** (item 10 e seção D).
+7. **Interface**: cabeçalho fixo, filtros por coluna e seleção (itens 7 e 8, seção C.3).
+8. **Log**: ambiente completo (pyRevit, motor, .NET, documento, workshared). Arquivo, backup,
+   recarga, transação e `ExternalEvent` registrados.
 
-Ou use o atalho: Shift+Clique > "Abrir a pasta dos logs".
+---
 
-Cada linha tem hora (com milissegundos), o identificador da execução e o nível
-(INFO/STEP/WARN/ERROR). Linhas `>>` e `<<` marcam o início e o fim de cada etapa.
-**Se o Revit fechar, a última linha diz onde estava.**
+## C. O que mudou no script (`script.py`, versão 2026.10.20)
 
-## 6. Como coletar o journal do Revit se o encerramento continuar
+### C.1 TXT em ANSI / Windows-1252
 
-1. **Não abra o Revit de novo antes de copiar os arquivos**, porque cada abertura cria um
-   journal novo.
-2. Abra `%LOCALAPPDATA%\Autodesk\Revit\Autodesk Revit 2026\Journals` (troque o ano
-   conforme a versão).
-3. Ordene por data e copie o `journal.XXXX.txt` **mais recente**, mais algum `.dmp` da
-   mesma pasta ou da pasta do relatório de erros, se existir.
-4. Copie também o log do comando do dia (seção 5).
-5. Envie os arquivos junto com a versão (Ajuda > Sobre) e o que você estava fazendo na
-   hora: clicou numa linha, rolou, trocou o agrupamento, estava parado, etc.
-6. No journal, procure perto do fim por `Jrn.RibbonEvent` (botão), `API_SUCCESS` /
-   `API_ERROR`, `ExternalEvent` e `fatal error` / `unrecoverable`. As linhas antes do
-   erro mostram a última operação do Revit.
+- O codificador próprio (`cp1252_encode` / `cp1252_decode`) não depende do codec do
+  motor Python, então se comporta igual no IronPython 2.7, no IronPython 3.4 e no CPython.
+  - Caracteres aceitos: 0x20–0x7E, 0xA0–0xFF e os 27 caracteres próprios do Windows-1252
+    em 0x80–0x9F, como € “ ” ‘ ’ – — … • ™ ‰ Œ œ Š š Ž ž Ÿ ƒ.
+  - TAB, CR e LF só aparecem como separadores.
+  - **Nada vira "?".**
+- **Antes de tocar em qualquer arquivo**, `non_cp1252_report` lista cada caractere fora do
+  Windows-1252 (caractere, `U+XXXX`, keynote, linha do Excel e sugestão de troca).
+  Caracteres de controle vindos do Excel também entram na lista.
+  - Se a lista não estiver vazia, o TXT **não é gravado** e o anterior continua no disco e
+    no projeto.
+- Depois de gravar, `validate_txt_bytes` confere o arquivo:
+  - sem BOM;
+  - sem os bytes indefinidos 81, 8D, 8F, 90 e 9D;
+  - quebras de linha CRLF, sem CR solto;
+  - nenhuma linha vazia;
+  - 2 tabulações por linha (chave, texto, pai);
+  - a quantidade de linhas.
+- Depois da recarga, o comando confere a tabela de keynotes do projeto contra o arquivo:
+  mesmas chaves, textos e pais. As diferenças vão para o log, e a mensagem mostra
+  "N de M entradas, iguais ao arquivo".
+- O conteúdo não muda: o TXT do escritório volta idêntico, byte a byte, depois de lido e
+  regravado.
+
+### C.2 Backup em `Obsoletos`
+
+**A estrutura adotada:**
+
+```
+<pasta do TXT>\OCA_XXX_Lista de Materiais_XX.txt          ← sempre o vigente
+<pasta do TXT>\Obsoletos\OCA_XXX_Lista de Materiais_XX_20261020_120000.txt
+<pasta do TXT>\Obsoletos\OCA_XXX_Lista de Materiais_XX_20261020_120000_2.txt   (mesmo segundo)
+```
+
+O exemplo do pedido (`Backups/OCA_XXX_…_XX_Obsoletos_20261020_120000.txt`) misturava
+"Backups" (pasta) e "Obsoletos" (no nome). Usei **uma** pasta, `Obsoletos`, como no texto
+do pedido, e mantive no arquivo o nome original mais a data e a hora. Assim o backup
+ordena por data e o nome da lista continua igual. Se o escritório preferir o outro
+formato, a troca fica em `OBSOLETE_DIR` e `obsolete_backup_path`.
+
+**A ordem de `write_keynote_txt`:**
+1. Codifica. Se houver caractere inválido, para sem tocar no disco.
+2. Grava `<TXT>.tmp` e confere os bytes e a estrutura.
+3. Se o TXT existe:
+   - cria `Obsoletos`;
+   - copia o TXT para lá **sem sobrescrever** (`File.Copy(…, False)`);
+   - confere a cópia byte a byte.
+   - **Se qualquer parte falhar, o TXT original não é trocado.** Uma cópia ruim vira
+     `_FALHOU.txt`.
+4. Troca o TXT e confere os bytes finais. Se não conferir, restaura o backup.
+5. Apaga só o `.tmp`. **Nenhum backup é apagado ou sobrescrito.**
+
+Se o Revit **recusar** o TXT novo (erro de sintaxe ou transação desfeita):
+- a recarga é desfeita e o projeto continua com a tabela anterior;
+- o TXT anterior volta ao disco a partir do backup;
+- o recusado fica em `Obsoletos\…_REJEITADO.txt`.
+
+O disco e o projeto voltam a ficar iguais.
+
+### C.3 Interface
+
+- **Cabeçalho fixo:** cada tabela rola por dentro, com a altura ajustada à janela
+  (`_fit_tables`). A roda do mouse rola a tabela e, no fim dela, passa para a página
+  (`_wheel`). Não há duas barras disputando a mesma roda.
+- Mantidos: seções recolhíveis, colunas ajustáveis, visual OCA DS e virtualização das
+  linhas.
+- **Filtros por coluna:** cada tabela tem uma linha "Filtrar:" com Agrupamento,
+  Categoria, Família, Tipo e Keynote.
+  - Os filtros se combinam entre si e com a busca geral, e só são aplicados com
+    **Buscar** ou **Enter**, como a busca.
+  - **Limpar** zera tudo.
+  - A linha de status mostra quantos filtros estão ativos e quantas linhas foram
+    encontradas.
+- **Seleção:**
+  - só seleciona se o documento ativo for o do comando;
+  - ignora elementos apagados;
+  - `SetElementIds` sem transação, rodando no contexto da API (`ExternalEvent`), e a janela
+    continua aberta;
+  - enquadra só os elementos visíveis na vista ativa;
+  - **se nenhum estiver visível, a pré-seleção continua** e a mensagem orienta a abrir
+    outra vista.
+- **Preservados:**
+  - Voltar, Finalizar, Dashboard HTML e agrupamento;
+  - Shift+Clique (modo de diagnóstico), oca_ds e log;
+  - leitura do Excel sem Excel instalado.
+
+### C.4 Log e ambiente
+
+O log grava as seguintes informações:
+- Revit: ano, atualização, build e família de build;
+- pyRevit: `versionmgr`, com o `sessioninfo` como alternativa no 6/7;
+- motor Python e versão (`platform.python_implementation`), Python 2 ou 3, e motor
+  persistente;
+- .NET (`Environment.Version` e `RuntimeInformation`), sistema operacional, documento,
+  caminho e workshared.
+
+Cada etapa registra início, fim e duração. Também entram no log:
+- operações de arquivo: `.tmp`, backup conferido, troca, `_FALHOU` e `_REJEITADO`;
+- recarga e conferência da tabela;
+- `Start`, `Commit` e `RollBack` das transações;
+- `ExternalEvent.Raise` e o seu resultado;
+- tracebacks.
+
+**Uma falha ao gravar o próprio log nunca interrompe o comando.**
+
+---
+
+## D. Regras de negócio auditadas
+
+| Regra | Onde | Resultado |
+|-------|------|-----------|
+| Célula vazia no Excel nunca apaga o modelo | `plan_to_model`, `save_run` (tabela 2: `if not new … continue`) | Ok. A tabela mostra "(mantém)". |
+| A Description é atualizada mesmo sem Descrição IN | `plan_to_model`, `save_run` | Ok. No cenário `noin`: Description 4, IN 0, sem erro. |
+| A IN é identificada **pelo GUID** `70307f6e-3b31-4049-bed4-62dfc3570fec` | `in_param` (`get_Parameter(Guid)`) | Ok. |
+| Parâmetro com o mesmo nome e outro GUID nunca é gravado | `in_param_clash` | Ok. Aviso no topo e no log ("Generic Models … ignorado"); nenhum valor gravado nele. |
+| Somente leitura e emprestado (workshared) | Tabela 1: o plano marca o bloqueio, e a linha fica desabilitada com o motivo. Tabela 2: `IsReadOnly` / `owned_by_other` na gravação. | Ok. Vão para **Bloqueados** no resumo. |
+| As marcações correspondem ao que pode ser gravado | Tabela 1: linhas bloqueadas não podem ser marcadas. Tabela 2: só grava o que mudou. | Ok. Limite: na tabela 2, somente leitura e workshared só são detectados **na gravação**, e a linha continua marcável. Fica no resumo como bloqueio; não é erro silencioso. |
+| A confirmação lista os campos | `_apply` | Ok: "Description N · Descrição IN N · Keynote N" e quantas linhas substituem valor. |
+| O relatório final separa os resultados | `save_run` | Concluído / Ignorados / Bloqueados / Erros. |
+| As tabelas atualizam sem duplicar | `reload` + reanálise | Ok. O simulador confere "duplicadas: 0" em todos os modos. |
+| Nada é gravado sem confirmação | `_apply` (MessageBox Sim/Não) | Ok. "Não" → `sets: 0`. |
+
+**Atenção, decisão do usuário:** o TXT é gravado e recarregado quando você marca a opção
+de TXT na primeira aba e clica em Executar, **sem** uma segunda pergunta. Foi um pedido
+anterior seu ("sempre substituir … não precisa aparecer esse aviso"). A recarga é uma
+transação no projeto e pode ser desfeita com Ctrl+Z. Se quiser uma confirmação também
+para o TXT, é uma mudança pequena.
+
+### D.1 Parâmetros adicionais do projeto (avaliado, **não implementado**)
+
+Gravar outros parâmetros vindos do Excel é viável com o mesmo mecanismo:
+- identificação por GUID;
+- a mesma confirmação;
+- conferência depois de gravar.
+
+Os riscos:
+- parâmetros de projeto sem GUID: dá para identificar pelo nome, mas é ambíguo;
+- tipos de dado diferentes de texto: número, unidade, sim/não;
+- parâmetros de instância: muito mais elementos, e mais emprestados em workshared.
+
+Recomendação: só com uma lista fechada de GUIDs aprovada pelo escritório.
+
+---
+
+## E. Transações e recuperação
+
+O fluxo é este: validação → prévia (tabelas) → confirmação → transação → conferência →
+relatório.
+
+| Passo | Atômico? | Se falhar |
+|-------|----------|-----------|
+| Grava o TXT | Sim, por troca conferida | O TXT original fica (C.2). |
+| Recarga do TXT (transação "Carregar TXT de Keynotes") | Sim, uma transação | `RollBack` + TXT anterior restaurado (C.2). |
+| Tabela 1 (transação "Atualizar descrições por Keynote") | Sim, uma transação | Tudo desfeito; vai para **Erros**. |
+| Tabela 2 (transação "Completar Keynote / Descrição dos tipos") | Sim, uma transação | Tudo desfeito; vai para **Erros**. |
+
+**O TXT e o modelo não formam uma operação atômica.** O arquivo fica fora do Revit, e
+não há como prendê-lo à mesma transação.
+
+Cada passo é conferido antes do próximo:
+- a recarga só acontece com o TXT conferido;
+- as gravações no modelo só acontecem depois da sua confirmação, e são relidas depois do
+  `Commit`.
+
+Se um passo falhar, o comando faz o seguinte:
+- não continua com base nele;
+- desfaz o que pode (transação e TXT restaurado);
+- diz no resumo e no log o que ficou como estava.
+
+Cada transação aparece separada no Ctrl+Z do Revit.
+
+---
+
+## F. Compatibilidade
+
+### F.1 O que o script usa
+
+| Recurso | Revit 2024 (.NET 4.8) | 2025 (.NET 8) | 2026 (.NET 8) | Observação |
+|---------|------|------|------|-----------|
+| `FileStream` + `ZipArchive` (`System.IO.Compression`) | ok | ok | ok | O mesmo assembly nos dois .NET. |
+| `File.WriteAllBytes/ReadAllBytes/Copy/Move`, `Directory.CreateDirectory` | ok | ok | ok | — |
+| `System.Array[System.Byte](lista)` | ok | ok | ok | Conversão do IronPython. |
+| `KeynoteTable.LoadFrom`, `KeyBasedTreeEntriesLoadResults` | ok | ok | ok | — |
+| `Transaction` + `IFailuresPreprocessor` | ok | ok | ok | — |
+| `ExternalEvent` / `IExternalEventHandler` | ok | ok | ok | Executor único (sem `Idling`). |
+| `VisibleInViewFilter`, `SetElementIds`, `ShowElements` | ok | ok | ok | — |
+| `ElementId.Value` | ok | ok | ok | `IntegerValue` só como alternativa. |
+| WPF DataGrid (rolagem interna, virtualização) | ok | **testar** | **testar** | Diferenças do .NET 8 só aparecem no Revit. |
+
+### F.2 pyRevit × motor
+
+| pyRevit | Motor padrão | Situação do script | Observações das notas de versão |
+|---------|--------------|--------------------|---------------------------------|
+| 5.2.0.25181 | IronPython 2.7.12 | Alvo principal | — |
+| 6.4.0.26100 | IronPython 2.7.12 (3.4.2 opcional) | Compatível pelo código; não executado | Há relatos de recursos do pyRevit falhando com IronPython 3.4.2 como motor principal (issue #3087). |
+| 6.5.5.26237 | IronPython 2.7.12 | Compatível pelo código; não executado | O 6.5 cria um motor novo para cada script de inicialização. |
+| 7.0.0.26278 | IronPython 2.7.12 ou 3.4.2 | Compatível pelo código; não executado | Mudanças que afetam este comando: um único motor para preload, startup e postload; saída em WebView2; `to_net_list` removido (não é usado aqui); Revit < 2021 não é mais suportado. |
+| Qualquer versão, com **CPython** | — | **Não suportado** | O comando herda classes .NET (`IExternalEventHandler`, `IFailuresPreprocessor`, `WPFWindow`), e isso exige IronPython. O script não tem `#! python3`, então roda no IronPython. |
+
+**A compatibilidade com um ano do Revit não garante a das atualizações dele.** O log
+grava o build exato. Teste em cada combinação que a equipe usa (seção H).
+
+---
+
+## G. `startup.py` da extensão (não alterado)
+
+Riscos:
+- `__revit__.ThemeChanged += ao_mudar_tema` **nunca é removido**. Depois de recarregar o
+  pyRevit, o handler antigo continua inscrito. No pyRevit 7, com o motor compartilhado,
+  também ficam as variáveis globais `DEBUG_TXT` e `cores_paineis`.
+- `UIThemeManager` e `ThemeChanged` só existem no Revit 2024 em diante. Para 2024–2026,
+  tudo bem.
+
+Recomendações:
+- proteger com `try/except` dentro de `ao_mudar_tema`;
+- guardar o handler num atributo único, por exemplo em `AppDomain.CurrentDomain.SetData`,
+  para remover o anterior antes de inscrever o novo;
+- usar nomes com prefixo (`_oca_…`).
+
+Se quiser, faço isso num commit separado.
+
+---
+
+## H. Testes
+
+### H.1 Executados aqui (simulador + testes automatizados), todos aprovados
+
+**Regressão** (`regress.sh`): 21 cenários, sem traceback inesperado.
+
+| Cenário | O que confere |
+|---------|---------------|
+| `full` | Fluxo completo. Agrupamentos, busca, filtros por coluna (sozinhos, combinados e sem resultado) e Limpar. Seleção visível e **não visível** (pré-seleção mantida). Dashboard. Gravação recusada (`sets 0`) e confirmada: 11 gravados e conferidos. Finalizar. |
+| `noin` | Modelo sem Descrição IN: Description grava, IN = "Não aplicável". |
+| `typeonly` | Keynote digitada na tabela 2 e gravada sem "Verificar". |
+| `back` | Voltar e reabrir. |
+| `txfail1` / `txfail2` | O Revit desfaz a transação da tabela 1 ou da 2. Aparece em **Erros**, e a outra tabela grava. |
+| `refuse` | `Set()` recusado na Description: 4 erros listados. |
+| `deny` | `ExternalEvent` negado: nada gravado, aviso na janela. |
+| `uiexc` | Exceção da interface tratada. O único traceback é proposital, registrado no log. |
+| `diag_A` … `diag_I`, `diag_L` | Todos os modos de diagnóstico. |
+| `realds_repo` / `realds_old` | Com a `oca_ds` real do repositório e com a cópia antiga (sem `min_width`). |
+
+**Extras do TXT:**
+- `--syntaxerr` / `--txfail=Carregar`: recarga desfeita, TXT anterior restaurado,
+  recusado em `_REJEITADO`.
+- Excel com "≥": TXT não gravado, lista exibida, nada criado em `Obsoletos`.
+
+**`test_txt.py`: 40 de 40.** Cobre:
+- acentos, ç, € e aspas tipográficas, iguais ao codec cp1252;
+- ida e volta;
+- 8 caracteres não representáveis e 5 controles bloqueados, sem "?";
+- relatório com código, keynote, origem e sugestão;
+- BOM, LF, linha vazia, tabulação a mais, contagem de linhas e byte indefinido detectados;
+- 1ª gravação sem backup;
+- backup conferido;
+- nome `_2` no mesmo segundo, com o backup anterior intacto;
+- falhas: cópia, cópia corrompida (`_FALHOU`), criar pasta, `.tmp` e pasta inexistente,
+  com o original sempre mantido;
+- arquivo grande: 20.000 linhas, 1,2 MB;
+- TXT do escritório idêntico byte a byte.
+
+**Análise estática:**
+- compila no Python 3;
+- a gramática do Python 2 aceita o arquivo;
+- nenhum recurso exclusivo do Python 2 ou do 3 (`iteritems`, `has_key`, f-strings,
+  `nonlocal` etc.).
+
+Limites desses testes:
+- O simulador **imita** a API; não é o Revit.
+- O WPF não é renderizado, então nada visual foi testado.
+- O IronPython não foi executado. O desempenho com 20.000 linhas foi medido no CPython
+  (0,4 s); no IronPython deve ser algumas vezes mais lento.
+
+### H.2 Dependem do Revit real (pendentes)
+
+Use **cópias** dos modelos. A ordem sugerida em cada combinação de pyRevit e Revit
+(2024 / 2025 / 2026 e as atualizações usadas):
+
+1. **Shift+Clique → I** (1 minuto): grava, confere e desfaz a Description. Diz se o Revit
+   aceita a gravação.
+2. **Execução normal com a planilha ABERTA no Excel**: o comando deve ler sem erro.
+3. **TXT**:
+   - confira os bytes do arquivo gerado (Bloco de Notas → Salvar como → "ANSI") e a pasta
+     `Obsoletos`;
+   - coloque "≥" numa descrição e confira se o TXT não é gravado e se a lista aparece;
+   - deixe o TXT somente leitura e confira se aparece um erro claro e o original continua.
+4. **Interface**:
+   - role tabelas longas e confira se o cabeçalho fica fixo e a roda do mouse não briga
+     entre a tabela e a página;
+   - teste os filtros e Limpar;
+   - redimensione colunas e recolha seções.
+5. **Seleção**:
+   - linha com elemento visível: seleciona e enquadra;
+   - linha com elemento oculto: a pré-seleção continua (confira no Revit);
+   - com outro projeto ativo: aviso, sem selecionar.
+6. **Gravação**:
+   - marque linhas → "Não" (nada muda) → "Sim" (resumo com os 4 grupos);
+   - confira nas Propriedades do tipo;
+   - Ctrl+Z.
+7. **Workshared**: um tipo emprestado por outro usuário deve aparecer em **Bloqueados**.
+8. **Modelo sem Descrição IN e com IN de outro GUID**.
+9. **Shift+Clique → H**: se a versão normal fecha o Revit e a H não, a causa é a linha de
+   título do DataGrid.
+
+Anote em cada teste: a versão (do log), o teste, o resultado e, se o Revit fechar, a
+última linha do log.
+
+### H.3 Se o Revit fechar
+
+1. **Não abra o Revit de novo antes de copiar os arquivos.**
+2. Copie o log do dia (seção I).
+3. Copie o `journal.XXXX.txt` mais recente de
+   `%LOCALAPPDATA%\Autodesk\Revit\Autodesk Revit 20XX\Journals`, mais algum `.dmp`, se
+   houver.
+4. No journal, procure perto do fim por `ExternalEvent`, `API_ERROR`, `fatal error` e
+   `unrecoverable`.
+
+---
+
+## I. Instalação, teste seguro e logs
+
+**Como substituir o script:**
+1. Feche a janela do comando no Revit.
+2. Substitua `script.py`, `keynotes.html` e este LEIA-ME em
+   `…\OCA01.extension\OCA.tab\Keynote.panel\02_Atualização Descrição por Keynotes.pushbutton\`.
+3. Apague a pasta antiga `ESCRITORIO.extension\…\02_Atualização Descrição por
+   Keynotes.pushbutton` se ela ainda existir **e** estiver registrada no pyRevit. Duas
+   cópias do botão causam exatamente o problema do item 1.
+4. pyRevit → **Reload**.
+5. Abra o comando e confira **"versão 2026.10.20"** no subtítulo.
+
+**Como testar com segurança:**
+- use uma cópia do .rvt;
+- use uma cópia do TXT, ou confira a pasta `Obsoletos`;
+- comece pelo diagnóstico **I** (não altera o modelo);
+- só depois grave poucas linhas.
+
+**Logs:**
+- arquivo: `%LOCALAPPDATA%\OCA\pyRevit\logs\Keynotes\keynotes_AAAAMMDD.log`;
+- atalho: Shift+Clique → "Abrir a pasta dos logs".
+
+Cada linha tem hora com milissegundos, o identificador da execução e o nível (INFO, STEP,
+WARN ou ERROR). As linhas `>>` e `<<` marcam o início e o fim de cada etapa.
