@@ -1153,24 +1153,38 @@ def _family_label(sym):
     return u"{} : {}".format(to_unicode(sym.FamilyName), _type_name(sym))
 
 
+# só famílias de marcador de elevação INTERNA: "INT" como parte do nome da
+# família, separado por _ - . ou espaço (OCA_SIMB_ELEVAÇÃO_INT). O nome do tipo
+# de vista (ex.: "EL. INTERNA") não conta.
+ELEV_FAMILY_TOKEN = re.compile(u"(?:^|[_\\s\\-.])INT(?:$|[_\\s\\-.])", re.IGNORECASE | re.UNICODE)
+
+
+def is_int_family(sym):
+    """Família do marcador com "INT" no nome (OCA_SIMB_ELEVAÇÃO_INT)."""
+    try:
+        return bool(ELEV_FAMILY_TOKEN.search(to_unicode(sym.FamilyName)))
+    except Exception:
+        return False
+
+
 def elev_type_items():
-    """Combo 'Tipo de elevação': as famílias de marcador carregadas no modelo.
-    Família já usada por um tipo de elevação -> esse tipo; família carregada
-    sem tipo -> um tipo novo é criado ao aplicar (ensure_elev_type)."""
+    """Combo 'Tipo de elevação': as famílias de marcador INTERNAS (com "INT" no
+    nome da família, ver is_int_family) carregadas no modelo. Família já usada
+    por um tipo de elevação -> esse tipo; família carregada sem tipo -> um tipo
+    novo é criado ao aplicar (ensure_elev_type). Tipo de elevação com marcador
+    não identificado fica fora: não dá para saber se a família é INT."""
     items, used = [], set()
     for vft in ELEV_TYPES:
         sym = _tag_link(vft)[3]
         if sym is not None:
             used.add(eid_int(sym.Id))
-            items.append({"label": u"{}   (tipo: {})".format(_family_label(sym), _vft_name(vft)),
-                          "id": vft.Id, "family": _family_label(sym), "symbol": None})
-        else:
-            items.append({"label": u"{}   (marcador não identificado)".format(_vft_name(vft)),
-                          "id": vft.Id, "family": u"", "symbol": None})
+            if is_int_family(sym):
+                items.append({"label": u"{}   (tipo: {})".format(_family_label(sym), _vft_name(vft)),
+                              "id": vft.Id, "family": _family_label(sym), "symbol": None})
     if any(_tag_link(v)[2] is not None for v in ELEV_TYPES):   # há tipo para duplicar
         for sym in (DB.FilteredElementCollector(doc).OfClass(DB.FamilySymbol)
                     .OfCategory(DB.BuiltInCategory.OST_ElevationMarks)):
-            if _is_elev_mark(sym) and eid_int(sym.Id) not in used:
+            if _is_elev_mark(sym) and eid_int(sym.Id) not in used and is_int_family(sym):
                 items.append({"label": u"{}   (novo tipo de elevação)".format(_family_label(sym)),
                               "id": None, "family": _family_label(sym), "symbol": sym.Id})
     return sorted(items, key=lambda i: natural_key(i["label"]))
@@ -2044,7 +2058,9 @@ class CropWindow(forms.WPFWindow):
                         if u"OCA_SIMB_ELEVA" in it["family"].upper()), 0)
             self.etype.SelectedIndex = labels.index(saved) if saved in labels else oca
         else:
-            self.elev_reason.Text = (u"Nenhum tipo de vista de Elevação no modelo: crie um em "
+            self.elev_reason.Text = (u"Nenhuma família de marcador de elevação interna (com 'INT' no "
+                                     u"nome, ex.: OCA_SIMB_ELEVAÇÃO_INT) carregada no modelo, ou nenhum "
+                                     u"tipo de vista de Elevação: carregue a família ou crie o tipo em "
                                      u"Vista > Elevação > Editar tipo.")
         for key, box in self._dir_boxes.items():
             box.IsChecked = key in self._saved["elev_dirs"]
@@ -2400,7 +2416,7 @@ reasons = check_modes(plan_items, callout_items, plan_level)
 elev_items = elev_type_items()
 if len(reasons) == len(MODES) and not elev_items:
     forms.alert(u"Nenhuma ação disponível para os ambientes do modelo.",
-                sub_msg=u"\n".join(reasons.values()) + u"\nNenhum tipo de vista de Elevação no modelo.",
+                sub_msg=u"\n".join(reasons.values()) + u"\nNenhuma família de marcador de elevação interna (com 'INT' no nome) no modelo.",
                 title=ALERT_TITLE, exitscript=True)
 
 folders = ProjectFolders()
