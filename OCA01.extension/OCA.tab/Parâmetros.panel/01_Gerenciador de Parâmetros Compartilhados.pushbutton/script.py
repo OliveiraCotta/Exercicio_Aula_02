@@ -41,6 +41,7 @@ __doc__ = (u"Vincula ao projeto, em lote, parâmetros de um arquivo TXT de parâ
            u"categorias; revise e aplique. O TXT não é alterado e nada é excluído do projeto.")
 
 import os
+import re
 from collections import OrderedDict
 
 import clr
@@ -87,6 +88,19 @@ def fold(text):
     except Exception:
         pass
     return text
+
+
+def natural_key(text):
+    """'Piso 2' antes de 'Piso 10', sem diferença de acento ou maiúscula."""
+    return [(0, int(t), u"") if t.isdigit() else (1, 0, t)
+            for t in re.split(u"(\\d+)", fold(text)) if t]
+
+
+def file_order(spf):
+    """Parâmetros por grupo (ordem do arquivo) e nome. O Revit grava as linhas
+    PARAM fora de ordem; a ordem da tabela não altera nada no arquivo."""
+    rank = dict((gid, i) for i, gid in enumerate(spf.group_order))
+    return sorted(spf.params, key=lambda p: (rank.get(p.group_id, len(rank)), natural_key(p.name)))
 
 
 def like_escape(text):
@@ -713,7 +727,7 @@ class ParamManagerWindow(forms.WPFWindow):
         try:
             self.t_params.Rows.Clear()
             groups, types = [], set()
-            for p in self.spf.params:
+            for p in file_order(self.spf):
                 info = self._def_info(p)
                 usable = bool(info.get("usable"))
                 datatype = info.get("datatype") or p.datatype_label
