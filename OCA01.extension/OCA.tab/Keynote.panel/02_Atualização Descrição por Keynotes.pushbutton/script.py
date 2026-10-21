@@ -36,8 +36,9 @@
 #   enquadra na vista ativa (sem transação, a janela continua aberta).
 #
 # Ao executar a 1ª aba, o TXT de Keynote é gerado do Excel e recarregado no
-# projeto em ANSI / Windows-1252 sem BOM (caractere fora do Windows-1252 é
-# listado e o TXT NÃO é gravado). O anterior vai para <pasta>\Obsoletos\
+# projeto em UTF-16 LE com BOM (FF FE), o "Unicode" do Bloco de Notas; caractere
+# não representável (controle, par quebrado) é listado e o TXT NÃO é gravado.
+# O anterior vai para <pasta>\Obsoletos\
 # <nome>_AAAAMMDD_HHMMSS.txt, conferido antes da troca; backups nunca são
 # apagados nem sobrescritos. Se o Revit recusar o TXT novo, a recarga é desfeita
 # e o anterior volta ao lugar (o recusado fica em Obsoletos\..._REJEITADO.txt).
@@ -135,7 +136,7 @@ NOT_APPLICABLE = u"Não aplicável"   # Descrição IN inexistente no tipo (≠ 
 MATERIALS_LABEL = u"Materiais"     # categoria usada no relatório p/ materiais
 
 TOOL_TITLE = u"ATUALIZAÇÃO DAS DESCRIÇÕES DO MODELO POR KEYNOTE"
-SCRIPT_VERSION = u"2026.10.20b"     # aparece na janela e no log: confira se é a cópia nova
+SCRIPT_VERSION = u"2026.10.21"     # aparece na janela e no log: confira se é a cópia nova
 # fluxo único: Excel -> Modelo (o Excel é só lido)
 MODES = OrderedDict([("to_model", u"Excel → Modelo")])
 MODE_DIRS = {"to_model": ("model",)}
@@ -2808,55 +2809,121 @@ def build_keynote_txt():
     return u"\r\n".join(lines) + u"\r\n", warns
 
 
-# ---- Windows-1252 (ANSI) sem depender do codec do motor Python ----
-# 0x00-0x7F e 0xA0-0xFF são iguais ao Unicode; 0x80-0x9F têm 27 caracteres
-# próprios (€ “ ” – — … etc.). Os 5 códigos indefinidos (81, 8D, 8F, 90, 9D)
-# e qualquer outro caractere NÃO são representáveis: nada vira "?".
-_CP1252_HIGH = {0x20AC: 0x80, 0x201A: 0x82, 0x0192: 0x83, 0x201E: 0x84, 0x2026: 0x85,
-                0x2020: 0x86, 0x2021: 0x87, 0x02C6: 0x88, 0x2030: 0x89, 0x0160: 0x8A,
-                0x2039: 0x8B, 0x0152: 0x8C, 0x017D: 0x8E, 0x2018: 0x91, 0x2019: 0x92,
-                0x201C: 0x93, 0x201D: 0x94, 0x2022: 0x95, 0x2013: 0x96, 0x2014: 0x97,
-                0x02DC: 0x98, 0x2122: 0x99, 0x0161: 0x9A, 0x203A: 0x9B, 0x0153: 0x9C,
-                0x017E: 0x9E, 0x0178: 0x9F}
-_CP1252_BACK = dict((v, k) for k, v in _CP1252_HIGH.items())
-# sugestões para os casos mais comuns em descrições técnicas
-_CP1252_HINT = {0x2265: u">=", 0x2264: u"<=", 0x2248: u"~", 0x2260: u"<>", 0x03BC: u"µ",
-                0x2212: u"-", 0x00A0: u" ", 0x2032: u"'", 0x2033: u'"', 0x2715: u"x",
-                0x2716: u"x", 0x2192: u"->", 0x2190: u"<-", 0x221E: u"infinito",
-                0x2205: u"Ø", 0x2300: u"Ø", 0x03A9: u"Ohm", 0x2126: u"Ohm"}
+# ---- TXT de Keynote em UTF-16 LE COM BOM (FF FE) ----
+# É o "Unicode" do Bloco de Notas, que a Autodesk indica para keynotes com
+# caracteres fora do ANSI (Revit lê ANSI ou UTF-16 LE com BOM). Os bytes são
+# montados aqui, sem depender do codec do motor Python nem de um
+# StreamWriter / Encoding do .NET: o que vai para o disco é exatamente isto.
+# Não representáveis: só caracteres de controle (exceto TAB/CR/LF, que são
+# separadores), metades soltas de pares substitutos e U+FEFF/U+FFFE/U+FFFF.
+TXT_BOM = [0xFF, 0xFE]
+TXT_ENCODING_LABEL = u"UTF-16 LE, com BOM"
+_TXT_HINT = {0xFEFF: u"remova (caractere invisível)", 0x00A0: u" "}
 
 
-def cp1252_encode(text):
-    """-> (lista de bytes, [(índice, caractere)] não representáveis)."""
-    out, bad = [], []
-    for i, ch in enumerate(text):
+def _txt_char_ok(o):
+    if o in (9, 10, 13):
+        return True
+    if o < 0x20 or o == 0x7F or 0x80 <= o <= 0x9F:      # controles C0 / C1
+        return False
+    return o not in (0xFEFF, 0xFFFE, 0xFFFF)
+
+
+def txt_encode(text):
+    """-> (lista de bytes: BOM FF FE + UTF-16 LE, [(índice, caractere)] não
+    representáveis). Pares substitutos válidos (emoji etc.) passam."""
+    units, bad = [], []
+    n, i = len(text), 0
+    while i < n:
+        ch = text[i]
         o = ord(ch)
-        if o in (9, 10, 13) or 0x20 <= o < 0x7F or 0xA0 <= o <= 0xFF:
-            out.append(o)
-        elif o == 0x7F or o < 0x20:
-            bad.append((i, ch))           # caractere de controle (ex.: vindo do Excel)
-        elif o in _CP1252_HIGH:
-            out.append(_CP1252_HIGH[o])
+        if 0xD800 <= o <= 0xDBFF:             # 1ª metade de um par (IronPython)
+            if i + 1 < n and 0xDC00 <= ord(text[i + 1]) <= 0xDFFF:
+                units.extend((o, ord(text[i + 1])))
+                i += 2
+                continue
+            bad.append((i, ch))
+        elif 0xDC00 <= o <= 0xDFFF:           # 2ª metade solta
+            bad.append((i, ch))
+        elif o > 0xFFFF:                      # CPython: vira par substituto
+            v = o - 0x10000
+            units.extend((0xD800 + (v >> 10), 0xDC00 + (v & 0x3FF)))
+        elif _txt_char_ok(o):
+            units.append(o)
         else:
             bad.append((i, ch))
+        i += 1
+    out = list(TXT_BOM)
+    for u in units:
+        out.append(u & 0xFF)
+        out.append(u >> 8)
     return out, bad
 
 
-def cp1252_decode(data):
-    return u"".join(unichr(_CP1252_BACK.get(b, b)) for b in data)
+def _utf16le_units(data, start):
+    return [data[k] | (data[k + 1] << 8) for k in range(start, len(data) - 1, 2)]
 
 
-def non_cp1252_report(entries):
-    """Caracteres que impedem gravar o TXT em Windows-1252.
+def txt_decode(data):
+    """Bytes UTF-16 LE (com ou sem BOM) -> texto."""
+    start = 2 if data[:2] == TXT_BOM else 0
+    units = _utf16le_units(data, start)
+    if PY2:                       # IronPython 2: o texto já é UTF-16 por dentro
+        return u"".join(unichr(u) for u in units)
+    out, k = [], 0
+    while k < len(units):
+        u = units[k]
+        if 0xD800 <= u <= 0xDBFF and k + 1 < len(units) and 0xDC00 <= units[k + 1] <= 0xDFFF:
+            out.append(unichr(0x10000 + ((u - 0xD800) << 10) + (units[k + 1] - 0xDC00)))
+            k += 2
+            continue
+        out.append(unichr(u))
+        k += 1
+    return u"".join(out)
+
+
+def detect_txt_encoding(data):
+    """Codificação de um TXT existente, pelos bytes (só para log e mensagens:
+    o backup é cópia byte a byte, nunca convertido)."""
+    if data[:2] == [0xFF, 0xFE]:
+        return u"UTF-16 LE, com BOM"
+    if data[:2] == [0xFE, 0xFF]:
+        return u"UTF-16 BE, com BOM"
+    if data[:3] == [0xEF, 0xBB, 0xBF]:
+        return u"UTF-8, com BOM"
+    if not data:
+        return u"vazio"
+    sample = data[:4000]
+    odd0 = len([b for b in sample[1::2] if b == 0])
+    even0 = len([b for b in sample[0::2] if b == 0])
+    half = max(1, len(sample) // 2)
+    if odd0 > half * 0.3 and even0 == 0:
+        return u"UTF-16 LE, sem BOM"
+    if even0 > half * 0.3 and odd0 == 0:
+        return u"UTF-16 BE, sem BOM"
+    if not [b for b in data if b >= 0x80]:
+        return u"ASCII (compatível com ANSI)"
+    try:
+        bytearray(data).decode("utf-8")
+        return u"UTF-8, sem BOM"
+    except Exception:
+        return u"ANSI (Windows-1252)"
+
+
+def txt_char_report(entries):
+    """Caracteres que não podem ir para o TXT (controles, pares quebrados).
     -> [{"char", "code", "key", "origin", "hint"}]"""
     found = []
     for k, t, p, origin in [(e + (u"",))[:4] for e in entries]:
         for field in (k, t, p):
-            _b, bad = cp1252_encode(_no_tab(field))
+            _b, bad = txt_encode(_no_tab(field))
             for _i, ch in bad:
-                found.append({"char": ch, "code": u"U+{:04X}".format(ord(ch)), "key": _txt_field(k),
-                              "origin": origin,
-                              "hint": _CP1252_HINT.get(ord(ch), u"")})
+                o = ord(ch)
+                hint = _TXT_HINT.get(o) or (
+                    u"caractere corrompido - redigite a célula" if 0xD800 <= o <= 0xDFFF
+                    else u"remova (caractere de controle)")
+                found.append({"char": ch if o >= 0x20 else u" ", "code": u"U+{:04X}".format(o),
+                              "key": _txt_field(k), "origin": origin, "hint": hint})
     return found
 
 
@@ -2864,17 +2931,31 @@ def _bytes_of(path):
     return [int(b) for b in File.ReadAllBytes(path)]
 
 
-def validate_txt_bytes(data, expected_lines):
-    """Confere o arquivo gravado: Windows-1252 sem BOM, quebra de linha CRLF,
-    3 campos por linha (chave, texto, pai) e a quantidade de entradas.
+def validate_txt_bytes(data, expected_lines, expected_text=None):
+    """Confere o arquivo: BOM FF FE (UTF-16 LE), tamanho par, sem metade de
+    par substituto solta, sem NUL, quebras CRLF, 3 campos por linha (chave,
+    texto, pai), nenhuma linha vazia e a quantidade de entradas. Com
+    expected_text: o texto decodificado tem de ser IGUAL ao gerado.
     -> lista de problemas (vazia = ok)."""
     probs = []
-    if data[:3] == [0xEF, 0xBB, 0xBF] or data[:2] in ([0xFF, 0xFE], [0xFE, 0xFF]):
-        probs.append(u"o arquivo começa com BOM (deveria ser ANSI puro)")
-    for b in (0x81, 0x8D, 0x8F, 0x90, 0x9D):
-        if b in data:
-            probs.append(u"byte 0x{:02X} não existe no Windows-1252".format(b))
-    text = cp1252_decode(data)
+    if data[:2] != TXT_BOM:
+        probs.append(u"o arquivo não começa com o BOM do UTF-16 LE (FF FE): {}".format(
+            detect_txt_encoding(data)))
+        return probs
+    if len(data) % 2:
+        probs.append(u"tamanho ímpar ({} bytes): UTF-16 incompleto".format(len(data)))
+    units = _utf16le_units(data, 2)
+    for k, u in enumerate(units):
+        prev_hi = k > 0 and 0xD800 <= units[k - 1] <= 0xDBFF
+        next_lo = k + 1 < len(units) and 0xDC00 <= units[k + 1] <= 0xDFFF
+        if (0xD800 <= u <= 0xDBFF and not next_lo) or (0xDC00 <= u <= 0xDFFF and not prev_hi):
+            probs.append(u"posição {}: metade de par substituto solta".format(k))
+            break
+    if 0 in units:
+        probs.append(u"há caractere NUL (U+0000) no texto")
+    text = txt_decode(data)
+    if expected_text is not None and text != expected_text:
+        probs.append(u"o texto lido do arquivo não é igual ao gerado")
     if u"\r\n" not in text and text:
         probs.append(u"quebras de linha não são CRLF")
     body = text.replace(u"\r\n", u"\n")
@@ -2925,17 +3006,21 @@ def _io_message(ex):
 
 
 def write_keynote_txt(path, text, expected_lines):
-    """Grava o TXT em ANSI / Windows-1252 SEM BOM, com segurança:
-      1. codifica (para se houver caractere fora do Windows-1252);
-      2. grava um .tmp na mesma pasta e confere os bytes e a estrutura;
+    """Grava o TXT em UTF-16 LE COM BOM (FF FE), com segurança:
+      1. codifica (para se houver caractere não representável);
+      2. grava um .tmp na mesma pasta e confere bytes, BOM, estrutura e que o
+         texto lido de volta é igual ao gerado;
       3. se o TXT já existe: copia para <pasta>\\Obsoletos\\<nome>_<data_hora>.txt
          e confere a cópia - se o backup falhar, o TXT original NÃO é trocado;
-      4. substitui o TXT e confere os bytes finais (se falhar, restaura o backup).
-    -> (backup, codificação). Exceções com mensagem clara."""
+      4. substitui o TXT e confere os bytes finais e a codificação detectada
+         (se falhar, restaura o backup).
+    O backup é cópia byte a byte: um TXT antigo em ANSI continua ANSI.
+    -> (backup, codificação gravada, codificação do anterior). Exceções com
+    mensagem clara."""
     import System
-    data, bad = cp1252_encode(text)
+    data, bad = txt_encode(text)
     if bad:
-        raise ValueError(u"{} caractere(s) fora do Windows-1252 - o TXT não foi gravado".format(
+        raise ValueError(u"{} caractere(s) não representável(is) - o TXT não foi gravado".format(
             len(bad)))
     folder = os.path.dirname(path) or u"."
     if not System.IO.Directory.Exists(folder):
@@ -2949,15 +3034,16 @@ def write_keynote_txt(path, text, expected_lines):
     try:
         if _bytes_of(tmp) != data:
             raise IOError(u"conferência do arquivo temporário falhou (bytes diferentes)")
-        probs = validate_txt_bytes(data, expected_lines)
+        probs = validate_txt_bytes(data, expected_lines, text)
         if probs:
             raise IOError(u"estrutura inválida: " + u"; ".join(probs[:5]))
-        backup = u""
+        backup, previous = u"", u""
         if File.Exists(path):
             obs, backup = obsolete_backup_path(path)
             try:
                 System.IO.Directory.CreateDirectory(obs)
                 original = _bytes_of(path)
+                previous = detect_txt_encoding(original)
                 File.Copy(path, backup, False)          # nunca sobrescreve um backup
                 if _bytes_of(backup) != original:
                     raise IOError(u"a cópia de backup não confere com o original")
@@ -2972,13 +3058,15 @@ def write_keynote_txt(path, text, expected_lines):
                     LOG.exc(u"TXT: renomear backup que falhou")
                 raise IOError(u"backup em '{}' falhou - o TXT original NÃO foi substituído: "
                               u"{}".format(obs, _io_message(ex)))
-            LOG.info(u"TXT: backup conferido em {}".format(backup))
+            LOG.info(u"TXT: backup conferido em {} (anterior: {}, {} bytes, cópia sem "
+                     u"conversão)".format(backup, previous, len(original)))
         try:
             File.Copy(tmp, path, True)
         except Exception as ex:
             raise IOError(u"não foi possível substituir o TXT (o original continua): " +
                           _io_message(ex))
-        if _bytes_of(path) != data:
+        final = _bytes_of(path)
+        if final != data or detect_txt_encoding(final) != TXT_ENCODING_LABEL:
             if backup:
                 try:
                     File.Copy(backup, path, True)
@@ -2992,9 +3080,9 @@ def write_keynote_txt(path, text, expected_lines):
                 File.Delete(tmp)
         except Exception:
             LOG.exc(u"TXT: apagar temporário")
-    LOG.info(u"TXT: gravado e conferido {} ({} bytes, Windows-1252 sem BOM, {} linhas)".format(
-        path, len(data), expected_lines))
-    return backup, u"ANSI (Windows-1252)"
+    LOG.info(u"TXT: gravado e conferido {} ({} bytes, {}, {} linhas)".format(
+        path, len(data), TXT_ENCODING_LABEL, expected_lines))
+    return backup, TXT_ENCODING_LABEL, previous
 
 
 def _no_tab(text):
@@ -3044,6 +3132,17 @@ def load_keynote_txt(path, expected=None):
     contra as entradas geradas (chave, texto e pai). -> (ok, mensagem). ok=False
     se o Revit não confirmou a transação ou encontrou erro de sintaxe."""
     holder = {}
+    # só recarrega o que foi validado: o arquivo no disco tem de ser o UTF-16 LE
+    # com BOM recém-gravado (no diagnóstico C, sem 'expected', só registra)
+    try:
+        enc_disk = detect_txt_encoding(_bytes_of(path))
+    except Exception as ex:
+        LOG.exc(u"TXT: ler bytes antes da recarga")
+        return False, u"não foi possível ler o arquivo: {}".format(_io_message(ex))
+    LOG.info(u"TXT: codificação no disco antes da recarga: {}".format(enc_disk))
+    if expected is not None and enc_disk != TXT_ENCODING_LABEL:
+        return False, u"o arquivo no disco está em {} (esperado {}) - recarga cancelada".format(
+            enc_disk, TXT_ENCODING_LABEL)
 
     def body():
         mp = DB.ModelPathUtils.ConvertUserVisiblePathToModelPath(path)
@@ -3758,11 +3857,12 @@ def cleanup_old_colors():
 
 def make_keynote_txt(reload_txt=True):
     """Ao executar a 1ª aba: gera o TXT de Keynote a partir do Excel (mesma
-    estrutura de sempre), grava em ANSI / Windows-1252 e recarrega no projeto.
+    estrutura de sempre), grava em UTF-16 LE com BOM e recarrega no projeto.
     Arquivo existente: substituído sem perguntar, depois de copiado e conferido
-    em <pasta>\\Obsoletos. Caractere fora do Windows-1252: o TXT NÃO é gravado
-    e os caracteres são listados (nada vira "?"). -> mensagem para a janela.
-    Só diz "recarregado" depois que o Revit confirma."""
+    em <pasta>\\Obsoletos. Caractere não representável (controle, par
+    quebrado): o TXT NÃO é gravado e os caracteres são listados. Só diz
+    "gravado em UTF-16 LE, com BOM, e validado" depois de conferir os bytes do
+    arquivo, e "recarregado" depois que o Revit confirma. -> mensagem."""
     path = opts["txt_path"]
     LOG.begin(u"Geração do TXT", path)
     try:
@@ -3778,29 +3878,29 @@ def make_keynote_txt(reload_txt=True):
     LOG.end(u"Geração do TXT", u"{} entrada(s) · {} aviso(s)".format(n_entries, len(warns)))
     if n_entries == 0:
         return u"TXT de Keynote NÃO gerado: nenhuma entrada no Excel (o arquivo atual foi mantido)."
-    # Windows-1252: confere ANTES de tocar em qualquer arquivo
-    bad = non_cp1252_report(entries)
+    # caracteres: confere ANTES de tocar em qualquer arquivo
+    bad = txt_char_report(entries)
     if bad:
         for b in bad:
-            LOG.error(u"TXT: caractere fora do Windows-1252 {} '{}' na keynote {} ({})".format(
+            LOG.error(u"TXT: caractere não representável {} '{}' na keynote {} ({})".format(
                 b["code"], b["char"], b["key"], b["origin"]))
         lines = [u"• '{}' ({}) em {} - {}{}".format(
             b["char"], b["code"], b["key"] or u"(sem chave)", b["origin"],
-            u" · sugestão: troque por '{}'".format(b["hint"]) if b["hint"] else u"")
+            u" · {}".format(b["hint"]) if b["hint"] else u"")
             for b in bad[:15]]
         if len(bad) > 15:
             lines.append(u"• ... e mais {} (ver log)".format(len(bad) - 15))
-        forms.alert(u"O TXT de Keynote NÃO foi gravado: há caracteres que não existem no "
-                    u"Windows-1252 (ANSI).",
+        forms.alert(u"O TXT de Keynote NÃO foi gravado: há caracteres que não podem ir "
+                    u"para o arquivo (controles ou caracteres corrompidos).",
                     sub_msg=u"Corrija no Excel, salve e use Voltar > Executar. O TXT anterior "
                             u"continua como estava.\n\n" + u"\n".join(lines),
                     title=ALERT_TITLE)
-        return (u"TXT de Keynote NÃO gravado: {} caractere(s) fora do Windows-1252 no Excel "
-                u"(ex.: '{}' em {}). O TXT anterior continua carregado.".format(
-                    len(bad), bad[0]["char"], bad[0]["key"]))
+        return (u"TXT de Keynote NÃO gravado: {} caractere(s) não representável(is) no Excel "
+                u"(ex.: {} em {}). O TXT anterior continua carregado.".format(
+                    len(bad), bad[0]["code"], bad[0]["key"]))
     LOG.begin(u"Gravação do TXT")
     try:
-        backup, enc = write_keynote_txt(path, text, n_entries)
+        backup, enc, previous = write_keynote_txt(path, text, n_entries)
     except Exception as ex:
         LOG.exc(u"Gravação do TXT")
         forms.alert(u"O TXT de Keynote não foi gravado (o arquivo anterior foi mantido).",
@@ -3813,8 +3913,11 @@ def make_keynote_txt(reload_txt=True):
     else:
         ok, info = True, u"NÃO recarregado (modo de diagnóstico)"
         LOG.warn(u"TXT: recarga pulada (modo de diagnóstico)")
-    msg = u"TXT de Keynote gravado em {}{} e {}.{}".format(
-        enc, u" · anterior em {}\\{}".format(OBSOLETE_DIR, os.path.basename(backup))
+    # a frase da codificação só aparece porque write_keynote_txt conferiu os
+    # bytes gravados (BOM FF FE, texto igual ao gerado, estrutura)
+    msg = u"TXT de Keynotes gravado em {}, e validado com sucesso{} · {}.{}".format(
+        enc, u" · anterior ({}) em {}\\{}".format(previous, OBSOLETE_DIR,
+                                                  os.path.basename(backup))
         if backup else u"", info if ok else u"NÃO recarregado no projeto: " + info,
         u"  {} aviso(s): {}".format(len(warns), u"; ".join(warns[:3])) if warns else u"")
     if not ok:

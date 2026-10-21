@@ -1,4 +1,4 @@
-# Atualização das Descrições por Keynote — auditoria técnica (versão 2026.10.20b)
+# Atualização das Descrições por Keynote — auditoria técnica (versão 2026.10.21)
 
 > **Nada disto foi executado dentro do Revit.** Este ambiente é Linux, sem Revit, sem
 > pyRevit e sem IronPython. A validação foi feita com:
@@ -10,6 +10,49 @@
 > de integração foi aprovado no Revit.
 
 ---
+
+## 0b. TXT de Keynote em UTF-16 LE com BOM (revisão 2026.10.21)
+
+**A instrução de ANSI / Windows-1252 foi substituída: o TXT agora é gravado em UTF-16 LE
+com BOM (bytes iniciais `FF FE`).**
+
+### O que a investigação encontrou
+
+| Pergunta | Evidência | Resposta |
+|----------|-----------|----------|
+| O que o plugin gravava antes? | Histórico do git, `write_keynote_txt`, de `f6fb24f` (01/10) a `54c3a08` (20/10): `text.encode("cp1252")`; só se falhasse, `codecs.BOM_UTF16_LE + text.encode("utf-16-le")`. | **ANSI (cp1252) por padrão.** UTF-16 **LE com BOM** só quando havia um caractere fora do ANSI (o caso do print com "UTF-16"). Nunca gravou UTF-16 BE nem UTF-16 sem BOM. |
+| E o `codecs.open(..., "utf-16")` do código antigo? | Esse trecho gravava o **arquivo de parâmetros compartilhados** temporário, não o TXT de keynotes (foi removido em `75cf66d`). | Não tem relação com o TXT de keynotes. |
+| Em que codificação está o TXT de keynotes do escritório? | `OCA_XXX_Lista_de_Materiais_00.txt` (enviado em 01/10): 1.787 bytes, **sem BOM**, nenhum byte `00`, acentos em bytes únicos (`C1 C3 C7 C9 CD D3 D5`), inválido como UTF-8, 59 linhas CRLF. | **ANSI / Windows-1252, sem BOM.** |
+| Qual arquivo do escritório é UTF-16? | `OCA_Parametros_Template.txt` começa com `FF FE`. | É o arquivo de **parâmetros compartilhados** do Revit (UTF-16 LE com BOM), não o de keynotes. |
+| O que o Revit aceita para keynotes? | Ajuda do Revit 2024/2025/2027, "About Editing the Keynote File": ANSI, ou "Unicode" pelo Bloco de Notas (= UTF-16 LE com BOM). Artigo de suporte da Autodesk: para caracteres fora do ANSI, salvar como **UTF-16 LE**. | ANSI e UTF-16 LE com BOM. **UTF-16 BE e UTF-16 sem BOM não são citados pela Autodesk e não foram adotados.** |
+
+**Conclusão:** a premissa de que o escritório e o plugin usavam UTF-16 não se confirma
+nos arquivos disponíveis. Mesmo assim, UTF-16 LE com BOM é um formato **documentado pela
+Autodesk** para keynotes e aceita qualquer caractere (≥, Ω, →, CJK etc.). Por isso adotei
+esse formato, como pedido. A compatibilidade **não foi testada no Revit real** (ver H.2).
+Se algum Revit da equipe não ler o arquivo, o backup ANSI anterior está em `Obsoletos`.
+
+### O que mudou no código (`script.py`)
+
+| Trecho | Antes | Agora |
+|--------|-------|-------|
+| `cp1252_encode`, `cp1252_decode`, `_CP1252_*`, `non_cp1252_report` | Codificador ANSI estrito | **Removidos.** No lugar: `txt_encode` / `txt_decode` (UTF-16 LE com BOM, montados byte a byte, sem depender de `codecs`, `StreamWriter` ou `System.Text.Encoding`) e `txt_char_report`. |
+| `detect_txt_encoding` (novo) | — | Identifica, pelos bytes, um TXT existente: UTF-16 LE/BE com ou sem BOM, UTF-8 com ou sem BOM, ANSI ou ASCII. Usado no log, na mensagem e antes da recarga. |
+| `validate_txt_bytes` | ANSI sem BOM | Exige BOM `FF FE`, tamanho par, nenhum par substituto quebrado, nenhum NUL, CRLF, 2 TAB por linha, nenhuma linha vazia, a contagem de linhas e **texto lido de volta = texto gerado**. |
+| `write_keynote_txt` | Gravava cp1252 | Grava os bytes UTF-16 LE com BOM com `File.WriteAllBytes` (nenhuma API escolhe a codificação por nós). Confere o `.tmp`, faz o backup **byte a byte** (o anterior ANSI continua ANSI), troca e confere de novo os bytes **e** a codificação detectada no disco. Devolve `(backup, codificação gravada, codificação do anterior)`. |
+| `load_keynote_txt` | — | Antes de recarregar, lê os bytes do disco: se não for UTF-16 LE com BOM, **não recarrega**. |
+| `make_keynote_txt` | Bloqueava caracteres fora do ANSI | Bloqueia só o que não pode ir para o arquivo: controles (exceto TAB/CR/LF), metades soltas de par substituto, U+FEFF/U+FFFE/U+FFFF. A mensagem só é montada depois da validação. |
+| `restore_txt_after_failed_reload`, backups | — | Sem mudança: cópias byte a byte, nunca convertidas. |
+| Logs, HTML, Excel | UTF-8 / XML do Excel | **Sem mudança.** Só o TXT de keynotes é UTF-16. |
+
+**Mensagem na janela** (só aparece se os bytes gravados conferirem):
+
+`TXT de Keynotes gravado em UTF-16 LE, com BOM, e validado com sucesso · anterior (ANSI (Windows-1252)) em Obsoletos\<nome>_<data>.txt · recarregado no projeto e conferido (N de N entradas, iguais ao arquivo).`
+
+**Linhas vazias e quebras de linha.** O TXT é gerado do Excel, uma linha por keynote,
+como o do escritório (que não tem linhas vazias). Linhas vazias do Excel não viram linha
+no TXT. Uma quebra de linha **dentro** de uma célula (CRLF, LF ou CR) e TAB viram espaço,
+porque quebrariam o formato do Revit. Todas as linhas terminam em CRLF.
 
 ## 0a. pyRevit 6.x: a janela abre, mas os eventos não funcionam (revisão 2026.10.20b)
 
@@ -58,7 +101,7 @@ quando moveu o comando para `OCA01.extension/…`. **Por isso nenhuma correção
 "versão …".
 
 Esta versão está em `OCA01.extension/OCA.tab/Keynote.panel/02_Atualização Descrição por
-Keynotes.pushbutton/`. A janela de verificação mostra **"versão 2026.10.20b"** no subtítulo,
+Keynotes.pushbutton/`. A janela de verificação mostra **"versão 2026.10.21"** no subtítulo,
 e o log também. Se o texto não aparecer, o Revit está rodando outra cópia.
 
 ---
@@ -75,7 +118,7 @@ e o log também. Se o texto não aparecer, o Revit está rodando outra cópia.
 | 1 | O Revit roda o script antigo | Instalação / repositório | O zip e o `main` estão em `75cf66d`. As correções foram para `ESCRITORIO.extension`, apagada no `main`. O subtítulo não mostra versão. | Nenhuma correção nova chega ao Revit, e o comando "continua sem funcionar". | Todas | Código movido para `OCA01.extension` (merge `54c3a08`). A versão aparece na janela e no log. | Ver "versão 2026.10.20" no subtítulo. | **Confirmado** |
 | 2 | Excel aberto impede a leitura | `read_excel` (antes `ZipFile.OpenRead`) | `OpenRead` só permite que outros processos **leiam** o arquivo. Como o Excel o mantém aberto para gravação, a abertura falha ("being used by another process"). | O comando para na etapa 1. | Todas (.NET 4.8 e .NET 8) | `open_xlsx`: `FileStream` com `FileShare.ReadWrite \| Delete` e `ZipArchive` só leitura. Lê o que está **salvo**. Mensagens claras para arquivo inexistente, não-.xlsx, bloqueado ou corrompido. | Simulador ok. **Testar no Revit com a planilha aberta no Excel.** | Confirmado pelo código e pela documentação do .NET; não reproduzido no Windows |
 | 3 | `unicode` / `unichr` não existem em IronPython 3.4 / CPython | Topo do script, `to_unicode`, cp1252 | Nomes que só existem no Python 2. | Com o motor padrão do pyRevit trocado para IronPython 3.4, o comando falha **antes** de abrir qualquer janela (`NameError`). | pyRevit 5.2 a 7.0 com IronPython 3.4 selecionado | Equivalentes definidos no início; `to_unicode` trata `bytes`. | O script inteiro roda em CPython 3.11 no simulador. A gramática do Python 2 aceita o arquivo. | **Confirmado** |
-| 4 | TXT gravado em UTF-16 quando há caractere fora do Windows-1252 | `write_keynote_txt` (versão anterior) | Troca automática para UTF-16 com "≥" e símbolos parecidos. Já tinha acontecido: o print mostrava "UTF-16". | TXT fora do padrão ANSI do escritório. | Todas | O TXT **não é gravado**. O comando lista caractere, código, keynote, linha do Excel e sugestão (≥ → ">="). | 40 testes automáticos + simulador | **Confirmado** |
+| 4 | *(substituído na 2026.10.21 — ver 0b)* TXT gravado em UTF-16 quando há caractere fora do Windows-1252 | `write_keynote_txt` (versão anterior) | Troca automática para UTF-16 com "≥" e símbolos parecidos. Já tinha acontecido: o print mostrava "UTF-16". | TXT fora do padrão ANSI do escritório. | Todas | O TXT **não é gravado**. O comando lista caractere, código, keynote, linha do Excel e sugestão (≥ → ">="). | 40 testes automáticos + simulador | **Confirmado** |
 | 5 | Backups misturados na pasta do TXT | `backup_path` (removida) | Os backups ficavam ao lado do TXT, com nome parecido. | Pasta poluída e risco de carregar um backup por engano. | Todas | Pasta `Obsoletos` (seção C.2). O backup é conferido byte a byte **antes** de trocar o TXT. | Testes 24–34 | **Confirmado** |
 | 6 | Executor pelo evento `Idling` (introduzido em `20a44c1`) | Fila de ações | Um handler de `Idling` inscrito pelo script continua no Revit se o pyRevit recarregar com a janela aberta. Ele aponta para um motor descartado. | Possível encerramento nativo do Revit. | Todas; o risco é maior no pyRevit 7, que compartilha o motor | **Removido.** Só `ExternalEvent`. O resultado do `Raise` é registrado, e um pedido negado sai da fila. Um vigia de 8 s avisa na janela. | Regressão (cenário `deny`) | Hipótese de risco; removido por precaução |
 | 7 | Seleção percorria a vista inteira a cada clique | `show_in_view` | `FilteredElementCollector(doc, view.Id)` em toda seleção de linha. | Lentidão em vistas grandes; parece travamento. | Todas | `VisibleInViewFilter` aplicado **só** aos IDs da linha. | Simulador (visível e não visível) | **Confirmado** |
@@ -112,7 +155,7 @@ mostra onde o comando estava), e o journal do Revit (seção H.3).
 
 ## C. O que mudou no script (`script.py`, versão 2026.10.20)
 
-### C.1 TXT em ANSI / Windows-1252
+### C.1 TXT em ANSI / Windows-1252 — *substituído pela seção 0b (UTF-16 LE com BOM)*
 
 - O codificador próprio (`cp1252_encode` / `cp1252_decode`) não depende do codec do
   motor Python, então se comporta igual no IronPython 2.7, no IronPython 3.4 e no CPython.
@@ -359,9 +402,34 @@ Se quiser, faço isso num commit separado.
 **Extras do TXT:**
 - `--syntaxerr` / `--txfail=Carregar`: recarga desfeita, TXT anterior restaurado,
   recusado em `_REJEITADO`.
-- Excel com "≥": TXT não gravado, lista exibida, nada criado em `Obsoletos`.
+- Excel com "≥": gravado em UTF-16 LE com BOM, com "≥" no arquivo, e recarregado (2026.10.21).
+- TXT anterior em ANSI: backup idêntico ao original; o novo é UTF-16 LE com BOM e tem o mesmo texto.
 
-**`test_txt.py`: 40 de 40.** Cobre:
+**`tests/keynotes/test_txt16.py` (2026.10.21): 84 de 84.** Rodar na raiz do repositório:
+`python3 tests/keynotes/test_txt16.py`. Não precisa de Revit; usa `fake_dotnet.py` e o TXT
+real do escritório em `fixtures/`. Bytes comparados com o codec `utf-16-le` do
+CPython, que é independente do código testado:
+- acentos e cedilha (á ã é í ó ú ç, maiúsculas): bytes, ida e volta; `ç` = `FF FE E7 00`;
+- símbolos (€ “ ” – — … ™ ® © § ° ± × ÷ ² ³ µ ½ ‰ ≥ ≤ ≈ ≠ Ω → ∅ ✓), CJK e emoji (par
+  substituto `D83D DE00`);
+- 9 não representáveis bloqueados (NUL, BEL, C0, DEL, C1, U+FEFF, U+FFFE e metades soltas),
+  e o relatório com código, keynote, origem e dica;
+- quebras dentro da célula viram espaço; LF, CR solto, linha vazia, TAB a mais, contagem e
+  texto diferente detectados;
+- detecção de 8 codificações (UTF-16 LE/BE com e sem BOM, UTF-8 com e sem BOM, ANSI,
+  ASCII), e a validação recusa todas menos UTF-16 LE com BOM. Arquivo truncado (ímpar), NUL
+  e par quebrado no arquivo detectados;
+- TXT anterior em cada uma das 7 outras codificações: backup **idêntico byte a byte** e o
+  novo em UTF-16 LE com BOM;
+- falhas (cópia do backup, backup corrompido, criar pasta, `.tmp`, **arquivo bloqueado**,
+  pasta inexistente, **nome inválido no Windows**): erro claro e original intacto;
+- 1 linha e 20.000 linhas (com emoji): bytes iguais à referência;
+- TXT real do escritório: confirmado ANSI; convertido, ida e volta idêntica e estrutura ok.
+
+**`tests/keynotes/test_py2path.py`: 3 de 3.** Simula o IronPython (texto UTF-16 por dentro): par
+substituto vira os bytes certos, a leitura de volta é igual e a metade solta é bloqueada.
+
+**`test_txt.py` (ANSI, 2026.10.20): 40 de 40 — histórico, não vale mais.** Cobria:
 - acentos, ç, € e aspas tipográficas, iguais ao codec cp1252;
 - ida e volta;
 - 8 caracteres não representáveis e 5 controles bloqueados, sem "?";
@@ -396,9 +464,12 @@ Use **cópias** dos modelos. A ordem sugerida em cada combinação de pyRevit e 
    aceita a gravação.
 2. **Execução normal com a planilha ABERTA no Excel**: o comando deve ler sem erro.
 3. **TXT**:
-   - confira os bytes do arquivo gerado (Bloco de Notas → Salvar como → "ANSI") e a pasta
-     `Obsoletos`;
-   - coloque "≥" numa descrição e confira se o TXT não é gravado e se a lista aparece;
+   - abra o TXT no Bloco de Notas → Salvar como: a codificação deve aparecer como
+     **"UTF-16 LE"** (ou "Unicode"); confira a pasta `Obsoletos`;
+   - coloque "≥", "Ω" e "ç" numa descrição: devem aparecer certos nas tags de keynote e
+     em Anotar > Keynote > Configurações de Keynote > Exibir;
+   - teste em **cada** versão do Revit usada (2024, 2025, 2026): a leitura de UTF-16 LE
+     com BOM é documentada pela Autodesk, mas não foi testada aqui;
    - deixe o TXT somente leitura e confira se aparece um erro claro e o original continua.
 4. **Interface**:
    - role tabelas longas e confira se o cabeçalho fica fixo e a roda do mouse não briga
@@ -443,7 +514,7 @@ Anote em cada teste: a versão (do log), o teste, o resultado e, se o Revit fech
    Keynotes.pushbutton` se ela ainda existir **e** estiver registrada no pyRevit. Duas
    cópias do botão causam exatamente o problema do item 1.
 4. pyRevit → **Reload**.
-5. Abra o comando e confira **"versão 2026.10.20b"** no subtítulo. Espere 3 s: não pode
+5. Abra o comando e confira **"versão 2026.10.21"** no subtítulo. Espere 3 s: não pode
    aparecer nenhum "ATENÇÃO" na linha verde.
 
 **Como testar com segurança:**
