@@ -31,7 +31,7 @@
 #   7. Ordem: nível (de baixo para cima) e número do ambiente. As vistas
 #      criadas são abertas nessa ordem; a primeira fica ativa no final.
 #   8. Ambiente sem vista (não colocado, sem geometria ou falha na criação)
-#      é ignorado; ao final, um resumo lista o que precisa ser revisado.
+#      é ignorado (sem relatório ao final da execução).
 #   9. Elevações (seção 6d): UM ElevationMarker nativo NOVO por ambiente,
 #      num ponto dentro do Room, e as elevações Norte/Leste/Sul/Oeste criadas
 #      a partir dele (como Vista > Elevação). Elevações já existentes são
@@ -2731,24 +2731,3 @@ if opts["open"] and created:
             notes.append(u"{}: vista criada, mas não foi possível abri-la ({}).".format(
                 g.label, to_unicode(exc)))
 
-
-# ------------------------------------------------------------------
-# 10. Resumo: só aparece se houver falha ou algo a revisar
-# ------------------------------------------------------------------
-report = []
-if skipped:
-    report.append(u"Ambientes ignorados (nenhuma vista criada):")
-    report.extend(skipped_lines(skipped))
-if failed:
-    report.append(u"Não foi possível criar (ambiente · vista: motivo):")
-    report.extend(skipped_lines(failed))
-if warnings or notes:
-    report.append(u"Avisos:")
-    report.extend(u"- " + w for w in warnings + notes)
-
-if not created:
-    forms.alert(u"Nenhuma vista criada.", sub_msg=u"\n".join(report) or None, title=ALERT_TITLE)
-elif report:
-    forms.alert(u"{} vista(s) criada(s) para {} ambiente(s), com avisos:".format(
-                    len(created), len(geoms)),
-                sub_msg=u"\n".join(report), title=ALERT_TITLE)
