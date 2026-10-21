@@ -11,6 +11,34 @@
 
 ---
 
+## 0c. Pasta de backup `<nome>_obsoletos` e botão Atualizar (revisão 2026.10.22)
+
+**Pasta de backup.** O TXT anterior não vai mais para `Obsoletos`. Agora vai para uma
+pasta com o nome do próprio TXT e o final `_obsoletos`, ao lado dele:
+
+```
+<pasta>\OCA_693_Keynote.txt
+<pasta>\OCA_693_Keynote_obsoletos\OCA_693_Keynote_20261021_173527.txt
+```
+
+- O resto não muda: o backup é conferido antes da troca e nunca é apagado nem
+  sobrescrito. Os arquivos `_REJEITADO` e `_FALHOU` vão para a mesma pasta.
+- Uma pasta `Obsoletos` criada por versões anteriores **não é mexida**. Mova ou apague
+  à mão se quiser.
+- Funções alteradas: `obsolete_backup_path` (constante `OBSOLETE_SUFFIX`) e as mensagens
+  (`_backup_label`).
+
+**Botão "Atualizar"** (no canto direito da linha da busca):
+- relê o **modelo** e refaz as 3 tabelas pelo mesmo caminho usado depois de gravar
+  (`collect_model` → `analyze_model` → `reload`), via ExternalEvent e sem transação;
+- não relê o Excel, não gera nem recarrega o TXT e não grava nada;
+- mantém a busca e o "Agrupar por";
+- as marcações voltam ao padrão, como depois de gravar;
+- se houver Keynote digitada na tabela 2 e ainda não gravada, pede confirmação antes de
+  descartar.
+
+Funções novas: `VerifyWindow._refresh` e `refresh_run`. Nada mais foi alterado.
+
 ## 0b. TXT de Keynote em UTF-16 LE com BOM (revisão 2026.10.21)
 
 **A instrução de ANSI / Windows-1252 foi substituída: o TXT agora é gravado em UTF-16 LE
@@ -101,7 +129,7 @@ quando moveu o comando para `OCA01.extension/…`. **Por isso nenhuma correção
 "versão …".
 
 Esta versão está em `OCA01.extension/OCA.tab/Keynote.panel/02_Atualização Descrição por
-Keynotes.pushbutton/`. A janela de verificação mostra **"versão 2026.10.21"** no subtítulo,
+Keynotes.pushbutton/`. A janela de verificação mostra **"versão 2026.10.22"** no subtítulo,
 e o log também. Se o texto não aparecer, o Revit está rodando outra cópia.
 
 ---
@@ -514,7 +542,7 @@ Anote em cada teste: a versão (do log), o teste, o resultado e, se o Revit fech
    Keynotes.pushbutton` se ela ainda existir **e** estiver registrada no pyRevit. Duas
    cópias do botão causam exatamente o problema do item 1.
 4. pyRevit → **Reload**.
-5. Abra o comando e confira **"versão 2026.10.21"** no subtítulo. Espere 3 s: não pode
+5. Abra o comando e confira **"versão 2026.10.22"** no subtítulo. Espere 3 s: não pode
    aparecer nenhum "ATENÇÃO" na linha verde.
 
 **Como testar com segurança:**

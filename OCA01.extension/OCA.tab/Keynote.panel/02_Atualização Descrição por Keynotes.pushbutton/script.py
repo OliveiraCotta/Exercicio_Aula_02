@@ -38,10 +38,10 @@
 # Ao executar a 1ª aba, o TXT de Keynote é gerado do Excel e recarregado no
 # projeto em UTF-16 LE com BOM (FF FE), o "Unicode" do Bloco de Notas; caractere
 # não representável (controle, par quebrado) é listado e o TXT NÃO é gravado.
-# O anterior vai para <pasta>\Obsoletos\
+# O anterior vai para <pasta>\<nome do TXT>_obsoletos\
 # <nome>_AAAAMMDD_HHMMSS.txt, conferido antes da troca; backups nunca são
 # apagados nem sobrescritos. Se o Revit recusar o TXT novo, a recarga é desfeita
-# e o anterior volta ao lugar (o recusado fica em Obsoletos\..._REJEITADO.txt).
+# e o anterior volta ao lugar (o recusado fica em <nome>_obsoletos\..._REJEITADO.txt).
 # Cabeçalho fixo: cada tabela rola por dentro.
 # pyRevit 6.x: o motor persistente é declarado no bundle.yaml (engine:
 # persistent: true) - sem ele a janela abre, mas os eventos param de funcionar.
@@ -136,7 +136,7 @@ NOT_APPLICABLE = u"Não aplicável"   # Descrição IN inexistente no tipo (≠ 
 MATERIALS_LABEL = u"Materiais"     # categoria usada no relatório p/ materiais
 
 TOOL_TITLE = u"ATUALIZAÇÃO DAS DESCRIÇÕES DO MODELO POR KEYNOTE"
-SCRIPT_VERSION = u"2026.10.21"     # aparece na janela e no log: confira se é a cópia nova
+SCRIPT_VERSION = u"2026.10.22"     # aparece na janela e no log: confira se é a cópia nova
 # fluxo único: Excel -> Modelo (o Excel é só lido)
 MODES = OrderedDict([("to_model", u"Excel → Modelo")])
 MODE_DIRS = {"to_model": ("model",)}
@@ -1853,14 +1853,19 @@ VERIFY_BODY = u"""
       <Border Style="{StaticResource oca.Msg.Info}" Margin="0" Visibility="{Binding Visibility, ElementName=info}">
         <TextBlock x:Name="info" Style="{StaticResource oca.MsgText}"/>
       </Border>
-      <WrapPanel Margin="0,10,0,0">
-        <TextBlock Text="Buscar" Style="{StaticResource oca.Label}"/>
-        <TextBox x:Name="f_text" Width="300" Margin="0,0,8,0"/>
-        <Button x:Name="b_search" Content="Buscar" Margin="0,0,8,0"/>
-        <Button x:Name="b_clear" Content="Limpar busca" Margin="0,0,8,0"/>
-        <TextBlock x:Name="searchinfo" Style="{StaticResource small}" Foreground="{StaticResource oca.Ink2}"
-                   Margin="8,0,0,0"/>
-      </WrapPanel>
+      <DockPanel Margin="0,10,0,0" LastChildFill="True">
+        <Button x:Name="b_refresh" DockPanel.Dock="Right" Content="Atualizar" MinWidth="110"
+                Margin="8,0,0,0" VerticalAlignment="Top"
+                ToolTip="Relê o modelo e refaz as tabelas (ex.: depois de mudar um campo no Revit com esta janela aberta). Não relê o Excel, não gera o TXT e não grava nada."/>
+        <WrapPanel>
+          <TextBlock Text="Buscar" Style="{StaticResource oca.Label}"/>
+          <TextBox x:Name="f_text" Width="300" Margin="0,0,8,0"/>
+          <Button x:Name="b_search" Content="Buscar" Margin="0,0,8,0"/>
+          <Button x:Name="b_clear" Content="Limpar busca" Margin="0,0,8,0"/>
+          <TextBlock x:Name="searchinfo" Style="{StaticResource small}" Foreground="{StaticResource oca.Ink2}"
+                     Margin="8,0,0,0"/>
+        </WrapPanel>
+      </DockPanel>
       <Border Style="{StaticResource oca.Msg.Ok}" Visibility="{Binding Visibility, ElementName=viewinfo}">
         <TextBlock x:Name="viewinfo" Style="{StaticResource oca.MsgText}"/>
       </Border>
@@ -2072,6 +2077,7 @@ class VerifyWindow(forms.WPFWindow):
         self.f_mode3.SelectionChanged += sf(self._on_mode, u"Agrupar por (tabela 3)")
         self.b_search.Click += sf(self._search, u"Buscar")
         self.b_clear.Click += sf(self._clear_search, u"Limpar busca")
+        self.b_refresh.Click += sf(self._refresh, u"Atualizar")
         self.f_text.KeyDown += sf(self._on_key, u"Busca (tecla)")
         self.Loaded += sf(self._fit_tables, u"Ajustar tabelas")
         self.scroll.SizeChanged += sf(self._fit_tables, u"Ajustar tabelas")
@@ -2655,6 +2661,30 @@ class VerifyWindow(forms.WPFWindow):
             return
         self._watch_action(u"Atualizar descrições", 8)
 
+    def _refresh(self, sender, args):
+        """Botão Atualizar: relê o MODELO e refaz as 3 tabelas pelo mesmo
+        caminho usado depois de gravar (collect_model + analyze_model + reload).
+        Não relê o Excel, não gera o TXT e não grava nada no modelo."""
+        self._commit()
+        if self.demo:
+            _tell(self, u"Modo de teste com dados fictícios: não há modelo para reler.")
+            return
+        typed = [r for r in self.inc if clean(r["key"]) != r["key0"]]
+        if typed and not _ask(self, u"Atualizar as tabelas com o modelo?\n\n{} Keynote(s) "
+                                    u"digitada(s) na tabela 2 e ainda não gravada(s) serão "
+                                    u"descartada(s), e as marcações voltam ao padrão (igual "
+                                    u"a depois de gravar).".format(len(typed))):
+            return
+        self.b_refresh.IsEnabled = False
+        self.viewinfo.Text = u"Atualizando as tabelas com o modelo..."
+        LOG.info(u"Atualizar (tabelas) pedido")
+        if not run_in_revit(refresh_run, u"Atualizar tabelas"):
+            self.b_refresh.IsEnabled = True
+            self.viewinfo.Text = (u"O Revit não aceitou o pedido agora (comando ou edição em "
+                                  u"andamento?). Termine a operação no Revit e clique de novo.")
+            return
+        self._watch_action(u"Atualizar tabelas", 8)
+
     def engine_probe(self, seconds=2):
         """Autoteste, alguns segundos depois de a janela abrir (o script já
         terminou): confere se o motor Python continua vivo e se o Revit executa
@@ -2976,20 +3006,27 @@ def validate_txt_bytes(data, expected_lines, expected_text=None):
     return probs
 
 
-OBSOLETE_DIR = u"Obsoletos"        # subpasta dos backups, ao lado do TXT
+OBSOLETE_SUFFIX = u"_obsoletos"    # subpasta dos backups: <nome do TXT>_obsoletos
 
 
 def obsolete_backup_path(path):
-    """<pasta do TXT>\\Obsoletos\\<nome>_AAAAMMDD_HHMMSS.txt - nunca repete um nome
+    """<pasta do TXT>\\<nome>_obsoletos\\<nome>_AAAAMMDD_HHMMSS.txt (ex.:
+    OCA_693_Keynote.txt -> OCA_693_Keynote_obsoletos\\OCA_693_Keynote_20261021_173527.txt)
+    - nunca repete um nome
     existente (acrescenta _2, _3...)."""
-    folder = os.path.join(os.path.dirname(path), OBSOLETE_DIR)
     base, ext = os.path.splitext(os.path.basename(path))
+    folder = os.path.join(os.path.dirname(path), base + OBSOLETE_SUFFIX)
     stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     cand, n = os.path.join(folder, u"{}_{}{}".format(base, stamp, ext)), 1
     while File.Exists(cand):
         n += 1
         cand = os.path.join(folder, u"{}_{}_{}{}".format(base, stamp, n, ext))
     return folder, cand
+
+
+def _backup_label(path):
+    """'<pasta de backup>\\<arquivo>' para as mensagens da janela."""
+    return u"{}\\{}".format(os.path.basename(os.path.dirname(path)), os.path.basename(path))
 
 
 def _io_message(ex):
@@ -3010,7 +3047,7 @@ def write_keynote_txt(path, text, expected_lines):
       1. codifica (para se houver caractere não representável);
       2. grava um .tmp na mesma pasta e confere bytes, BOM, estrutura e que o
          texto lido de volta é igual ao gerado;
-      3. se o TXT já existe: copia para <pasta>\\Obsoletos\\<nome>_<data_hora>.txt
+      3. se o TXT já existe: copia para <pasta>\\<nome>_obsoletos\\<nome>_<data_hora>.txt
          e confere a cópia - se o backup falhar, o TXT original NÃO é trocado;
       4. substitui o TXT e confere os bytes finais e a codificação detectada
          (se falhar, restaura o backup).
@@ -3614,6 +3651,38 @@ def save_run(chosen_rows, chosen_inc):
             pass
 
 
+def refresh_run():
+    """Botão 'Atualizar' (via ExternalEvent): relê o modelo e refaz as tabelas,
+    exatamente como a reanálise depois de gravar. Só leitura - sem transação."""
+    global MODEL
+    LOG.begin(u"Atualizar tabelas", u"releitura do modelo (Excel e TXT não mudam)")
+    try:
+        MODEL = collect_model(use_view, opts["materials"])
+        analyze_model()
+        LOG.end(u"Atualizar tabelas", u"tabela 1: {} · tabela 2: {} · tabela 3: {}".format(
+            len(VROWS), len(INC), len(NOTX)))
+        if VW is not None:
+            VW.reload(VROWS, INC, NOTX, make_info_text(),
+                      u"Tabelas atualizadas com o modelo às {}. Nada foi gravado.".format(
+                          datetime.now().strftime("%H:%M:%S")))
+    except Exception as ex:
+        LOG.exc(u"Atualizar tabelas")
+        LOG.end(u"Atualizar tabelas", u"FALHOU")
+        try:
+            if VW is not None:
+                VW.viewinfo.Text = (u"Não foi possível atualizar as tabelas: {} (detalhes no "
+                                    u"log). Clique em Atualizar de novo antes de gravar.".format(
+                                        to_unicode(ex)))
+        except Exception:
+            pass
+    finally:
+        try:
+            if VW is not None:
+                VW.b_refresh.IsEnabled = True
+        except Exception:
+            pass
+
+
 # ------------------------------------------------------------------
 # 5j. Dashboard HTML de qualidade dos dados (botão "Dashboard HTML")
 #   Usa o retrato gravado por analyze_model() (DASH): NÃO relê nem grava o
@@ -3859,7 +3928,7 @@ def make_keynote_txt(reload_txt=True):
     """Ao executar a 1ª aba: gera o TXT de Keynote a partir do Excel (mesma
     estrutura de sempre), grava em UTF-16 LE com BOM e recarrega no projeto.
     Arquivo existente: substituído sem perguntar, depois de copiado e conferido
-    em <pasta>\\Obsoletos. Caractere não representável (controle, par
+    em <pasta>\\<nome>_obsoletos. Caractere não representável (controle, par
     quebrado): o TXT NÃO é gravado e os caracteres são listados. Só diz
     "gravado em UTF-16 LE, com BOM, e validado" depois de conferir os bytes do
     arquivo, e "recarregado" depois que o Revit confirma. -> mensagem."""
@@ -3916,8 +3985,7 @@ def make_keynote_txt(reload_txt=True):
     # a frase da codificação só aparece porque write_keynote_txt conferiu os
     # bytes gravados (BOM FF FE, texto igual ao gerado, estrutura)
     msg = u"TXT de Keynotes gravado em {}, e validado com sucesso{} · {}.{}".format(
-        enc, u" · anterior ({}) em {}\\{}".format(previous, OBSOLETE_DIR,
-                                                  os.path.basename(backup))
+        enc, u" · anterior ({}) em {}".format(previous, _backup_label(backup))
         if backup else u"", info if ok else u"NÃO recarregado no projeto: " + info,
         u"  {} aviso(s): {}".format(len(warns), u"; ".join(warns[:3])) if warns else u"")
     if not ok:
@@ -3932,7 +4000,7 @@ def make_keynote_txt(reload_txt=True):
 def restore_txt_after_failed_reload(path, backup):
     """TXT e modelo não são atômicos: se o Revit não aceitou o TXT novo, o
     arquivo volta a ser o anterior (o que o projeto ainda usa). O TXT recusado
-    é guardado em Obsoletos\<nome>_<data>_REJEITADO.txt. Nada é apagado.
+    é guardado em <nome>_obsoletos\<nome>_<data>_REJEITADO.txt. Nada é apagado.
     -> mensagem"""
     if not backup:
         return (u"Não havia TXT anterior para restaurar: o arquivo novo ficou na pasta, "
@@ -3947,7 +4015,7 @@ def restore_txt_after_failed_reload(path, backup):
         LOG.warn(u"TXT: recarga falhou - anterior restaurado de {} · recusado guardado em {}"
                  .format(backup, rej))
         return (u"O TXT anterior foi restaurado (igual ao projeto); o gerado ficou em "
-                u"{}\{}.".format(OBSOLETE_DIR, os.path.basename(rej)))
+                u"{}.".format(_backup_label(rej)))
     except Exception as ex:
         LOG.exc(u"TXT: restaurar após recarga falhar")
         return (u"ATENÇÃO: não foi possível restaurar o TXT anterior ({}). Copie manualmente "

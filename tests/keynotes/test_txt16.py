@@ -1,5 +1,5 @@
 """Uso: python3 tests/keynotes/test_txt16.py [script.py] [TXT do escritório]
-Testes offline do TXT de Keynote em UTF-16 LE com BOM e do backup em Obsoletos.
+Testes offline do TXT de Keynote em UTF-16 LE com BOM e do backup em <nome>_obsoletos.
 Extrai as funções do script por AST (não executa o comando). Referência dos bytes:
 o codec 'utf-16-le' do CPython (independente do código testado)."""
 import ast, os, sys, shutil, time
@@ -15,7 +15,7 @@ OFFICE = (sys.argv[2] if len(sys.argv) > 2 else "") or os.path.join(   # TXT rea
 tree = ast.parse(open(S, encoding="utf8").read())
 WANT = {"TXT_BOM", "TXT_ENCODING_LABEL", "_TXT_HINT", "_txt_char_ok", "txt_encode",
         "_utf16le_units", "txt_decode", "detect_txt_encoding", "txt_char_report", "_bytes_of",
-        "validate_txt_bytes", "OBSOLETE_DIR", "obsolete_backup_path", "_io_message",
+        "validate_txt_bytes", "OBSOLETE_SUFFIX", "obsolete_backup_path", "_io_message",
         "write_keynote_txt", "_no_tab", "to_unicode", "_txt_field"}
 nodes = []
 for n in tree.body:
@@ -119,7 +119,24 @@ for name, data in cases[1:]:
     check("TXT anterior em %s: backup idêntico byte a byte (sem conversão)" % name,
           open(bk, "rb").read() == bytes(data) and prev == name, (prev, os.path.basename(bk)))
     check("   ... e o novo está em UTF-16 LE com BOM", open(p, "rb").read() == b"\xff\xfe" + text1.encode("utf-16-le"))
-obs = os.path.join(d, "Obsoletos")
+obs = os.path.join(d, u"OCA_123_Lista de Materiais_01_obsoletos")
+check("backups na pasta '<nome do TXT>_obsoletos' ao lado do TXT", os.path.isdir(obs),
+      sorted(os.listdir(d)))
+check("nenhuma pasta 'Obsoletos' antiga criada", not os.path.exists(os.path.join(d, "Obsoletos")))
+names = sorted(os.listdir(obs))
+check("nome do backup = <nome do TXT>_AAAAMMDD_HHMMSS[_n].txt",
+      all(__import__("re").match(r"^OCA_123_Lista de Materiais_01_\d{8}_\d{6}(_\d+)?\.txt$", x)
+          for x in names), names[:3])
+fo, cand = g["obsolete_backup_path"](u"C:/Projetos/OCA_693_Keynote.txt")
+check("exemplo do print: OCA_693_Keynote.txt -> OCA_693_Keynote_obsoletos\\OCA_693_Keynote_<data>.txt",
+      os.path.basename(fo) == u"OCA_693_Keynote_obsoletos"
+      and os.path.basename(cand).startswith(u"OCA_693_Keynote_20"), (fo, cand))
+d2 = os.path.join(os.path.dirname(d), "dois"); os.makedirs(d2)
+w(os.path.join(d2, "A.txt"), text1, 2); w(os.path.join(d2, "A.txt"), text1, 2)
+w(os.path.join(d2, "B.txt"), text1, 2); w(os.path.join(d2, "B.txt"), text1, 2)
+check("dois TXT na mesma pasta: cada um com a sua pasta de backup",
+      sorted(x for x in os.listdir(d2) if os.path.isdir(os.path.join(d2, x))) == ["A_obsoletos", "B_obsoletos"]
+      and len(os.listdir(os.path.join(d2, "A_obsoletos"))) == 1, sorted(os.listdir(d2)))
 n_obs = len(os.listdir(obs))
 check("nenhum backup sobrescrito (um arquivo por troca)", n_obs == len(cases) - 1, n_obs)
 

@@ -33,13 +33,13 @@ class File(object):
     def Copy(a, b, overwrite=False):
         if os.path.exists(b) and not overwrite:
             raise IOError("exists")
-        if FAIL.get("copy_backup") and "Obsoletos" in b:
+        if FAIL.get("copy_backup") and "_obsoletos" in b:
             raise IOError("cópia recusada (simulado)")
         if FAIL.get("locked") and a.endswith(".tmp"):
             raise IOError("The process cannot access the file because it is being used by "
                           "another process (simulado)")
         shutil.copy(a, b)
-        if FAIL.get("corrupt_backup") and "Obsoletos" in b:
+        if FAIL.get("corrupt_backup") and "_obsoletos" in b:
             with open(b, "ab") as f:
                 f.write(b"x")
 
