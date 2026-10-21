@@ -1,7 +1,8 @@
 # Gerenciador de Parâmetros Compartilhados
 
 Vincula ao projeto, em lote, parâmetros de um arquivo TXT de parâmetros compartilhados,
-mantendo os GUIDs originais. Ambiente-alvo: pyRevit 5.x com IronPython 2.7, Revit 2024/2025/2026.
+mantendo os GUIDs originais, e mostra os parâmetros compartilhados que já estão no projeto, com
+exportação para o TXT. Ambiente-alvo: pyRevit 5.x com IronPython 2.7, Revit 2024/2025/2026.
 Os grupos de parâmetro também têm tratamento para Revit 2021–2023.
 
 ## Arquivos
@@ -13,7 +14,7 @@ OCA01.extension/
 │  └─ Parâmetros.panel/                 NOVO
 │     ├─ bundle.yaml                    cor do rodapé do painel (claro/escuro), lida pelo startup.py
 │     └─ 01_Gerenciador de Parâmetros Compartilhados.pushbutton/
-│        ├─ script.py                   janela WPF (3 abas) e fluxo do comando
+│        ├─ script.py                   janela WPF (2 abas principais) e fluxo do comando
 │        ├─ icon.png                    96 px, traço na cor do painel
 │        └─ LEIA-ME.md                  este arquivo
 └─ lib/
@@ -26,6 +27,20 @@ OCA01.extension/
 
 Nenhum arquivo existente foi alterado. A identidade visual vem de `lib/oca_ds` (`build_xaml`,
 pincéis `oca.*`, tema claro/escuro seguindo o Revit, janela redimensionável).
+
+## Janela
+
+Duas abas principais no topo, no estilo das abas do Explorador de Arquivos, com a barra do arquivo
+TXT logo abaixo (vale para as duas):
+
+- **Vincular do TXT ao projeto**: etapas 1 · Parâmetros do arquivo, 2 · Configuração, 3 · Revisão.
+- **Parâmetros no projeto**: todos os parâmetros compartilhados do modelo (`SharedParameterElement`),
+  com tipo de dado, Instância/Tipo, grupo de propriedades, categorias, origem (parâmetro de projeto
+  ou só em famílias), GUID e situação no TXT carregado (no TXT, no TXT com outro nome, conflito de
+  nome, fora do TXT). Busca, filtros, detalhe com todas as categorias da linha selecionada e
+  **Exportar para o TXT** (grupo existente do TXT ou grupo novo).
+
+O botão principal do rodapé acompanha a aba: "Aplicar no projeto" ou "Exportar para o TXT".
 
 ## Arquitetura
 
@@ -43,10 +58,20 @@ pincéis `oca.*`, tema claro/escuro seguindo o Revit, janela redimensionável).
    mostra exatamente esse plano; o plano é refeito com o projeto relido antes da confirmação.
 5. **Execução (`apply_plan`)**: uma única `Transaction`. Qualquer recusa, exceção ou commit não
    confirmado → `RollBack` e o projeto fica como estava.
+6. **Parâmetros do projeto (`list_project_shared`)**: lê os `SharedParameterElement` e cruza com
+   os vínculos lidos em `scan_project`. Só leitura, sem transação.
+7. **Exportação (`export_definitions`)**: valida tudo antes da primeira gravação, faz a cópia do TXT
+   e grava pelo Revit (`Definitions.Create` com `ExternalDefinitionCreationOptions.GUID` = GUID do
+   projeto). Depois, o TXT é relido e as duas abas são atualizadas.
 
 ## Regras de segurança
 
-- O TXT nunca é gravado. `Definitions.Create` nunca é chamado: nenhum GUID novo é gerado.
+- Vincular não grava no TXT. O TXT só é gravado por **Exportar para o TXT**, sempre com
+  confirmação e com cópia antes (`<nome>_backup_<AAAAMMDD_HHMMSS>.txt`, na mesma pasta). Sem cópia,
+  nada é gravado.
+- Exportar mantém o GUID do projeto (nenhum GUID novo é gerado) e só grava parâmetros que **não**
+  estão no TXT. Bloqueia: mesmo GUID já no TXT, ou mesmo nome no TXT com outro GUID. Nada muda
+  no projeto.
 - Nada é excluído: `BindingMap.Remove` e `Document.Delete` não são usados.
 - Parâmetro já vinculado com o **mesmo** tipo de vínculo: recebe só as categorias que faltam
   (`ReInsert` com categorias atuais + novas, mantendo o grupo atual). Antes do commit, até 300
@@ -58,6 +83,18 @@ pincéis `oca.*`, tema claro/escuro seguindo o Revit, janela redimensionável).
   com o mesmo nome: não é aplicado.
 
 ## Riscos e limitações da API (conhecidos antes da implementação)
+
+Exportação para o TXT:
+
+| Risco | Tratamento |
+|---|---|
+| O Revit regrava o arquivo inteiro no formato dele ao criar uma definição (pode reordenar linhas). | Cópia do TXT antes de gravar; o arquivo continua sendo um TXT do Revit (UTF-16). |
+| Descrição e "editável pelo usuário" de um parâmetro não são expostos pela API no projeto. | Exportados como descrição vazia e editável = sim. Visível e "ocultar sem valor" vêm do projeto. |
+| O Revit grava cada definição na hora; não há transação no arquivo. | Tudo é validado antes da primeira gravação. Se algo falhar no meio, a mensagem lista o que já foi gravado e o caminho da cópia. |
+| Arquivo somente leitura, em rede sem permissão ou aberto por outro programa. | Conferido antes; nada é gravado e a mensagem explica. |
+| Parâmetros só em famílias não têm categorias de projeto. | Mostrados com origem "Só em famílias", sem vínculo nem categorias. |
+
+Vinculação:
 
 | Risco | Tratamento |
 |---|---|
@@ -104,4 +141,9 @@ pincéis `oca.*`, tema claro/escuro seguindo o Revit, janela redimensionável).
 8. Pedir Tipo para um parâmetro que já está como Instância: deve aparecer "Não será aplicado".
 9. Em Opções → Arquivo, conferir que o caminho do arquivo de parâmetros compartilhados do usuário
    voltou ao original.
-10. Repetir no tema escuro do Revit e em pelo menos duas versões (ex.: 2024 e 2025).
+10. Aba **Parâmetros no projeto**: conferir grupo, vínculo e categorias contra Gerenciar →
+    Parâmetros de projeto; filtrar "Só em famílias" e "Fora do TXT".
+11. Numa **cópia** do TXT: marcar dois parâmetros "Fora do TXT", exportar para um grupo novo.
+    Conferir a cópia `_backup_` criada, o grupo novo no TXT, os GUIDs iguais aos do projeto e que
+    a situação passou para "No TXT". Exportar de novo os mesmos não deve ser possível.
+12. Repetir no tema escuro do Revit e em pelo menos duas versões (ex.: 2024 e 2025).

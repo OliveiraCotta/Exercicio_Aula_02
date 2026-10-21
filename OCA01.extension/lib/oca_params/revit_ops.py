@@ -20,9 +20,21 @@ Arquivo de parâmetros compartilhados: a API só abre o arquivo configurado em
 Application.SharedParametersFilename (configuração do usuário no Revit). O
 comando troca esse caminho pelo do arquivo escolhido SÓ enquanto lê as
 definições e enquanto vincula, e devolve o caminho original logo depois
-(também em caso de erro). O arquivo é só aberto para leitura: nenhuma
-definição é criada nele (Definitions.Create nunca é chamado), então nenhum
-GUID novo é gerado.
+(também em caso de erro). Na leitura e na vinculação o arquivo é só aberto:
+nenhuma definição é criada nele, então nenhum GUID novo é gerado.
+
+Exportação (aba "Parâmetros no projeto"): é o ÚNICO ponto que grava no TXT,
+sempre com confirmação do usuário:
+- só parâmetros compartilhados do projeto que ainda não estão no TXT (mesmo
+  GUID) e cujo nome não existe no TXT com outro GUID;
+- antes de gravar, cópia do TXT na mesma pasta (<nome>_backup_<data>.txt); sem
+  cópia, nada é gravado;
+- Definitions.Create com ExternalDefinitionCreationOptions.GUID = GUID do
+  projeto (o GUID é preservado, não é gerado um novo), nome e tipo de dado do
+  projeto, Visible e HideWhenNoValue quando a API informa. Descrição e
+  "editável pelo usuário" não são expostos pela API no projeto: ficam vazio / sim;
+- tudo é validado antes da primeira gravação; o Revit grava cada definição
+  na hora e regrava o arquivo inteiro no formato dele.
 
 Vinculação (uma única transação, tudo ou nada):
 - create: BindingMap.Insert(ExternalDefinition, InstanceBinding|TypeBinding, grupo).
@@ -32,10 +44,15 @@ Vinculação (uma única transação, tudo ou nada):
   tudo é desfeito (RollBack).
 - Qualquer recusa do Revit (Insert/ReInsert = False), exceção ou Commit que
   não termine em Committed -> RollBack: o projeto fica como estava.
-- Nunca chama BindingMap.Remove, Document.Delete nem Definitions.Create.
+- Nunca chama BindingMap.Remove nem Document.Delete; Definitions.Create só na
+  exportação.
 
 Engine: IronPython 2.7 (pyRevit).
 """
+
+import os
+import shutil
+from datetime import datetime
 
 import System
 from Autodesk.Revit import DB
@@ -60,6 +77,16 @@ CATEGORY_TYPE_LABELS = (("Model", u"Modelo"), ("Annotation", u"Anotação"),
 
 class ApplyError(Exception):
     """Falha que desfez a transação inteira (mensagem já em português)."""
+
+
+class ExportError(Exception):
+    """Falha na exportação para o TXT. written = nomes já gravados antes da falha;
+    backup = caminho da cópia feita antes de gravar (ou None)."""
+
+    def __init__(self, message, written=None, backup=None):
+        Exception.__init__(self, message)
+        self.written = list(written or [])
+        self.backup = backup
 
 
 # ------------------------------------------------------------------
@@ -556,3 +583,154 @@ def _rollback(tx):
             tx.RollBack()
     except Exception:
         pass
+
+
+# ------------------------------------------------------------------
+# parâmetros compartilhados do projeto e exportação para o TXT
+# ------------------------------------------------------------------
+def list_project_shared(doc, state, cat_names):
+    """Todos os SharedParameterElement do projeto (vinculados ou só em famílias).
+
+    [{"guid", "name", "datatype", "kind", "group_label", "cats": set(ids),
+      "cats_names": [nomes], "bound": bool}]
+    state = scan_project(...) (vínculo, grupo e categorias de cada GUID).
+    """
+    out = []
+    for element in DB.FilteredElementCollector(doc).OfClass(DB.SharedParameterElement):
+        try:
+            key = guid_key(element.GuidValue)
+        except Exception:
+            continue
+        try:
+            definition = element.GetDefinition()
+        except Exception:
+            definition = None
+        bound = state["bound"].get(key)
+        cats = set(bound["cats"]) if bound else set()
+        out.append({
+            "guid": key,
+            "name": to_unicode(element.Name),
+            "datatype": spec_label(definition) if definition is not None else u"",
+            "kind": bound["kind"] if bound else None,
+            "group_label": bound.get("group_label", u"") if bound else u"",
+            "cats": cats,
+            "cats_names": sorted((cat_names.get(c, u"Categoria {}".format(c)) for c in cats),
+                                 key=lambda n: n.lower()),
+            "bound": bool(bound),
+        })
+    return out
+
+
+def backup_file(path):
+    """Cópia do TXT na mesma pasta: <nome>_backup_<AAAAMMDD_HHMMSS><ext>."""
+    folder, name = os.path.split(path)
+    base, ext = os.path.splitext(name)
+    stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    target = os.path.join(folder, u"{}_backup_{}{}".format(base, stamp, ext or u".txt"))
+    n = 2
+    while os.path.exists(target):                       # nunca sobrescreve uma cópia anterior
+        target = os.path.join(folder, u"{}_backup_{}_{}{}".format(base, stamp, n, ext or u".txt"))
+        n += 1
+    try:
+        shutil.copyfile(path, target)           # só o conteúdo (sem copiar metadados)
+    except Exception as ex:
+        raise ExportError(u"Não foi possível criar a cópia de segurança do TXT; nada foi "
+                          u"gravado. {}".format(to_unicode(ex)))
+    return target
+
+
+def valid_group_name(name):
+    """Mensagem de erro, ou None se o nome de grupo puder ir para o TXT."""
+    name = name or u""
+    if not name.strip():
+        return u"Informe o grupo de definição do TXT."
+    if any(ch in name for ch in u"\t\r\n"):
+        return u"O nome do grupo não pode ter tabulação nem quebra de linha."
+    return None
+
+
+def _creation_options(element, definition, key):
+    name = to_unicode(element.Name)
+    if hasattr(definition, "GetDataType"):                  # Revit 2022+
+        options = DB.ExternalDefinitionCreationOptions(name, definition.GetDataType())
+    else:
+        options = DB.ExternalDefinitionCreationOptions(name, definition.ParameterType)
+    options.GUID = System.Guid(key)
+    try:
+        options.Visible = bool(definition.Visible)
+    except Exception:
+        pass
+    try:
+        options.HideWhenNoValue = bool(element.ShouldHideWhenNoValue())
+    except Exception:
+        pass
+    return options
+
+
+def _definition_group_in_file(dfile, name):
+    try:
+        group = dfile.Groups.get_Item(name)
+    except Exception:
+        group = None
+    return group
+
+
+def export_definitions(doc, path, guids, group_name):
+    """Grava no TXT as definições dos parâmetros compartilhados do projeto
+    (GUIDs informados), no grupo group_name (existente ou novo).
+
+    Devolve (nomes gravados, caminho da cópia). Lança ExportError.
+    """
+    error = valid_group_name(group_name)
+    if error:
+        raise ExportError(error)
+    if not guids:
+        raise ExportError(u"Nenhum parâmetro para exportar.")
+    if not os.path.isfile(path):
+        raise ExportError(u"O arquivo TXT não foi encontrado: {}".format(path))
+    if not os.access(path, os.W_OK):
+        raise ExportError(u"O arquivo TXT está protegido contra gravação (somente leitura).")
+
+    # 1. validação completa antes de qualquer gravação
+    app = doc.Application
+    try:
+        with SharedParamFile(app, path) as dfile:
+            existing = _external_definitions(dfile)
+            names = set(to_unicode(d.Name).strip() for d in existing.values())
+            todo = []
+            for key in guids:
+                element = DB.SharedParameterElement.Lookup(doc, System.Guid(key))
+                if element is None:
+                    raise ExportError(u"O parâmetro {} não existe mais no projeto.".format(key))
+                name = to_unicode(element.Name)
+                if key in existing:
+                    raise ExportError(u"'{}' já está no TXT (mesmo GUID).".format(name))
+                if name.strip() in names:
+                    raise ExportError(u"Já existe no TXT um parâmetro chamado '{}' com outro "
+                                      u"GUID.".format(name.strip()))
+                names.add(name.strip())
+                todo.append((key, name, _creation_options(element, element.GetDefinition(), key)))
+    except ApplyError as ex:
+        raise ExportError(to_unicode(ex))
+
+    # 2. cópia de segurança e gravação (o Revit grava cada definição na hora)
+    backup = backup_file(path)
+    written = []
+    try:
+        with SharedParamFile(app, path) as dfile:
+            group = _definition_group_in_file(dfile, group_name)
+            if group is None:
+                group = dfile.Groups.Create(group_name)
+            for key, name, options in todo:
+                created = group.Definitions.Create(options)
+                if created is None or guid_key(created.GUID) != key:
+                    raise ExportError(u"O Revit não gravou '{}' com o GUID original.".format(name),
+                                      written, backup)
+                written.append(name)
+    except ExportError as ex:
+        ex.written, ex.backup = written, backup
+        raise
+    except Exception as ex:
+        raise ExportError(u"Erro do Revit ao gravar no TXT: {}".format(to_unicode(ex)),
+                          written, backup)
+    return written, backup

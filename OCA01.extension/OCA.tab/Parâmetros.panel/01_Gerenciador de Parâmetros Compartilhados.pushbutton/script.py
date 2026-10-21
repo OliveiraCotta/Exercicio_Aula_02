@@ -6,8 +6,11 @@
 # compartilhados, sem passar pela janela Parâmetros de projeto do Revit.
 # (Comentário, não docstring: o tooltip do botão vem SÓ de __doc__ abaixo.)
 #
-# Fluxo (uma janela, três abas):
-#   1. Arquivo e parâmetros - escolhe e lê o TXT (somente leitura). Tabela com
+# Janela com duas abas principais (no estilo das abas do Explorador de
+# Arquivos) e a barra do arquivo TXT compartilhada entre elas:
+#
+# A. VINCULAR DO TXT AO PROJETO (três etapas):
+#   1. Parâmetros do arquivo - lê o TXT escolhido (só leitura). Tabela com
 #      nome, grupo de definição (do TXT), tipo de dado, GUID e situação no
 #      projeto; busca sem acento, filtros por grupo / tipo de dado / situação,
 #      "só marcados", Selecionar todos, Limpar seleção, Espaço marca as linhas
@@ -23,8 +26,18 @@
 #      categorias, sem alteração, não será aplicado, incompleto) e por quê.
 #      "Aplicar no projeto" pede confirmação e grava tudo em UMA transação.
 #
+# B. PARÂMETROS NO PROJETO:
+#   Todos os parâmetros compartilhados do projeto (SharedParameterElement):
+#   nome, tipo de dado, Instância/Tipo, grupo de propriedades, categorias,
+#   origem (parâmetro de projeto ou só em famílias), GUID e situação no TXT
+#   carregado (no TXT, no TXT com outro nome, conflito de nome, fora do TXT).
+#   Busca, filtros, detalhe com todas as categorias da linha selecionada.
+#   "Exportar para o TXT" grava no TXT carregado os marcados que estão fora
+#   dele, com o GUID do projeto, num grupo existente ou novo do TXT.
+#
 # Regras (detalhes em lib/oca_params/plan.py e revit_ops.py):
-#   * O TXT nunca é gravado; nenhuma definição é criada (sem GUID novo).
+#   * O TXT só é gravado pela exportação (aba B), com confirmação e cópia de
+#     segurança antes; o GUID do projeto é mantido. Vincular não grava no TXT.
 #   * As definições vêm do próprio Revit (OpenSharedParameterFile), pelo GUID.
 #     O caminho do arquivo de parâmetros do usuário é trocado só durante a
 #     leitura e a gravação e restaurado logo depois.
@@ -36,9 +49,12 @@
 
 __title__ = u"Gerenciador\nde Parâmetros\nCompartilhados"
 __doc__ = (u"Vincula ao projeto, em lote, parâmetros de um arquivo TXT de parâmetros "
-           u"compartilhados, com os GUIDs originais.\n\n"
-           u"Escolha os parâmetros, o grupo na paleta Propriedades, Instância ou Tipo e as "
-           u"categorias; revise e aplique. O TXT não é alterado e nada é excluído do projeto.")
+           u"compartilhados (GUIDs originais) e mostra os compartilhados do projeto, com "
+           u"exportação para o TXT.\n\n"
+           u"Vincular: escolha os parâmetros, o grupo na paleta Propriedades, Instância ou Tipo "
+           u"e as categorias; revise e aplique.\n"
+           u"Parâmetros no projeto: veja grupo, vínculo e categorias e exporte para o TXT "
+           u"(cópia de segurança antes). Nada é excluído do projeto.")
 
 import os
 import re
@@ -75,6 +91,19 @@ STATUS_FILTERS = OrderedDict([
     (u"Indisponíveis", u"Usavel = false"),
 ])
 ALL_CAT_TYPES = u"Todos os tipos"
+PROJ_ORIGINS = OrderedDict([
+    (u"Todas as origens", u""),
+    (u"Parâmetros de projeto", u"OrigemKey = 'bound'"),
+    (u"Só em famílias", u"OrigemKey = 'family'"),
+])
+PROJ_TXT = OrderedDict([
+    (u"Todas (TXT)", u""),
+    (u"Fora do TXT", u"TxtKey = 'out'"),
+    (u"Já no TXT", u"TxtKey IN ('in', 'rename')"),
+    (u"Conflito de nome", u"TxtKey = 'conflict'"),
+])
+NEW_GROUP = u"Novo grupo…"
+DEFAULT_NEW_GROUP = u"Parâmetros exportados"
 TAB_FILE, TAB_CFG, TAB_REVIEW = 0, 1, 2
 
 
@@ -195,6 +224,50 @@ RESOURCES = u"""
     <Style x:Key="inline" TargetType="CheckBox" BasedOn="{StaticResource {x:Type CheckBox}}">
       <Setter Property="Margin" Value="0,0,14,0"/>
       <Setter Property="VerticalAlignment" Value="Center"/>
+    </Style>
+    <!-- abas principais (como as abas do Explorador de Arquivos): faixa mais escura,
+         aba ativa da cor da página e encaixada nela -->
+    <Style x:Key="tabStrip" TargetType="Border">
+      <Setter Property="Background" Value="{StaticResource oca.Line}"/>
+      <Setter Property="CornerRadius" Value="8,8,0,0"/>
+      <Setter Property="Padding" Value="6,6,6,0"/>
+    </Style>
+    <Style x:Key="tabPage" TargetType="Border">
+      <Setter Property="Background" Value="{StaticResource oca.Bg}"/>
+      <Setter Property="BorderBrush" Value="{StaticResource oca.Line}"/>
+      <Setter Property="BorderThickness" Value="1,0,1,1"/>
+      <Setter Property="CornerRadius" Value="0,0,8,8"/>
+      <Setter Property="Padding" Value="12,12,12,6"/>
+    </Style>
+    <Style x:Key="browserTab" TargetType="RadioButton">
+      <Setter Property="Foreground" Value="{StaticResource oca.Ink2}"/>
+      <Setter Property="Cursor" Value="Hand"/>
+      <Setter Property="Margin" Value="0,0,4,0"/>
+      <Setter Property="Template">
+        <Setter.Value>
+          <ControlTemplate TargetType="RadioButton">
+            <Border x:Name="bd" Background="Transparent" BorderBrush="Transparent" BorderThickness="1,1,1,0"
+                    CornerRadius="8,8,0,0" Padding="18,8,18,8" MinWidth="200">
+              <ContentPresenter VerticalAlignment="Center" HorizontalAlignment="Left"
+                                TextElement.Foreground="{TemplateBinding Foreground}"/>
+            </Border>
+            <ControlTemplate.Triggers>
+              <Trigger Property="IsMouseOver" Value="True">
+                <Setter TargetName="bd" Property="Background" Value="{StaticResource oca.Surface2}"/>
+                <Setter Property="Foreground" Value="{StaticResource oca.Ink}"/>
+              </Trigger>
+              <Trigger Property="IsChecked" Value="True">
+                <Setter TargetName="bd" Property="Background" Value="{StaticResource oca.Bg}"/>
+                <Setter Property="Foreground" Value="{StaticResource oca.Ink}"/>
+                <Setter Property="FontWeight" Value="SemiBold"/>
+              </Trigger>
+              <Trigger Property="IsKeyboardFocused" Value="True">
+                <Setter TargetName="bd" Property="BorderBrush" Value="{StaticResource oca.Accent}"/>
+              </Trigger>
+            </ControlTemplate.Triggers>
+          </ControlTemplate>
+        </Setter.Value>
+      </Setter>
     </Style>"""
 
 _GRID = u"""AutoGenerateColumns="False" CanUserAddRows="False" CanUserDeleteRows="False"
@@ -202,296 +275,433 @@ _GRID = u"""AutoGenerateColumns="False" CanUserAddRows="False" CanUserDeleteRows
               SelectionUnit="FullRow" AlternationCount="2" """
 
 BODY = u"""
-  <TabControl x:Name="tabs">
+  <Grid>
+    <Grid.RowDefinitions>
+      <RowDefinition Height="Auto"/>
+      <RowDefinition Height="*"/>
+    </Grid.RowDefinitions>
 
-    <!-- ============ 1. ARQUIVO E PARÂMETROS ============ -->
-    <TabItem Header="1 · Arquivo e parâmetros">
-      <Grid>
-        <Grid.RowDefinitions>
-          <RowDefinition Height="Auto"/>
-          <RowDefinition Height="Auto"/>
-          <RowDefinition Height="*"/>
-          <RowDefinition Height="Auto"/>
-        </Grid.RowDefinitions>
+    <!-- abas principais, no estilo do Explorador de Arquivos -->
+    <Border Style="{StaticResource tabStrip}">
+      <StackPanel Orientation="Horizontal">
+        <RadioButton x:Name="rb_mode_link" GroupName="mode" IsChecked="True" Style="{StaticResource browserTab}"
+                     Content="Vincular do TXT ao projeto"
+                     ToolTip="Escolher parâmetros do TXT, configurar e vincular ao projeto"/>
+        <RadioButton x:Name="rb_mode_proj" GroupName="mode" Style="{StaticResource browserTab}"
+                     Content="Parâmetros no projeto"
+                     ToolTip="Ver os parâmetros compartilhados do projeto (grupo, vínculo, categorias) e exportar para o TXT"/>
+      </StackPanel>
+    </Border>
 
-        <HeaderedContentControl Header="ARQUIVO DE PARÂMETROS COMPARTILHADOS (.TXT)" Style="{StaticResource oca.Section}">
-          <StackPanel>
+    <Border Grid.Row="1" Style="{StaticResource tabPage}">
+      <DockPanel>
+        <!-- barra do arquivo TXT: vale para as duas abas -->
+        <StackPanel DockPanel.Dock="Top" Margin="0,0,0,10">
             <Grid>
               <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="Auto"/>
                 <ColumnDefinition Width="*"/>
                 <ColumnDefinition Width="Auto"/>
                 <ColumnDefinition Width="Auto"/>
               </Grid.ColumnDefinitions>
-              <TextBox x:Name="f_path" IsReadOnly="True"
-                       ToolTip="Arquivo em uso. Ele é só lido: o comando nunca grava no TXT."/>
-              <Button x:Name="b_load" Grid.Column="1" Content="Carregar arquivo…" Margin="8,0,0,0"
+              <TextBlock Text="Arquivo TXT" Style="{StaticResource oca.Label}" FontWeight="SemiBold"/>
+              <TextBox x:Name="f_path" Grid.Column="1" IsReadOnly="True"
+                       ToolTip="Arquivo em uso. Só é gravado ao exportar parâmetros do projeto, com confirmação e cópia de segurança antes."/>
+              <Button x:Name="b_load" Grid.Column="2" Content="Carregar arquivo…" Margin="8,0,0,0"
                       ToolTip="Escolher um arquivo .txt de parâmetros compartilhados"/>
-              <Button x:Name="b_reload" Grid.Column="2" Content="Recarregar" Margin="8,0,0,0"
+              <Button x:Name="b_reload" Grid.Column="3" Content="Recarregar" Margin="8,0,0,0"
                       ToolTip="Ler de novo o mesmo arquivo (depois de editá-lo no Revit)"/>
             </Grid>
             <TextBlock x:Name="tb_file_info" Style="{StaticResource oca.Hint}" Margin="0,6,0,0"/>
             <Border Style="{StaticResource oca.Msg.Warn}" Visibility="{Binding Visibility, ElementName=tb_file_warn}">
               <TextBlock x:Name="tb_file_warn" Style="{StaticResource oca.MsgText}"/>
             </Border>
-          </StackPanel>
-        </HeaderedContentControl>
-
-        <Grid Grid.Row="1" Margin="0,0,0,8">
-          <Grid.ColumnDefinitions>
-            <ColumnDefinition Width="Auto"/>
-            <ColumnDefinition Width="*" MinWidth="160"/>
-            <ColumnDefinition Width="Auto"/>
-            <ColumnDefinition Width="Auto"/>
-            <ColumnDefinition Width="Auto"/>
-            <ColumnDefinition Width="Auto"/>
-          </Grid.ColumnDefinitions>
-          <TextBlock Text="Buscar" Style="{StaticResource oca.Label}"/>
-          <TextBox x:Name="f_search" Grid.Column="1"
-                   ToolTip="Nome, GUID, grupo, tipo de dado ou descrição. Sem diferença de acento ou maiúscula."/>
-          <ComboBox x:Name="cb_fgroup" Grid.Column="2" Width="200" Margin="8,0,0,0"
-                    ToolTip="Filtrar pelo grupo de definição do arquivo TXT"/>
-          <ComboBox x:Name="cb_ftype" Grid.Column="3" Width="170" Margin="8,0,0,0"
-                    ToolTip="Filtrar pelo tipo de dado"/>
-          <ComboBox x:Name="cb_fstatus" Grid.Column="4" Width="160" Margin="8,0,0,0"
-                    ToolTip="Filtrar pela situação do parâmetro no projeto aberto"/>
-          <CheckBox x:Name="chk_only_marked" Grid.Column="5" Content="Só marcados" Margin="12,0,0,0"
-                    VerticalAlignment="Center"/>
-        </Grid>
-
-        <DataGrid x:Name="grid_params" Grid.Row="2" """ + _GRID + u"""
-                  SelectionMode="Extended" RowHeight="26" RowStyle="{StaticResource paramRow}">
-          <DataGrid.Columns>
-            <DataGridTemplateColumn Header="✓" Width="34" CanUserResize="False" SortMemberPath="Sel">
-              <DataGridTemplateColumn.CellTemplate>
-                <DataTemplate>
-                  <CheckBox Style="{StaticResource tight}" IsEnabled="{Binding Usavel}"
-                            IsChecked="{Binding Sel, UpdateSourceTrigger=PropertyChanged}"/>
-                </DataTemplate>
-              </DataGridTemplateColumn.CellTemplate>
-            </DataGridTemplateColumn>
-            <DataGridTextColumn Header="Nome" Binding="{Binding Nome}" Width="2*" MinWidth="140"
-                                IsReadOnly="True" ElementStyle="{StaticResource cell}"/>
-            <DataGridTextColumn Header="Grupo de definição (TXT)" Binding="{Binding GrupoArq}" Width="1.3*"
-                                MinWidth="110" IsReadOnly="True" ElementStyle="{StaticResource cell}"/>
-            <DataGridTextColumn Header="Tipo de dado" Binding="{Binding Tipo}" Width="*" MinWidth="90"
-                                IsReadOnly="True" ElementStyle="{StaticResource cell}"/>
-            <DataGridTextColumn Header="GUID" Binding="{Binding GuidTxt}" Width="275" IsReadOnly="True"
-                                ElementStyle="{StaticResource mono}"/>
-            <DataGridTextColumn Header="Situação no projeto" Binding="{Binding Situacao}" Width="1.3*"
-                                MinWidth="110" IsReadOnly="True" ElementStyle="{StaticResource status}"/>
-            <DataGridTextColumn Header="Lote" Binding="{Binding Lote}" Width="44" IsReadOnly="True"
-                                ElementStyle="{StaticResource cell}"/>
-            <DataGridTextColumn Header="Observações" Binding="{Binding Obs}" Width="2*" MinWidth="120"
-                                IsReadOnly="True" ElementStyle="{StaticResource cell}"/>
-          </DataGrid.Columns>
-        </DataGrid>
-
-        <StackPanel Grid.Row="3">
-          <Border Style="{StaticResource oca.Msg.Err}" Visibility="{Binding Visibility, ElementName=tb_params_msg}">
-            <TextBlock x:Name="tb_params_msg" Style="{StaticResource oca.MsgText}"/>
-          </Border>
-          <DockPanel Margin="0,10,0,4" LastChildFill="False">
-            <Button x:Name="b_sel_all" Content="Selecionar todos" DockPanel.Dock="Left"
-                    ToolTip="Marca todos os parâmetros disponíveis que estão visíveis com a busca e os filtros atuais"/>
-            <Button x:Name="b_sel_none" Content="Limpar seleção" DockPanel.Dock="Left" Margin="8,0,0,0"
-                    ToolTip="Desmarca todos os parâmetros (inclusive os escondidos pelos filtros)"/>
-            <TextBlock x:Name="tb_count" DockPanel.Dock="Left" Margin="14,0,0,0" VerticalAlignment="Center"
-                       Foreground="{StaticResource oca.Ink2}"/>
-            <Button x:Name="b_configure" Content="Configurar marcados  →" DockPanel.Dock="Right" MinWidth="170"
-                    ToolTip="Leva os parâmetros marcados para a configuração (aba 2) com as opções atuais de grupo, vínculo e categorias"/>
-          </DockPanel>
-          <TextBlock Style="{StaticResource oca.Hint}"
-                     Text="Marque na coluna ✓ ou selecione linhas (Ctrl/Shift + clique) e tecle Espaço para marcar ou desmarcar. Linhas cinza não podem ser usadas: o motivo está em Observações."/>
         </StackPanel>
-      </Grid>
-    </TabItem>
-
-    <!-- ============ 2. CONFIGURAÇÃO ============ -->
-    <TabItem Header="2 · Configuração">
-      <Grid>
-        <Grid.ColumnDefinitions>
-          <ColumnDefinition Width="*" MinWidth="360"/>
-          <ColumnDefinition Width="14"/>
-          <ColumnDefinition Width="430"/>
-        </Grid.ColumnDefinitions>
 
         <Grid>
-          <Grid.RowDefinitions>
-            <RowDefinition Height="Auto"/>
-            <RowDefinition Height="*"/>
-            <RowDefinition Height="Auto"/>
-          </Grid.RowDefinitions>
-          <WrapPanel Margin="0,0,0,8">
-            <Button x:Name="b_add_more" Content="+ Adicionar parâmetros" Margin="0,0,8,0"
-                    ToolTip="Volta à aba 1 para incluir mais parâmetros nesta configuração"/>
-            <Button x:Name="b_cfg_all" Content="Selecionar todas" Margin="0,0,8,0"
-                    ToolTip="Seleciona todas as linhas da configuração"/>
-            <Button x:Name="b_copy_from" Content="Copiar da linha" Margin="0,0,8,0"
-                    ToolTip="Mostra nos controles à direita o grupo, o vínculo e as categorias da linha selecionada"/>
-            <Button x:Name="b_remove" Content="Remover da configuração"
-                    ToolTip="Tira as linhas selecionadas do lote (não altera o projeto nem o arquivo)"/>
-          </WrapPanel>
-          <DataGrid x:Name="grid_cfg" Grid.Row="1" """ + _GRID + u"""
-                    SelectionMode="Extended" RowHeight="26" IsReadOnly="True">
-            <DataGrid.Columns>
-              <DataGridTextColumn Header="Parâmetro" Binding="{Binding Nome}" Width="1.4*" MinWidth="120"
-                                  ElementStyle="{StaticResource cell}"/>
-              <DataGridTextColumn Header="Grupo de propriedades" Binding="{Binding Grupo}" Width="*" MinWidth="100"
-                                  ElementStyle="{StaticResource cell}"/>
-              <DataGridTextColumn Header="Vínculo" Binding="{Binding Vinculo}" Width="72"
-                                  ElementStyle="{StaticResource cell}"/>
-              <DataGridTextColumn Header="Categorias" Binding="{Binding Categorias}" Width="1.6*" MinWidth="120"
-                                  ElementStyle="{StaticResource cell}"/>
-              <DataGridTextColumn Header="Situação" Binding="{Binding Situacao}" Width="1.4*" MinWidth="110"
-                                  ElementStyle="{StaticResource status}"/>
-            </DataGrid.Columns>
-          </DataGrid>
-          <StackPanel Grid.Row="2">
-            <Border Style="{StaticResource oca.Msg.Info}" Visibility="{Binding Visibility, ElementName=tb_cfg_msg}">
-              <TextBlock x:Name="tb_cfg_msg" Style="{StaticResource oca.MsgText}"/>
-            </Border>
-            <DockPanel Margin="0,10,0,4">
-              <Button x:Name="b_review" Content="Revisar  →" DockPanel.Dock="Right" MinWidth="120" Margin="8,0,0,0"
-                      ToolTip="Mostra o que será feito com cada parâmetro antes de aplicar"/>
-              <TextBlock Style="{StaticResource oca.Hint}" VerticalAlignment="Center"
-                         Text="Configuração individual: selecione linhas (Ctrl/Shift + clique), ajuste os controles à direita e clique em 'Aplicar às selecionadas'."/>
-            </DockPanel>
-          </StackPanel>
-        </Grid>
+          <!-- ============ VINCULAR DO TXT ============ -->
+          <Grid x:Name="pn_link">
+          <TabControl x:Name="tabs">
 
-        <Grid Grid.Column="2">
-          <Grid.RowDefinitions>
-            <RowDefinition Height="Auto"/>
-            <RowDefinition Height="Auto"/>
-            <RowDefinition Height="*" MinHeight="180"/>
-            <RowDefinition Height="Auto"/>
-          </Grid.RowDefinitions>
+            <!-- ============ 1. PARÂMETROS DO ARQUIVO ============ -->
+            <TabItem Header="1 · Parâmetros do arquivo">
+              <Grid>
+                <Grid.RowDefinitions>
+                  <RowDefinition Height="Auto"/>
+                  <RowDefinition Height="*"/>
+                  <RowDefinition Height="Auto"/>
+                </Grid.RowDefinitions>
 
-          <HeaderedContentControl Header="GRUPO DE PROPRIEDADES (PALETA PROPRIEDADES)" Style="{StaticResource oca.Section}">
-            <StackPanel>
-              <ComboBox x:Name="cb_group"
-                        ToolTip="Seção da paleta Propriedades em que o parâmetro aparece (lista da versão do Revit em uso)"/>
-              <TextBlock Style="{StaticResource oca.Hint}" Margin="0,6,0,0"
-                         Text="É onde o parâmetro aparece no Revit. Não é o grupo de definição do TXT, que só organiza o arquivo."/>
-            </StackPanel>
-          </HeaderedContentControl>
+                <Grid Margin="0,0,0,8">
+                  <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="Auto"/>
+                    <ColumnDefinition Width="*" MinWidth="160"/>
+                    <ColumnDefinition Width="Auto"/>
+                    <ColumnDefinition Width="Auto"/>
+                    <ColumnDefinition Width="Auto"/>
+                    <ColumnDefinition Width="Auto"/>
+                  </Grid.ColumnDefinitions>
+                  <TextBlock Text="Buscar" Style="{StaticResource oca.Label}"/>
+                  <TextBox x:Name="f_search" Grid.Column="1"
+                           ToolTip="Nome, GUID, grupo, tipo de dado ou descrição. Sem diferença de acento ou maiúscula."/>
+                  <ComboBox x:Name="cb_fgroup" Grid.Column="2" Width="200" Margin="8,0,0,0"
+                            ToolTip="Filtrar pelo grupo de definição do arquivo TXT"/>
+                  <ComboBox x:Name="cb_ftype" Grid.Column="3" Width="170" Margin="8,0,0,0"
+                            ToolTip="Filtrar pelo tipo de dado"/>
+                  <ComboBox x:Name="cb_fstatus" Grid.Column="4" Width="160" Margin="8,0,0,0"
+                            ToolTip="Filtrar pela situação do parâmetro no projeto aberto"/>
+                  <CheckBox x:Name="chk_only_marked" Grid.Column="5" Content="Só marcados" Margin="12,0,0,0"
+                            VerticalAlignment="Center"/>
+                </Grid>
 
-          <HeaderedContentControl Grid.Row="1" Header="TIPO DE VÍNCULO" Style="{StaticResource oca.Section}">
-            <StackPanel>
-              <RadioButton x:Name="rb_inst" GroupName="kind" IsChecked="True"
-                           Content="Instância: cada elemento tem o seu próprio valor"/>
-              <RadioButton x:Name="rb_type" GroupName="kind"
-                           Content="Tipo: um valor por tipo, igual em todas as instâncias dele"/>
-              <Border Style="{StaticResource oca.Msg.Warn}" Margin="0,2,0,0">
-                <TextBlock Style="{StaticResource oca.MsgText}"
-                           Text="A escolha muda onde e como o dado é preenchido (Propriedades x Editar tipo) e como aparece em tabelas e filtros. Depois de aplicada, trocar exige excluir o parâmetro e os valores: este comando não faz isso."/>
-              </Border>
-            </StackPanel>
-          </HeaderedContentControl>
+                <DataGrid x:Name="grid_params" Grid.Row="1" """ + _GRID + u"""
+                          SelectionMode="Extended" RowHeight="26" RowStyle="{StaticResource paramRow}">
+                  <DataGrid.Columns>
+                    <DataGridTemplateColumn Header="✓" Width="34" CanUserResize="False" SortMemberPath="Sel">
+                      <DataGridTemplateColumn.CellTemplate>
+                        <DataTemplate>
+                          <CheckBox Style="{StaticResource tight}" IsEnabled="{Binding Usavel}"
+                                    IsChecked="{Binding Sel, UpdateSourceTrigger=PropertyChanged}"/>
+                        </DataTemplate>
+                      </DataGridTemplateColumn.CellTemplate>
+                    </DataGridTemplateColumn>
+                    <DataGridTextColumn Header="Nome" Binding="{Binding Nome}" Width="2*" MinWidth="140"
+                                        IsReadOnly="True" ElementStyle="{StaticResource cell}"/>
+                    <DataGridTextColumn Header="Grupo de definição (TXT)" Binding="{Binding GrupoArq}" Width="1.3*"
+                                        MinWidth="110" IsReadOnly="True" ElementStyle="{StaticResource cell}"/>
+                    <DataGridTextColumn Header="Tipo de dado" Binding="{Binding Tipo}" Width="*" MinWidth="90"
+                                        IsReadOnly="True" ElementStyle="{StaticResource cell}"/>
+                    <DataGridTextColumn Header="GUID" Binding="{Binding GuidTxt}" Width="275" IsReadOnly="True"
+                                        ElementStyle="{StaticResource mono}"/>
+                    <DataGridTextColumn Header="Situação no projeto" Binding="{Binding Situacao}" Width="1.3*"
+                                        MinWidth="110" IsReadOnly="True" ElementStyle="{StaticResource status}"/>
+                    <DataGridTextColumn Header="Lote" Binding="{Binding Lote}" Width="44" IsReadOnly="True"
+                                        ElementStyle="{StaticResource cell}"/>
+                    <DataGridTextColumn Header="Observações" Binding="{Binding Obs}" Width="2*" MinWidth="120"
+                                        IsReadOnly="True" ElementStyle="{StaticResource cell}"/>
+                  </DataGrid.Columns>
+                </DataGrid>
 
-          <HeaderedContentControl Grid.Row="2" Header="CATEGORIAS" Style="{StaticResource oca.Section}">
-            <DockPanel>
-              <Grid DockPanel.Dock="Top" Margin="0,0,0,6">
+                <StackPanel Grid.Row="2">
+                  <Border Style="{StaticResource oca.Msg.Err}" Visibility="{Binding Visibility, ElementName=tb_params_msg}">
+                    <TextBlock x:Name="tb_params_msg" Style="{StaticResource oca.MsgText}"/>
+                  </Border>
+                  <DockPanel Margin="0,10,0,4" LastChildFill="False">
+                    <Button x:Name="b_sel_all" Content="Selecionar todos" DockPanel.Dock="Left"
+                            ToolTip="Marca todos os parâmetros disponíveis que estão visíveis com a busca e os filtros atuais"/>
+                    <Button x:Name="b_sel_none" Content="Limpar seleção" DockPanel.Dock="Left" Margin="8,0,0,0"
+                            ToolTip="Desmarca todos os parâmetros (inclusive os escondidos pelos filtros)"/>
+                    <TextBlock x:Name="tb_count" DockPanel.Dock="Left" Margin="14,0,0,0" VerticalAlignment="Center"
+                               Foreground="{StaticResource oca.Ink2}"/>
+                    <Button x:Name="b_configure" Content="Configurar marcados  →" DockPanel.Dock="Right" MinWidth="170"
+                            ToolTip="Leva os parâmetros marcados para a configuração (aba 2) com as opções atuais de grupo, vínculo e categorias"/>
+                  </DockPanel>
+                  <TextBlock Style="{StaticResource oca.Hint}"
+                             Text="Marque na coluna ✓ ou selecione linhas (Ctrl/Shift + clique) e tecle Espaço para marcar ou desmarcar. Linhas cinza não podem ser usadas: o motivo está em Observações."/>
+                </StackPanel>
+              </Grid>
+            </TabItem>
+
+            <!-- ============ 2. CONFIGURAÇÃO ============ -->
+            <TabItem Header="2 · Configuração">
+              <Grid>
                 <Grid.ColumnDefinitions>
-                  <ColumnDefinition Width="*"/>
+                  <ColumnDefinition Width="*" MinWidth="360"/>
+                  <ColumnDefinition Width="14"/>
+                  <ColumnDefinition Width="430"/>
+                </Grid.ColumnDefinitions>
+
+                <Grid>
+                  <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="*"/>
+                    <RowDefinition Height="Auto"/>
+                  </Grid.RowDefinitions>
+                  <WrapPanel Margin="0,0,0,8">
+                    <Button x:Name="b_add_more" Content="+ Adicionar parâmetros" Margin="0,0,8,0"
+                            ToolTip="Volta à aba 1 para incluir mais parâmetros nesta configuração"/>
+                    <Button x:Name="b_cfg_all" Content="Selecionar todas" Margin="0,0,8,0"
+                            ToolTip="Seleciona todas as linhas da configuração"/>
+                    <Button x:Name="b_copy_from" Content="Copiar da linha" Margin="0,0,8,0"
+                            ToolTip="Mostra nos controles à direita o grupo, o vínculo e as categorias da linha selecionada"/>
+                    <Button x:Name="b_remove" Content="Remover da configuração"
+                            ToolTip="Tira as linhas selecionadas do lote (não altera o projeto nem o arquivo)"/>
+                  </WrapPanel>
+                  <DataGrid x:Name="grid_cfg" Grid.Row="1" """ + _GRID + u"""
+                            SelectionMode="Extended" RowHeight="26" IsReadOnly="True">
+                    <DataGrid.Columns>
+                      <DataGridTextColumn Header="Parâmetro" Binding="{Binding Nome}" Width="1.4*" MinWidth="120"
+                                          ElementStyle="{StaticResource cell}"/>
+                      <DataGridTextColumn Header="Grupo de propriedades" Binding="{Binding Grupo}" Width="*" MinWidth="100"
+                                          ElementStyle="{StaticResource cell}"/>
+                      <DataGridTextColumn Header="Vínculo" Binding="{Binding Vinculo}" Width="72"
+                                          ElementStyle="{StaticResource cell}"/>
+                      <DataGridTextColumn Header="Categorias" Binding="{Binding Categorias}" Width="1.6*" MinWidth="120"
+                                          ElementStyle="{StaticResource cell}"/>
+                      <DataGridTextColumn Header="Situação" Binding="{Binding Situacao}" Width="1.4*" MinWidth="110"
+                                          ElementStyle="{StaticResource status}"/>
+                    </DataGrid.Columns>
+                  </DataGrid>
+                  <StackPanel Grid.Row="2">
+                    <Border Style="{StaticResource oca.Msg.Info}" Visibility="{Binding Visibility, ElementName=tb_cfg_msg}">
+                      <TextBlock x:Name="tb_cfg_msg" Style="{StaticResource oca.MsgText}"/>
+                    </Border>
+                    <DockPanel Margin="0,10,0,4">
+                      <Button x:Name="b_review" Content="Revisar  →" DockPanel.Dock="Right" MinWidth="120" Margin="8,0,0,0"
+                              ToolTip="Mostra o que será feito com cada parâmetro antes de aplicar"/>
+                      <TextBlock Style="{StaticResource oca.Hint}" VerticalAlignment="Center"
+                                 Text="Configuração individual: selecione linhas (Ctrl/Shift + clique), ajuste os controles à direita e clique em 'Aplicar às selecionadas'."/>
+                    </DockPanel>
+                  </StackPanel>
+                </Grid>
+
+                <Grid Grid.Column="2">
+                  <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="*" MinHeight="180"/>
+                    <RowDefinition Height="Auto"/>
+                  </Grid.RowDefinitions>
+
+                  <HeaderedContentControl Header="GRUPO DE PROPRIEDADES (PALETA PROPRIEDADES)" Style="{StaticResource oca.Section}">
+                    <StackPanel>
+                      <ComboBox x:Name="cb_group"
+                                ToolTip="Seção da paleta Propriedades em que o parâmetro aparece (lista da versão do Revit em uso)"/>
+                      <TextBlock Style="{StaticResource oca.Hint}" Margin="0,6,0,0"
+                                 Text="É onde o parâmetro aparece no Revit. Não é o grupo de definição do TXT, que só organiza o arquivo."/>
+                    </StackPanel>
+                  </HeaderedContentControl>
+
+                  <HeaderedContentControl Grid.Row="1" Header="TIPO DE VÍNCULO" Style="{StaticResource oca.Section}">
+                    <StackPanel>
+                      <RadioButton x:Name="rb_inst" GroupName="kind" IsChecked="True"
+                                   Content="Instância: cada elemento tem o seu próprio valor"/>
+                      <RadioButton x:Name="rb_type" GroupName="kind"
+                                   Content="Tipo: um valor por tipo, igual em todas as instâncias dele"/>
+                      <Border Style="{StaticResource oca.Msg.Warn}" Margin="0,2,0,0">
+                        <TextBlock Style="{StaticResource oca.MsgText}"
+                                   Text="Muda onde o dado é preenchido (Propriedades x Editar tipo) e como aparece em tabelas. Depois de aplicada, trocar exige excluir o parâmetro e os valores: este comando não faz isso."/>
+                      </Border>
+                    </StackPanel>
+                  </HeaderedContentControl>
+
+                  <HeaderedContentControl Grid.Row="2" Header="CATEGORIAS" Style="{StaticResource oca.Section}">
+                    <DockPanel>
+                      <Grid DockPanel.Dock="Top" Margin="0,0,0,6">
+                        <Grid.ColumnDefinitions>
+                          <ColumnDefinition Width="*"/>
+                          <ColumnDefinition Width="Auto"/>
+                        </Grid.ColumnDefinitions>
+                        <TextBox x:Name="f_cat_search" ToolTip="Buscar categoria pelo nome (sem diferença de acento)"/>
+                        <ComboBox x:Name="cb_cat_type" Grid.Column="1" Width="130" Margin="8,0,0,0"
+                                  ToolTip="Modelo, Anotação ou Analítico"/>
+                      </Grid>
+                      <DockPanel DockPanel.Dock="Top" Margin="0,0,0,6" LastChildFill="False">
+                        <Button x:Name="b_cat_all" Content="Marcar visíveis" Style="{StaticResource oca.Compact}"
+                                ToolTip="Marca as categorias que estão na lista com a busca e o filtro atuais"/>
+                        <Button x:Name="b_cat_none" Content="Desmarcar todas" Style="{StaticResource oca.Compact}" Margin="6,0,0,0"/>
+                        <CheckBox x:Name="chk_cat_only" Content="Só marcadas" DockPanel.Dock="Right"
+                                  Style="{StaticResource inline}" Margin="0"/>
+                      </DockPanel>
+                      <TextBlock x:Name="tb_cat_count" DockPanel.Dock="Bottom" Style="{StaticResource oca.Hint}" Margin="0,6,0,0"/>
+                      <DataGrid x:Name="grid_cats" """ + _GRID + u""" SelectionMode="Extended" RowHeight="24">
+                        <DataGrid.Columns>
+                          <DataGridTemplateColumn Header="✓" Width="34" CanUserResize="False" SortMemberPath="Sel">
+                            <DataGridTemplateColumn.CellTemplate>
+                              <DataTemplate>
+                                <CheckBox Style="{StaticResource tight}"
+                                          IsChecked="{Binding Sel, UpdateSourceTrigger=PropertyChanged}"/>
+                              </DataTemplate>
+                            </DataGridTemplateColumn.CellTemplate>
+                          </DataGridTemplateColumn>
+                          <DataGridTextColumn Header="Categoria" Binding="{Binding Nome}" Width="*" IsReadOnly="True"
+                                              ElementStyle="{StaticResource cell}"/>
+                          <DataGridTextColumn Header="Tipo" Binding="{Binding Tipo}" Width="86" IsReadOnly="True"
+                                              ElementStyle="{StaticResource cell}"/>
+                        </DataGrid.Columns>
+                      </DataGrid>
+                    </DockPanel>
+                  </HeaderedContentControl>
+
+                  <HeaderedContentControl Grid.Row="3" Header="APLICAR NA CONFIGURAÇÃO" Style="{StaticResource oca.Section}" Margin="0">
+                    <StackPanel>
+                      <WrapPanel Margin="0,0,0,8">
+                        <CheckBox x:Name="chk_set_group" Content="Grupo" IsChecked="True" Style="{StaticResource inline}"/>
+                        <CheckBox x:Name="chk_set_kind" Content="Vínculo" IsChecked="True" Style="{StaticResource inline}"/>
+                        <CheckBox x:Name="chk_set_cats" Content="Categorias" IsChecked="True" Style="{StaticResource inline}"/>
+                      </WrapPanel>
+                      <Grid>
+                        <Grid.ColumnDefinitions>
+                          <ColumnDefinition Width="*"/>
+                          <ColumnDefinition Width="8"/>
+                          <ColumnDefinition Width="*"/>
+                        </Grid.ColumnDefinitions>
+                        <Button x:Name="b_apply_sel" Content="Aplicar às selecionadas"
+                                ToolTip="Usa as opções marcadas acima só nas linhas selecionadas da configuração"/>
+                        <Button x:Name="b_apply_all" Grid.Column="2" Content="Aplicar a todas"
+                                ToolTip="Usa as opções marcadas acima em todas as linhas da configuração"/>
+                      </Grid>
+                    </StackPanel>
+                  </HeaderedContentControl>
+                </Grid>
+              </Grid>
+            </TabItem>
+
+            <!-- ============ 3. REVISÃO ============ -->
+            <TabItem Header="3 · Revisão">
+              <Grid>
+                <Grid.RowDefinitions>
+                  <RowDefinition Height="Auto"/>
+                  <RowDefinition Height="Auto"/>
+                  <RowDefinition Height="*"/>
+                  <RowDefinition Height="Auto"/>
+                </Grid.RowDefinitions>
+                <Border x:Name="bd_review" Style="{StaticResource oca.Msg.Info}" Margin="0,0,0,8"
+                        Visibility="{Binding Visibility, ElementName=tb_review}">
+                  <TextBlock x:Name="tb_review" Style="{StaticResource oca.MsgText}"/>
+                </Border>
+                <StackPanel Grid.Row="1" Margin="0,0,0,8">
+                  <CheckBox x:Name="chk_extend" IsChecked="True"
+                            Content="Adicionar as categorias novas aos parâmetros que já estão vinculados ao projeto"/>
+                  <TextBlock Style="{StaticResource oca.Hint}" Margin="22,0,0,0"
+                             Text="As categorias atuais, o tipo de vínculo e o grupo são mantidos. Valores já preenchidos são conferidos antes de confirmar; se algum mudar, nada é gravado."/>
+                </StackPanel>
+                <DataGrid x:Name="grid_review" Grid.Row="2" """ + _GRID + u""" IsReadOnly="True"
+                          SelectionMode="Extended">
+                  <DataGrid.Columns>
+                    <DataGridTextColumn Header="Parâmetro" Binding="{Binding Nome}" Width="1.3*" MinWidth="120"
+                                        ElementStyle="{StaticResource wrap}"/>
+                    <DataGridTextColumn Header="Ação" Binding="{Binding Acao}" Width="140"
+                                        ElementStyle="{StaticResource statusWrap}"/>
+                    <DataGridTextColumn Header="Grupo de propriedades" Binding="{Binding Grupo}" Width="*" MinWidth="100"
+                                        ElementStyle="{StaticResource wrap}"/>
+                    <DataGridTextColumn Header="Vínculo" Binding="{Binding Vinculo}" Width="72"
+                                        ElementStyle="{StaticResource wrap}"/>
+                    <DataGridTextColumn Header="Categorias" Binding="{Binding Categorias}" Width="2*" MinWidth="140"
+                                        ElementStyle="{StaticResource wrap}"/>
+                    <DataGridTextColumn Header="Observações" Binding="{Binding Obs}" Width="2*" MinWidth="140"
+                                        ElementStyle="{StaticResource wrap}"/>
+                  </DataGrid.Columns>
+                </DataGrid>
+                <TextBlock Grid.Row="3" Style="{StaticResource oca.Hint}" Margin="0,8,0,4"
+                           Text="Nada é gravado até clicar em 'Aplicar no projeto'. Tudo vai numa única transação: se algo falhar, nada é gravado. Nenhum parâmetro é excluído e o arquivo TXT não é alterado."/>
+              </Grid>
+            </TabItem>
+          </TabControl>
+          </Grid>
+
+          <!-- ============ PARÂMETROS NO PROJETO ============ -->
+          <Grid x:Name="pn_proj" Visibility="Collapsed">
+            <Grid.ColumnDefinitions>
+              <ColumnDefinition Width="*" MinWidth="420"/>
+              <ColumnDefinition Width="14"/>
+              <ColumnDefinition Width="360"/>
+            </Grid.ColumnDefinitions>
+            <Grid>
+              <Grid.RowDefinitions>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="*"/>
+                <RowDefinition Height="Auto"/>
+              </Grid.RowDefinitions>
+              <Grid Margin="0,0,0,8">
+                <Grid.ColumnDefinitions>
+                  <ColumnDefinition Width="Auto"/>
+                  <ColumnDefinition Width="*" MinWidth="140"/>
+                  <ColumnDefinition Width="Auto"/>
+                  <ColumnDefinition Width="Auto"/>
                   <ColumnDefinition Width="Auto"/>
                 </Grid.ColumnDefinitions>
-                <TextBox x:Name="f_cat_search" ToolTip="Buscar categoria pelo nome (sem diferença de acento)"/>
-                <ComboBox x:Name="cb_cat_type" Grid.Column="1" Width="130" Margin="8,0,0,0"
-                          ToolTip="Modelo, Anotação ou Analítico"/>
+                <TextBlock Text="Buscar" Style="{StaticResource oca.Label}"/>
+                <TextBox x:Name="f_psearch" Grid.Column="1"
+                         ToolTip="Nome, GUID, tipo de dado, grupo ou categoria. Sem diferença de acento ou maiúscula."/>
+                <ComboBox x:Name="cb_porigin" Grid.Column="2" Width="190" Margin="8,0,0,0"
+                          ToolTip="Parâmetros de projeto (vinculados) ou que existem só por famílias carregadas"/>
+                <ComboBox x:Name="cb_ptxt" Grid.Column="3" Width="170" Margin="8,0,0,0"
+                          ToolTip="Comparação com o TXT carregado (pelo GUID e pelo nome)"/>
+                <CheckBox x:Name="chk_p_only" Grid.Column="4" Content="Só marcados" Margin="12,0,0,0"
+                          VerticalAlignment="Center"/>
               </Grid>
-              <DockPanel DockPanel.Dock="Top" Margin="0,0,0,6" LastChildFill="False">
-                <Button x:Name="b_cat_all" Content="Marcar visíveis" Style="{StaticResource oca.Compact}"
-                        ToolTip="Marca as categorias que estão na lista com a busca e o filtro atuais"/>
-                <Button x:Name="b_cat_none" Content="Desmarcar todas" Style="{StaticResource oca.Compact}" Margin="6,0,0,0"/>
-                <CheckBox x:Name="chk_cat_only" Content="Só marcadas" DockPanel.Dock="Right"
-                          Style="{StaticResource inline}" Margin="0"/>
-              </DockPanel>
-              <TextBlock x:Name="tb_cat_count" DockPanel.Dock="Bottom" Style="{StaticResource oca.Hint}" Margin="0,6,0,0"/>
-              <DataGrid x:Name="grid_cats" """ + _GRID + u""" SelectionMode="Extended" RowHeight="24">
+              <DataGrid x:Name="grid_proj" Grid.Row="1" """ + _GRID + u"""
+                        SelectionMode="Extended" RowHeight="26">
                 <DataGrid.Columns>
                   <DataGridTemplateColumn Header="✓" Width="34" CanUserResize="False" SortMemberPath="Sel">
                     <DataGridTemplateColumn.CellTemplate>
                       <DataTemplate>
-                        <CheckBox Style="{StaticResource tight}"
+                        <CheckBox Style="{StaticResource tight}" IsEnabled="{Binding Pode}"
                                   IsChecked="{Binding Sel, UpdateSourceTrigger=PropertyChanged}"/>
                       </DataTemplate>
                     </DataGridTemplateColumn.CellTemplate>
                   </DataGridTemplateColumn>
-                  <DataGridTextColumn Header="Categoria" Binding="{Binding Nome}" Width="*" IsReadOnly="True"
-                                      ElementStyle="{StaticResource cell}"/>
-                  <DataGridTextColumn Header="Tipo" Binding="{Binding Tipo}" Width="86" IsReadOnly="True"
-                                      ElementStyle="{StaticResource cell}"/>
+                  <DataGridTextColumn Header="Nome" Binding="{Binding Nome}" Width="1.6*" MinWidth="130"
+                                      IsReadOnly="True" ElementStyle="{StaticResource cell}"/>
+                  <DataGridTextColumn Header="Tipo de dado" Binding="{Binding Tipo}" Width="*" MinWidth="80"
+                                      IsReadOnly="True" ElementStyle="{StaticResource cell}"/>
+                  <DataGridTextColumn Header="Vínculo" Binding="{Binding Vinculo}" Width="72"
+                                      IsReadOnly="True" ElementStyle="{StaticResource cell}"/>
+                  <DataGridTextColumn Header="Grupo de propriedades" Binding="{Binding Grupo}" Width="*" MinWidth="100"
+                                      IsReadOnly="True" ElementStyle="{StaticResource cell}"/>
+                  <DataGridTextColumn Header="Categorias" Binding="{Binding Categorias}" Width="1.4*" MinWidth="110"
+                                      IsReadOnly="True" ElementStyle="{StaticResource cell}"/>
+                  <DataGridTextColumn Header="Origem" Binding="{Binding Origem}" Width="*" MinWidth="90"
+                                      IsReadOnly="True" ElementStyle="{StaticResource cell}"/>
+                  <DataGridTextColumn Header="No TXT" Binding="{Binding NoTxt}" Width="1.3*" MinWidth="110"
+                                      IsReadOnly="True" ElementStyle="{StaticResource status}"/>
+                  <DataGridTextColumn Header="GUID" Binding="{Binding Guid}" Width="275" IsReadOnly="True"
+                                      ElementStyle="{StaticResource mono}"/>
                 </DataGrid.Columns>
               </DataGrid>
-            </DockPanel>
-          </HeaderedContentControl>
+              <StackPanel Grid.Row="2">
+                <Border Style="{StaticResource oca.Msg.Err}" Visibility="{Binding Visibility, ElementName=tb_proj_msg}">
+                  <TextBlock x:Name="tb_proj_msg" Style="{StaticResource oca.MsgText}"/>
+                </Border>
+                <DockPanel Margin="0,10,0,4" LastChildFill="False">
+                  <Button x:Name="b_psel_all" Content="Selecionar todos" DockPanel.Dock="Left"
+                          ToolTip="Marca os parâmetros visíveis que ainda não estão no TXT"/>
+                  <Button x:Name="b_psel_none" Content="Limpar seleção" DockPanel.Dock="Left" Margin="8,0,0,0"
+                          ToolTip="Desmarca todos (inclusive os escondidos pelos filtros)"/>
+                  <TextBlock x:Name="tb_pcount" DockPanel.Dock="Left" Margin="14,0,0,0" VerticalAlignment="Center"
+                             Foreground="{StaticResource oca.Ink2}"/>
+                </DockPanel>
+                <TextBlock Style="{StaticResource oca.Hint}"
+                           Text="Só parâmetros que ainda não estão no TXT podem ser marcados para exportar. Clique numa linha para ver todas as categorias. Espaço marca as linhas selecionadas."/>
+              </StackPanel>
+            </Grid>
 
-          <HeaderedContentControl Grid.Row="3" Header="APLICAR NA CONFIGURAÇÃO" Style="{StaticResource oca.Section}" Margin="0">
-            <StackPanel>
-              <WrapPanel Margin="0,0,0,8">
-                <CheckBox x:Name="chk_set_group" Content="Grupo" IsChecked="True" Style="{StaticResource inline}"/>
-                <CheckBox x:Name="chk_set_kind" Content="Vínculo" IsChecked="True" Style="{StaticResource inline}"/>
-                <CheckBox x:Name="chk_set_cats" Content="Categorias" IsChecked="True" Style="{StaticResource inline}"/>
-              </WrapPanel>
-              <Grid>
-                <Grid.ColumnDefinitions>
-                  <ColumnDefinition Width="*"/>
-                  <ColumnDefinition Width="8"/>
-                  <ColumnDefinition Width="*"/>
-                </Grid.ColumnDefinitions>
-                <Button x:Name="b_apply_sel" Content="Aplicar às selecionadas"
-                        ToolTip="Usa as opções marcadas acima só nas linhas selecionadas da configuração"/>
-                <Button x:Name="b_apply_all" Grid.Column="2" Content="Aplicar a todas"
-                        ToolTip="Usa as opções marcadas acima em todas as linhas da configuração"/>
-              </Grid>
-            </StackPanel>
-          </HeaderedContentControl>
+            <Grid Grid.Column="2">
+              <Grid.RowDefinitions>
+                <RowDefinition Height="*" MinHeight="200"/>
+                <RowDefinition Height="Auto"/>
+              </Grid.RowDefinitions>
+              <HeaderedContentControl Header="PARÂMETRO SELECIONADO" Style="{StaticResource oca.Section}">
+                <DockPanel>
+                  <StackPanel DockPanel.Dock="Top">
+                    <TextBlock x:Name="tb_d_name" Style="{StaticResource oca.Value}"
+                               Text="Selecione uma linha da tabela."/>
+                    <TextBlock x:Name="tb_d_guid" Style="{StaticResource oca.Mono}" Margin="0,2,0,0"
+                               Foreground="{StaticResource oca.Ink2}" TextWrapping="Wrap"/>
+                    <TextBlock x:Name="tb_d_info" Style="{StaticResource oca.Hint}" Margin="0,6,0,8"/>
+                    <TextBlock Text="Categorias" Style="{StaticResource oca.Label}" Margin="0,0,0,4"/>
+                  </StackPanel>
+                  <TextBox x:Name="tb_d_cats" IsReadOnly="True" Height="Auto" TextWrapping="Wrap"
+                           VerticalContentAlignment="Top" VerticalScrollBarVisibility="Auto" Padding="8,6"/>
+                </DockPanel>
+              </HeaderedContentControl>
+              <HeaderedContentControl Grid.Row="1" Header="EXPORTAR PARA O TXT CARREGADO" Style="{StaticResource oca.Section}" Margin="0">
+                <StackPanel>
+                  <TextBlock Text="Grupo de definição no TXT" Style="{StaticResource oca.Label}" Margin="0,0,0,4"/>
+                  <ComboBox x:Name="cb_xgroup"
+                            ToolTip="Grupo do arquivo TXT em que as definições serão gravadas (não é o grupo da paleta Propriedades)"/>
+                  <TextBox x:Name="f_xgroup" Margin="0,6,0,0" ToolTip="Nome do grupo novo no TXT"/>
+                  <TextBlock Style="{StaticResource oca.Hint}" Margin="0,8,0,0"
+                             Text="Grava no TXT os parâmetros marcados com o GUID, o nome e o tipo de dado do projeto. Antes, uma cópia do TXT é salva na mesma pasta (_backup_data). O Revit regrava o arquivo no formato dele. Nada é alterado no projeto."/>
+                </StackPanel>
+              </HeaderedContentControl>
+            </Grid>
+          </Grid>
         </Grid>
-      </Grid>
-    </TabItem>
-
-    <!-- ============ 3. REVISÃO ============ -->
-    <TabItem Header="3 · Revisão">
-      <Grid>
-        <Grid.RowDefinitions>
-          <RowDefinition Height="Auto"/>
-          <RowDefinition Height="Auto"/>
-          <RowDefinition Height="*"/>
-          <RowDefinition Height="Auto"/>
-        </Grid.RowDefinitions>
-        <Border x:Name="bd_review" Style="{StaticResource oca.Msg.Info}" Margin="0,0,0,8"
-                Visibility="{Binding Visibility, ElementName=tb_review}">
-          <TextBlock x:Name="tb_review" Style="{StaticResource oca.MsgText}"/>
-        </Border>
-        <StackPanel Grid.Row="1" Margin="0,0,0,8">
-          <CheckBox x:Name="chk_extend" IsChecked="True"
-                    Content="Adicionar as categorias novas aos parâmetros que já estão vinculados ao projeto"/>
-          <TextBlock Style="{StaticResource oca.Hint}" Margin="22,0,0,0"
-                     Text="As categorias atuais, o tipo de vínculo e o grupo são mantidos. Valores já preenchidos são conferidos antes de confirmar; se algum mudar, nada é gravado."/>
-        </StackPanel>
-        <DataGrid x:Name="grid_review" Grid.Row="2" """ + _GRID + u""" IsReadOnly="True"
-                  SelectionMode="Extended">
-          <DataGrid.Columns>
-            <DataGridTextColumn Header="Parâmetro" Binding="{Binding Nome}" Width="1.3*" MinWidth="120"
-                                ElementStyle="{StaticResource wrap}"/>
-            <DataGridTextColumn Header="Ação" Binding="{Binding Acao}" Width="140"
-                                ElementStyle="{StaticResource statusWrap}"/>
-            <DataGridTextColumn Header="Grupo de propriedades" Binding="{Binding Grupo}" Width="*" MinWidth="100"
-                                ElementStyle="{StaticResource wrap}"/>
-            <DataGridTextColumn Header="Vínculo" Binding="{Binding Vinculo}" Width="72"
-                                ElementStyle="{StaticResource wrap}"/>
-            <DataGridTextColumn Header="Categorias" Binding="{Binding Categorias}" Width="2*" MinWidth="140"
-                                ElementStyle="{StaticResource wrap}"/>
-            <DataGridTextColumn Header="Observações" Binding="{Binding Obs}" Width="2*" MinWidth="140"
-                                ElementStyle="{StaticResource wrap}"/>
-          </DataGrid.Columns>
-        </DataGrid>
-        <TextBlock Grid.Row="3" Style="{StaticResource oca.Hint}" Margin="0,8,0,4"
-                   Text="Nada é gravado até clicar em 'Aplicar no projeto'. Tudo vai numa única transação: se algo falhar, nada é gravado. Nenhum parâmetro é excluído e o arquivo TXT não é alterado."/>
-      </Grid>
-    </TabItem>
-  </TabControl>"""
+      </DockPanel>
+    </Border>
+  </Grid>"""
 
 FOOTER_LEFT = u"""
   <TextBlock x:Name="tb_footer" VerticalAlignment="Center" Foreground="{StaticResource oca.Ink2}"/>"""
@@ -499,11 +709,14 @@ FOOTER_LEFT = u"""
 FOOTER = u"""
   <Button x:Name="b_apply" Content="Aplicar no projeto" MinWidth="150" Style="{StaticResource oca.Primary}"
           ToolTip="Disponível na aba Revisão. Pede confirmação e grava tudo numa única transação."/>
+  <Button x:Name="b_export" Content="Exportar para o TXT" MinWidth="150" Style="{StaticResource oca.Primary}"
+          Visibility="Collapsed"
+          ToolTip="Grava no TXT carregado os parâmetros marcados (pede confirmação e faz uma cópia do TXT antes)"/>
   <Button x:Name="b_cancel" Content="Cancelar" Margin="8,0,0,0" ToolTip="Fecha sem alterar o projeto"/>"""
 
 XAML = build_xaml(title=__title__, subtitle=__doc__.split(u"\n")[0], body=BODY,
                   footer_right=FOOTER, footer_left=FOOTER_LEFT, resources=RESOURCES,
-                  size="L", width=1280, height=820, min_width=1060, min_height=640)
+                  size="L", width=1280, height=900, min_width=1060, min_height=700)
 
 
 class ParamManagerWindow(forms.WPFWindow):
@@ -531,11 +744,17 @@ class ParamManagerWindow(forms.WPFWindow):
         # lote: guid -> {"guid", "name", "group_key", "kind", "cats"}
         self.cfg = OrderedDict()
         self.plan_rows = []
+        # aba "Parâmetros no projeto": guid -> item de R.list_project_shared
+        self.proj_items = {}
+        self.txt_names = {}         # nome no TXT -> set(guid)
+        self.proj_mode = False
 
         self._build_tables()
         self._init_controls()
         self._wire_events()
         self._refresh_cfg()
+        self._fill_proj()
+        self._fill_xgroups()
         self._update_footer()
 
         start = to_unicode(config.get_option("last_path", u"") or u"")
@@ -557,6 +776,10 @@ class ParamManagerWindow(forms.WPFWindow):
             ("Guid", S), ("Nome", S), ("Grupo", S), ("Vinculo", S), ("Categorias", S),
             ("Situacao", S), ("Nivel", S)])
         self.t_cats = new_table(u"cats", [("Sel", B), ("Id", I), ("Nome", S), ("Tipo", S), ("Busca", S)])
+        self.t_proj = new_table(u"proj", [
+            ("Sel", B), ("Pode", B), ("Guid", S), ("Nome", S), ("Tipo", S), ("Vinculo", S),
+            ("Grupo", S), ("Categorias", S), ("Origem", S), ("OrigemKey", S), ("NoTxt", S),
+            ("TxtKey", S), ("Nivel", S), ("Busca", S)])
         self.t_review = new_table(u"review", [
             ("Nome", S), ("Acao", S), ("Grupo", S), ("Vinculo", S), ("Categorias", S), ("Obs", S),
             ("Nivel", S)])
@@ -572,6 +795,7 @@ class ParamManagerWindow(forms.WPFWindow):
         self.grid_cfg.ItemsSource = self.t_cfg.DefaultView
         self.grid_cats.ItemsSource = self.t_cats.DefaultView
         self.grid_review.ItemsSource = self.t_review.DefaultView
+        self.grid_proj.ItemsSource = self.t_proj.DefaultView
 
     def _init_controls(self):
         self.cb_fstatus.ItemsSource = list(STATUS_FILTERS.keys())
@@ -587,6 +811,10 @@ class ParamManagerWindow(forms.WPFWindow):
         default = R.default_group_key(self.groups)
         keys = [k for k, _ in self.groups]
         self.cb_group.SelectedIndex = keys.index(default) if default in keys else -1
+        self.cb_porigin.ItemsSource = list(PROJ_ORIGINS.keys())
+        self.cb_porigin.SelectedIndex = 0
+        self.cb_ptxt.ItemsSource = list(PROJ_TXT.keys())
+        self.cb_ptxt.SelectedIndex = 0
         self._update_cat_count()
         self._update_count()
 
@@ -623,6 +851,21 @@ class ParamManagerWindow(forms.WPFWindow):
         self.tabs.SelectionChanged += sf(self._on_tab)
         self.b_apply.Click += sf(self._on_apply)
         self.b_cancel.Click += sf(lambda s, a: self.Close())
+
+        self.rb_mode_link.Checked += sf(lambda s, a: self._set_mode(False))
+        self.rb_mode_proj.Checked += sf(lambda s, a: self._set_mode(True))
+        self.f_psearch.TextChanged += sf(lambda s, a: self._filter_proj())
+        for combo in (self.cb_porigin, self.cb_ptxt):
+            combo.SelectionChanged += sf(lambda s, a: self._filter_proj())
+        self.chk_p_only.Click += sf(lambda s, a: self._filter_proj())
+        self.grid_proj.SelectionChanged += sf(self._on_proj_select)
+        self.grid_proj.PreviewKeyDown += sf(self._on_proj_key)
+        self.b_psel_all.Click += sf(lambda s, a: self._set_proj_marks(
+            [drv.Row for drv in self.t_proj.DefaultView], True))
+        self.b_psel_none.Click += sf(lambda s, a: self._set_proj_marks(list(self.t_proj.Rows), False))
+        self.t_proj.ColumnChanged += self._on_proj_changed
+        self.cb_xgroup.SelectionChanged += sf(self._on_xgroup)
+        self.b_export.Click += sf(self._on_export)
 
     def _safe(self, fn):
         """Erro num evento vira mensagem; nunca chega ao Revit."""
@@ -689,7 +932,7 @@ class ParamManagerWindow(forms.WPFWindow):
         n_off = len([p for p in spf.params if not self._def_info(p).get("usable")])
         self.tb_file_info.Text = (
             u"{} parâmetro(s) em {} grupo(s) · {} indisponível(is) · codificação {} · formato {} · "
-            u"Revit {}. O arquivo é só lido.".format(
+            u"Revit {}. Só é gravado ao exportar (aba Parâmetros no projeto).".format(
                 len(spf.params), len(spf.groups), n_off, spf.encoding, spf.version or u"?",
                 R.revit_version(self.app) or u"?"))
         warns = list(spf.issues)
@@ -700,6 +943,8 @@ class ParamManagerWindow(forms.WPFWindow):
                          u"arquivo.".format(len(dropped)))
         self.tb_file_warn.Text = u"\n".join(warns)
         self._refresh_cfg()
+        self._fill_proj()
+        self._fill_xgroups()
 
     def _def_info(self, p):
         """Combina a leitura do TXT com a do Revit: o parâmetro só é utilizável
@@ -1090,9 +1335,24 @@ class ParamManagerWindow(forms.WPFWindow):
         return (count[P.CREATE] + count[P.EXTEND]) > 0 and not count[P.INCOMPLETE]
 
     def _update_footer(self):
+        if self.proj_mode:
+            self.tb_footer.Text = u"{} parâmetro(s) compartilhado(s) no projeto".format(
+                len(self.proj_items))
+            return
         n = len(self.cfg)
         self.tb_footer.Text = u"Configuração: {} parâmetro(s)".format(n) if n else u""
         self.b_apply.IsEnabled = self.tabs.SelectedIndex == TAB_REVIEW and self._ready()
+
+    def _set_mode(self, proj):
+        """Troca a aba principal: o botão principal do rodapé acompanha a aba."""
+        from System.Windows import Visibility
+        self.proj_mode = bool(proj)
+        shown, hidden = Visibility.Visible, Visibility.Collapsed
+        self.pn_proj.Visibility = shown if proj else hidden
+        self.pn_link.Visibility = hidden if proj else shown
+        self.b_export.Visibility = shown if proj else hidden
+        self.b_apply.Visibility = hidden if proj else shown
+        self._update_footer()
 
     def _go(self, index):
         self.tabs.SelectedIndex = index
@@ -1134,6 +1394,219 @@ class ParamManagerWindow(forms.WPFWindow):
             return
         self.applied = True
         self.Close()
+
+
+    # ---------------------------------------------------------- parâmetros no projeto
+    def _txt_status(self, item):
+        """(texto, chave, nível, pode exportar) do parâmetro em relação ao TXT carregado."""
+        if self.spf is None:
+            return u"Sem TXT carregado", u"none", u"off", False
+        if self.revit_error:
+            return u"O Revit não abriu o TXT", u"none", u"off", False
+        p = self.spf_by_guid.get(item["guid"])
+        if p is not None:
+            if p.name.strip() == item["name"].strip():
+                return u"No TXT · " + p.group_name, u"in", u"ok", False
+            return u"No TXT com outro nome: '{}'".format(p.name.strip()), u"rename", u"warn", False
+        if self.txt_names.get(item["name"].strip()):
+            return u"Conflito: nome no TXT com outro GUID", u"conflict", u"err", False
+        return u"Fora do TXT", u"out", u"", True
+
+    def _fill_proj(self):
+        """Remonta a tabela dos parâmetros compartilhados do projeto."""
+        self._commit(self.grid_proj)
+        marked = set(to_unicode(r["Guid"]) for r in self.t_proj.Select(u"Sel = true"))
+        self.txt_names = {}
+        if self.spf is not None:
+            for p in self.spf.params:
+                if p.guid_key:
+                    self.txt_names.setdefault(p.name.strip(), set()).add(p.guid_key)
+        items = R.list_project_shared(self.doc, self.project, self.cat_names)
+        items.sort(key=lambda i: natural_key(i["name"]))
+        self.proj_items = dict((i["guid"], i) for i in items)
+        self._bulk = True
+        try:
+            self.t_proj.Rows.Clear()
+            for item in items:
+                text, key, level, can = self._txt_status(item)
+                kind = P.KIND_LABELS.get(item["kind"], u"—") if item["bound"] else u"—"
+                cats = (P.cats_summary(item["cats"], self.cat_names) if item["bound"] else u"—")
+                origin = u"Parâmetro de projeto" if item["bound"] else u"Só em famílias"
+                row = self.t_proj.NewRow()
+                row["Sel"] = can and item["guid"] in marked
+                row["Pode"] = can
+                row["Guid"] = item["guid"]
+                row["Nome"] = item["name"]
+                row["Tipo"] = item["datatype"]
+                row["Vinculo"] = kind
+                row["Grupo"] = item["group_label"] or u"—"
+                row["Categorias"] = cats
+                row["Origem"] = origin
+                row["OrigemKey"] = u"bound" if item["bound"] else u"family"
+                row["NoTxt"] = text
+                row["TxtKey"] = key
+                row["Nivel"] = level
+                row["Busca"] = fold(u" ".join([item["name"], item["guid"], item["datatype"],
+                                              item["group_label"], origin, text]
+                                             + item["cats_names"]))
+                self.t_proj.Rows.Add(row)
+        finally:
+            self._bulk = False
+        self.rb_mode_proj.Content = u"Parâmetros no projeto ({})".format(len(items))
+        self._filter_proj()
+        self._show_detail(None)
+        self._update_footer()
+
+    def _filter_proj(self):
+        self._commit(self.grid_proj)
+        parts = []
+        text = search_filter(self.f_psearch.Text or u"")
+        if text:
+            parts.append(text)
+        origin = PROJ_ORIGINS.get(self.cb_porigin.SelectedItem or u"", u"")
+        if origin:
+            parts.append(origin)
+        txt = PROJ_TXT.get(self.cb_ptxt.SelectedItem or u"", u"")
+        if txt:
+            parts.append(txt)
+        if self.chk_p_only.IsChecked:
+            parts.append(u"Sel = true")
+        self.t_proj.DefaultView.RowFilter = u" AND ".join(u"({})".format(p) for p in parts)
+        self._update_proj_count()
+
+    def _on_proj_changed(self, sender, args):
+        if not self._bulk and args.Column.ColumnName == "Sel":
+            self._update_proj_count()
+
+    def _update_proj_count(self):
+        total = self.t_proj.Rows.Count
+        if not total:
+            self.tb_pcount.Text = u"Nenhum parâmetro compartilhado no projeto."
+            return
+        self.tb_pcount.Text = u"{} marcado(s) · {} de {} exibido(s) · {} fora do TXT".format(
+            len(self.t_proj.Select(u"Sel = true")), self.t_proj.DefaultView.Count, total,
+            len(self.t_proj.Select(u"Pode = true")))
+
+    def _set_proj_marks(self, rows, value):
+        self._commit(self.grid_proj)
+        self._bulk = True
+        try:
+            for row in rows:
+                if row["Pode"] or not value:
+                    row["Sel"] = value
+        finally:
+            self._bulk = False
+        self._update_proj_count()
+
+    def _on_proj_key(self, sender, args):
+        if args.Key != Key.Space:
+            return
+        rows = [drv.Row for drv in list(self.grid_proj.SelectedItems)]
+        if rows:
+            self._set_proj_marks(rows, not all(bool(r["Sel"]) for r in rows if r["Pode"]))
+            args.Handled = True
+
+    def _on_proj_select(self, sender, args):
+        if not System.Object.ReferenceEquals(args.OriginalSource, self.grid_proj):
+            return
+        selected = list(self.grid_proj.SelectedItems)
+        self._show_detail(to_unicode(selected[0]["Guid"]) if selected else None)
+
+    def _show_detail(self, guid):
+        item = self.proj_items.get(guid) if guid else None
+        if item is None:
+            self.tb_d_name.Text = u"Selecione uma linha da tabela."
+            self.tb_d_guid.Text = u""
+            self.tb_d_info.Text = u""
+            self.tb_d_cats.Text = u""
+            return
+        text, _, _, _ = self._txt_status(item)
+        self.tb_d_name.Text = item["name"]
+        self.tb_d_guid.Text = item["guid"]
+        if item["bound"]:
+            lines = [u"Tipo de dado: {}".format(item["datatype"] or u"?"),
+                     u"Vínculo: {}".format(P.KIND_LABELS.get(item["kind"], u"?")),
+                     u"Grupo de propriedades: {}".format(item["group_label"] or u"?"),
+                     u"No TXT: {}".format(text)]
+            cats = u"\n".join(item["cats_names"]) or u"(nenhuma)"
+        else:
+            lines = [u"Tipo de dado: {}".format(item["datatype"] or u"?"),
+                     u"Origem: só em famílias carregadas (não é parâmetro de projeto)",
+                     u"No TXT: {}".format(text)]
+            cats = (u"Sem vínculo de projeto: as categorias dependem das famílias que usam o "
+                    u"parâmetro.")
+        self.tb_d_info.Text = u"\n".join(lines)
+        self.tb_d_cats.Text = cats
+
+    def _fill_xgroups(self):
+        """Grupos de definição do TXT carregado + 'Novo grupo…'."""
+        names = [self.spf.groups[g] for g in self.spf.group_order] if self.spf else []
+        current = self.cb_xgroup.SelectedItem
+        self.cb_xgroup.ItemsSource = names + [NEW_GROUP]
+        if current in names:
+            self.cb_xgroup.SelectedItem = current
+        elif u"Exported Parameters" in names:          # grupo que o próprio Revit usa ao exportar
+            self.cb_xgroup.SelectedItem = u"Exported Parameters"
+        else:
+            self.cb_xgroup.SelectedItem = NEW_GROUP
+        if not (self.f_xgroup.Text or u"").strip():
+            self.f_xgroup.Text = DEFAULT_NEW_GROUP
+        self._on_xgroup(None, None)
+
+    def _on_xgroup(self, sender, args):
+        self.f_xgroup.IsEnabled = self.cb_xgroup.SelectedItem == NEW_GROUP
+
+    def _export_group(self):
+        """(nome do grupo, é novo?) escolhido para a exportação."""
+        if self.cb_xgroup.SelectedItem == NEW_GROUP:
+            name = (self.f_xgroup.Text or u"").strip()
+            existing = self.spf.groups.values() if self.spf else []
+            return name, name not in existing
+        return to_unicode(self.cb_xgroup.SelectedItem or u""), False
+
+    def _on_export(self, sender, args):
+        self._commit(self.grid_proj)
+        self.tb_proj_msg.Text = u""
+        if self.spf is None or not self.path:
+            self.tb_proj_msg.Text = u"Carregue um arquivo TXT antes de exportar ('Carregar arquivo…')."
+            return
+        if self.revit_error:
+            self.tb_proj_msg.Text = u"O Revit não abriu o TXT carregado; não é possível exportar para ele."
+            return
+        guids = [to_unicode(r["Guid"]) for r in self.t_proj.Select(u"Sel = true") if r["Pode"]]
+        if not guids:
+            self.tb_proj_msg.Text = u"Marque ao menos um parâmetro que esteja fora do TXT."
+            return
+        group, is_new = self._export_group()
+        error = R.valid_group_name(group)
+        if error:
+            self.tb_proj_msg.Text = error
+            return
+        details = [u"Arquivo: {}".format(self.path),
+                   u"Grupo do TXT: {}{}".format(group, u" (novo)" if is_new else u""),
+                   u"GUID, nome e tipo de dado são os do projeto. Nada muda no projeto.",
+                   u"Antes de gravar, uma cópia do TXT é salva na mesma pasta.",
+                   u"Descrição fica vazia e 'editável pelo usuário' fica sim: a API não informa "
+                   u"esses dados no projeto."]
+        if not forms.alert(u"Exportar {} parâmetro(s) para o TXT?".format(len(guids)),
+                           sub_msg=u"\n".join(details), title=ALERT_TITLE, yes=True, no=True):
+            return
+        try:
+            written, backup = R.export_definitions(self.doc, self.path, guids, group)
+        except R.ExportError as ex:
+            self._load(self.path)
+            info = [to_unicode(ex)]
+            if ex.written:
+                info.insert(0, u"Gravados antes do erro: {}.".format(u", ".join(ex.written)))
+            if ex.backup:
+                info.append(u"Cópia do TXT anterior: {}".format(ex.backup))
+            forms.alert(u"A exportação parou no meio." if ex.written
+                        else u"A exportação falhou. Nenhum parâmetro foi gravado.",
+                        sub_msg=u"\n".join(info), title=ALERT_TITLE)
+            return
+        self._load(self.path)
+        forms.alert(u"{} parâmetro(s) exportado(s) para o TXT.".format(len(written)),
+                    sub_msg=u"Cópia do arquivo anterior: {}".format(backup), title=ALERT_TITLE)
 
 
 def main():
