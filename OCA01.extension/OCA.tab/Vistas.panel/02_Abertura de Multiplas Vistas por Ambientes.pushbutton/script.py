@@ -1479,13 +1479,12 @@ def collect_rooms():
 FOLDER_BLOCK = u"""
             <TextBlock Text="@T@" FontWeight="SemiBold" Margin="0,4,0,6"/>
             <StackPanel x:Name="@K@_box">
-              <RadioButton x:Name="@K@_f_exist" GroupName="@K@_folder" Content="Pasta existente"/>
-              <ComboBox x:Name="@K@_list" Margin="22,0,0,8"/>
+              <RadioButton x:Name="@K@_f_exist" GroupName="@K@_folder" Content="Pasta"/>
+              <ComboBox x:Name="@K@_list" Margin="22,0,0,8"
+                        ToolTip="Pastas existentes no modelo. 'Não definir pasta' = a vista fica sem pasta e o nome sem prefixo."/>
               <RadioButton x:Name="@K@_f_new" GroupName="@K@_folder" Content="Nova pasta"/>
               <TextBox x:Name="@K@_new" Margin="22,0,0,8"
                        ToolTip="Ex.: D003_DETALHAMENTO - o texto antes do 1º '_' vira o prefixo do nome da vista (View Name)"/>
-              <RadioButton x:Name="@K@_f_none" GroupName="@K@_folder"
-                           Content="Não definir pasta (nome da vista sem prefixo)"/>
             </StackPanel>
             <Border Style="{StaticResource oca.Msg.Warn}" Visibility="{Binding Visibility, ElementName=@K@_lock}">
               <TextBlock x:Name="@K@_lock" Style="{StaticResource oca.MsgText}"/>
@@ -1698,57 +1697,62 @@ CROP_XAML = build_xaml(title=__title__, subtitle=__doc__, body=CROP_BODY,
                        footer_right=CROP_FOOTER, size="M", width=1240)
 
 ROOM_ITEM_WIDTH = 270   # largura de cada ambiente na lista (4 por linha na janela de 1240)
-FOLDER_MODES = ("existing", "new", "none")
+FOLDER_MODES = ("existing", "new")   # botões do bloco; "none" = 1º item da lista "Pasta"
+NO_FOLDER = u"Não definir pasta"     # 1º item da lista "Pasta": vista sem pasta, nome sem prefixo
 CREATE_MODES = ("plans", "elev", "both")
 DIR_ORDER = ("N", "L", "S", "O")   # ordem dos checkboxes: ELEVAÇÃO 01..04
 
 
 class FolderPicker(object):
-    """Um bloco de destino (pasta existente / nova / nenhuma). Se o View
-    Template escolhido controla 'Pasta' ou 'Pasta Project Browser', o bloco
-    trava: a vista vai para a pasta do template e o prefixo vem dela."""
+    """Um bloco de destino: "Pasta" (lista: 'Não definir pasta' + pastas
+    existentes) ou "Nova pasta". Se o View Template escolhido controla 'Pasta'
+    ou 'Pasta Project Browser', o bloco trava: a vista vai para a pasta do
+    template e o prefixo vem dela."""
 
     def __init__(self, win, key, folders, saved, on_change):
         def ctl(name):
             return getattr(win, u"{}_{}".format(key, name))
         self.folders = folders
-        self.rb = {"existing": ctl("f_exist"), "new": ctl("f_new"), "none": ctl("f_none")}
+        self.rb = {"existing": ctl("f_exist"), "new": ctl("f_new")}
         self.box, self.list, self.new = ctl("box"), ctl("list"), ctl("new")
         self.lock_txt, self.prefix_txt = ctl("lock"), ctl("prefix")
 
-        labels = [e["label"] for e in folders.entries]
+        # 1º item = 'Não definir pasta'; depois as pastas existentes
+        labels = [NO_FOLDER] + [e["label"] for e in folders.entries]
         self.list.ItemsSource = labels
-        if labels:
-            self.list.SelectedIndex = (labels.index(saved["folder"])
-                                       if saved["folder"] in labels else 0)
+        self.list.SelectedIndex = (labels.index(saved["folder"])
+                                   if saved["folder"] in labels else 0)
         self.new.Text = saved["folder_new"]
-        allowed = {"existing": folders.available and bool(labels),
-                   "new": folders.available, "none": True}
+        allowed = {"existing": True, "new": folders.available}   # 'Pasta' sempre tem 'Não definir pasta'
         for k, rb in self.rb.items():
             rb.IsEnabled = allowed[k]
             rb.Checked += on_change
         self.list.SelectionChanged += on_change
         self.new.TextChanged += on_change
-        # sempre abre em "Pasta existente" (igual ao 01; a pasta escolhida da
-        # última vez continua selecionada na lista); sem pastas, a próxima opção
-        start = next(k for k in FOLDER_MODES if allowed[k])
-        self.rb[start].IsChecked = True
+        # sempre abre em "Pasta" (igual ao 01; a pasta escolhida da última vez
+        # continua selecionada na lista)
+        self.rb["existing"].IsChecked = True
 
     @property
     def mode(self):
+        """Botão marcado: "existing" (Pasta) ou "new" (Nova pasta)."""
         return next((k for k in FOLDER_MODES if self.rb[k].IsChecked), "none")
 
     def choice(self, template):
-        """{"mode", "name", "locked"}: name = pasta onde a vista fica (define o prefixo)."""
+        """{"mode", "name", "locked"}: name = pasta onde a vista fica (define o prefixo).
+        "Pasta" com 'Não definir pasta' = mode "none" (sem pasta, sem prefixo)."""
         forced = self.folders.template_value(template["id"]) if template else None
         if forced is not None:
             return {"mode": "template", "name": forced, "locked": True}
         mode = self.mode
         name = u""
         if mode == "existing":
-            idx = self.list.SelectedIndex
+            idx = self.list.SelectedIndex - 1   # índice em entries (o 0 da lista é NO_FOLDER)
             entries = self.folders.entries
-            name = entries[idx]["name"] if 0 <= idx < len(entries) else u""
+            if idx == -1:
+                mode = "none"
+            else:
+                name = entries[idx]["name"] if 0 <= idx < len(entries) else u""
         elif mode == "new":
             name = to_unicode(self.new.Text).strip()
         return {"mode": mode, "name": name, "locked": False}
@@ -1758,8 +1762,9 @@ class FolderPicker(object):
         self.box.IsEnabled = not c["locked"]
         self.box.Opacity = 0.4 if c["locked"] else 1.0
         if not c["locked"]:
-            self.list.IsEnabled = c["mode"] == "existing"
-            self.new.IsEnabled = c["mode"] == "new"
+            # pelo botão marcado: com 'Não definir pasta' a lista continua ativa
+            self.list.IsEnabled = self.mode == "existing"
+            self.new.IsEnabled = self.mode == "new"
         self.lock_txt.Text = (u"Atenção, o Modelo de Vista (View Template) selecionado já "
                               u"prevê uma pasta no navegador de projeto." if c["locked"] else u"")
         prefix = name_prefix(c)
@@ -1768,7 +1773,7 @@ class FolderPicker(object):
 
     def saved_values(self):
         sel = self.list.SelectedItem
-        return {"folder_mode": self.mode,
+        return {"folder_mode": self.choice(None)["mode"],
                 "folder": to_unicode(sel) if sel is not None else u"",
                 "folder_new": to_unicode(self.new.Text).strip()}
 
