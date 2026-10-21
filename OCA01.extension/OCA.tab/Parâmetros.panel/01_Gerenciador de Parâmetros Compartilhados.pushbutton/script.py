@@ -60,18 +60,42 @@ import os
 import re
 from collections import OrderedDict
 
+# Referências .NET ANTES de qualquer "from System.<namespace> import": no
+# IronPython um namespace .NET só vira módulo importável depois que o assembly
+# que o contém foi referenciado no motor do script (clr.AddReference). O WPF
+# já estar carregado no processo do Revit não basta. Sem isso: "ImportError:
+# No module named Windows". Os nomes valem no .NET Framework 4.8 (Revit 2024)
+# e no .NET 8 (Revit 2025/2026).
 import clr
-clr.AddReference("System.Data")
+clr.AddReference("PresentationFramework")    # System.Windows.Controls (DataGrid...)
+clr.AddReference("PresentationCore")         # System.Windows (Visibility)
+clr.AddReference("WindowsBase")              # System.Windows.Input (Key) e tipos base do WPF
+clr.AddReference("System.Data")              # System.Data (DataTable)
+try:
+    clr.AddReference("System.Data.Common")   # .NET 8: onde DataTable está de fato (Revit 2025+)
+except Exception:                            # .NET Framework 4.8 (Revit 2024): não existe, nem precisa
+    pass
+
+from pyrevit import revit, script, forms     # pyRevit também referencia o WPF (pyrevit.framework)
+
 import System
 from System.Data import DataTable
+from System.Windows import Visibility
 from System.Windows.Controls import DataGridEditingUnit
 from System.Windows.Input import Key
 
-from pyrevit import revit, script, forms
-from oca_ds import build_xaml, alert_title
-from oca_params import spfile
-from oca_params import plan as P
-from oca_params import revit_ops as R
+try:
+    # pacotes da pasta lib da extensão (o pyRevit põe <extensão>\lib no caminho de importação)
+    from oca_ds import build_xaml, alert_title
+    from oca_params import spfile
+    from oca_params import plan as P
+    from oca_params import revit_ops as R
+except ImportError as _missing:
+    forms.alert(u"Arquivos do comando não encontrados.",
+                sub_msg=u"{}\n\nCopie as pastas 'lib\\oca_ds' e 'lib\\oca_params' para a pasta 'lib' "
+                        u"da mesma extensão deste botão e use Recarregar no pyRevit.".format(_missing),
+                title=u"OCA · Gerenciador de Parâmetros Compartilhados")
+    script.exit()
 
 ALERT_TITLE = alert_title(__title__)   # "OCA · Gerenciador de Parâmetros Compartilhados"
 
@@ -1345,7 +1369,6 @@ class ParamManagerWindow(forms.WPFWindow):
 
     def _set_mode(self, proj):
         """Troca a aba principal: o botão principal do rodapé acompanha a aba."""
-        from System.Windows import Visibility
         self.proj_mode = bool(proj)
         shown, hidden = Visibility.Visible, Visibility.Collapsed
         self.pn_proj.Visibility = shown if proj else hidden
