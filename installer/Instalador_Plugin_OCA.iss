@@ -1,15 +1,16 @@
 ﻿; =============================================================================
-;  Instalador do Plugin OCA - extensão pyRevit (OCA.extension)
+;  Instalador do Plugin OCA - extensão pyRevit (OCA<versão>.extension)
 ;  Compilador: Inno Setup 6.4 ou superior (https://jrsoftware.org/isinfo.php)
 ;
 ;  Compilar:   installer\build.ps1            (recomendado - ver installer\LEIA-ME.md)
 ;         ou   ISCC.exe installer\Instalador_Plugin_OCA.iss
 ;         ou   abrir este arquivo no Inno Setup e clicar em Build > Compile
 ;
-;  Saída:      dist\Instalador_Plugin_OCA.exe
+;  Saída:      dist\Instalador_Plugin_<nome da extensão>.exe
+;              (ex.: OCA1.01.extension -> dist\Instalador_Plugin_OCA1.01.exe)
 ;
 ;  Este script NÃO altera nenhum arquivo do plugin. Na compilação ele:
-;    1. valida a estrutura de OCA.extension (startup.py, OCA.tab, lib\oca_ds,
+;    1. valida a estrutura da extensão (startup.py, OCA.tab, lib\oca_ds,
 ;       script.py em cada .pushbutton...);
 ;    2. lê a versão do plugin em OCA.tab\Sobre.panel\Sobre.pushbutton\script.py
 ;       (VERSAO = u"1.01", ou no formato antigo u"dd/mm/aaaa" -> aaaa.mm.dd),
@@ -26,28 +27,49 @@
 #define AppShortName  "Plugin OCA"
 #define AppPublisher  "Oliveira Cotta"
 #define AppURL        "https://www.oliveiracotta.com.br"
-#define ExtName       "OCA.extension"
 ; GUID fixo: identifica o produto no Windows. NUNCA altere - é ele que permite
 ; que versões futuras reconheçam e atualizem esta instalação.
 #define AppGuid       "0EDB5C30-7A63-400F-9133-7C591AFBFA0B"
 
-; Pasta com a extensão (padrão: ..\OCA.extension em relação a este .iss).
-; Pode ser trocada na linha de comando: ISCC /DSourceRoot="C:\caminho\OCA.extension"
+; Pasta com a extensão: a ÚNICA pasta *.extension na raiz do repositório (ao
+; lado da pasta installer). O nome dela é o nome instalado no pyRevit e define
+; o nome do .exe: OCA1.01.extension -> Instalador_Plugin_OCA1.01.exe.
+; Pode ser trocada na linha de comando: ISCC /DSourceRoot="C:\caminho\OCA1.01.extension"
 #ifndef SourceRoot
-  #define SourceRoot  SourcePath + "..\" + ExtName
+  ; lista "Nome1|Nome2|" das pastas *.extension ao lado da pasta installer
+  #define ListarExt(int Achou, int H, str Acc) \
+    Achou \
+      ? ( Local[0] = FindGetFileName(H), \
+          ListarExt(FindNext(H), H, DirExists(SourcePath + "..\" + Local[0]) ? Acc + Local[0] + "|" : Acc) ) \
+      : Acc
+  #define ExtH FindFirst(SourcePath + "..\*.extension", faAnyFile)
+  #define ExtLista (ExtH ? ListarExt(1, ExtH, "") : "")
+  #if ExtLista == ""
+    #error Nenhuma pasta *.extension encontrada ao lado da pasta installer (ou use /DSourceRoot=...).
+  #endif
+  #define ExtFound Copy(ExtLista, 1, Pos("|", ExtLista) - 1)
+  #if Len(ExtLista) > Len(ExtFound) + 1
+    #error Há mais de uma pasta *.extension ao lado da pasta installer. Deixe só a versão a empacotar (ou use /DSourceRoot=...).
+  #endif
+  #define SourceRoot  SourcePath + "..\" + ExtFound
 #endif
+#define ExtName       ExtractFileName(RemoveBackslash(SourceRoot))
+#if LowerCase(ExtractFileExt(ExtName)) != "extension"
+  #error O nome da pasta da extensão precisa terminar em .extension (encontrado: {#ExtName}).
+#endif
+#define ExtBase       Copy(ExtName, 1, Len(ExtName) - Len(".extension"))
 
 ; -----------------------------------------------------------------------------
 ; 1. Validação da estrutura da extensão (na compilação)
 ; -----------------------------------------------------------------------------
 #if !DirExists(SourceRoot)
-  #error Pasta da extensão não encontrada. Esperado: OCA.extension ao lado da pasta installer (ou use /DSourceRoot=...).
+  #error Pasta da extensão não encontrada (verifique /DSourceRoot=...).
 #endif
 
 #define RequireFile(str Rel) \
-  FileExists(SourceRoot + "\" + Rel) ? "" : Error("Arquivo obrigatório ausente em OCA.extension: " + Rel)
+  FileExists(SourceRoot + "\" + Rel) ? "" : Error("Arquivo obrigatório ausente em " + ExtName + ": " + Rel)
 #define RequireDir(str Rel) \
-  DirExists(SourceRoot + "\" + Rel) ? "" : Error("Pasta obrigatória ausente em OCA.extension: " + Rel)
+  DirExists(SourceRoot + "\" + Rel) ? "" : Error("Pasta obrigatória ausente em " + ExtName + ": " + Rel)
 
 #expr RequireFile("startup.py")
 #expr RequireDir("OCA.tab")
@@ -97,6 +119,10 @@
   #endif
 #endif
 
+#if Pos(AppVersion, ExtName) == 0
+  #expr Warning("A versão do botão Sobre (" + AppVersion + ") não aparece no nome da pasta " + ExtName + ". Confira se ambos foram atualizados.")
+#endif
+
 ; -----------------------------------------------------------------------------
 ; 3. Varredura da extensão: gera as entradas de [Files] e o manifesto SHA-256
 ;    a partir da MESMA lista, então o que é instalado é exatamente o que é
@@ -142,7 +168,7 @@
 #define ListaManifesto  ProcessarPasta(2, SourceRoot, "")
 
 #if Pos("M(", ListaManifesto) == 0
-  #error Nenhum arquivo encontrado em OCA.extension.
+  #error Nenhum arquivo encontrado na pasta da extensão.
 #endif
 
 [Setup]
@@ -160,7 +186,7 @@ VersionInfoCompany={#AppPublisher}
 VersionInfoCopyright=© {#Copy(AppVersion, 1, 4)} {#AppPublisher}
 
 ; {app} = pasta de EXTENSÕES do pyRevit (a pasta que contém as *.extension).
-; O plugin vai para {app}\OCA.extension. O valor real é decidido pela detecção
+; O plugin vai para {app}\{#ExtName}. O valor real é decidido pela detecção
 ; em [Code] (GetDefaultDir) e pode ser trocado pelo usuário.
 DefaultDirName={code:GetDefaultDir}
 AppendDefaultDirName=no
@@ -190,7 +216,7 @@ UninstallDisplayName={#AppName}
 UninstallDisplayIcon={uninstallexe}
 
 OutputDir={#SourcePath}..\dist
-OutputBaseFilename=Instalador_Plugin_OCA
+OutputBaseFilename=Instalador_Plugin_{#ExtBase}
 SetupIconFile={#SourcePath}assets\oca_setup.ico
 WizardStyle=modern
 WizardSizePercent=120
@@ -209,12 +235,12 @@ ShowLanguageDialog=no
 Name: "ptbr"; MessagesFile: "compiler:Languages\BrazilianPortuguese.isl"
 
 [Messages]
-WelcomeLabel2=Este assistente vai instalar o [name/ver] (extensão OCA.extension do pyRevit) neste computador.%n%nO instalador procura a pasta de extensões do pyRevit, mostra o que encontrou e pede confirmação antes de copiar qualquer arquivo. Se já houver uma versão instalada, você poderá escolher entre atualizar ou cancelar, e um backup será feito antes.%n%nRecomenda-se fechar o Revit antes de continuar (não é obrigatório).
-SelectDirLabel3=O plugin será instalado na subpasta OCA.extension, dentro da pasta de EXTENSÕES do pyRevit indicada abaixo.
-SelectDirBrowseLabel=Informe a pasta que CONTÉM as extensões do pyRevit (não a pasta OCA.extension). Para trocar, clique em Procurar.
+WelcomeLabel2=Este assistente vai instalar o [name/ver] (extensão {#ExtName} do pyRevit) neste computador.%n%nO instalador procura a pasta de extensões do pyRevit, mostra o que encontrou e pede confirmação antes de copiar qualquer arquivo. Se já houver uma versão instalada (inclusive uma versão antiga com outro nome de pasta, como OCA.extension), você poderá escolher o que fazer, e um backup será feito antes.%n%nRecomenda-se fechar o Revit antes de continuar (não é obrigatório).
+SelectDirLabel3=O plugin será instalado na subpasta {#ExtName}, dentro da pasta de EXTENSÕES do pyRevit indicada abaixo.
+SelectDirBrowseLabel=Informe a pasta que CONTÉM as extensões do pyRevit (não a pasta {#ExtName}). Para trocar, clique em Procurar.
 SelectDirDesc=Em qual pasta de extensões do pyRevit o plugin deve ser instalado?
 FinishedHeadingLabel=Instalação do [name] concluída
-UninstalledAll=O %1 foi removido.%n%nSe o Revit estiver aberto, clique em pyRevit > Reload (ou reinicie o Revit) para a aba OCA sumir.%n%nArquivos que não foram instalados por este instalador (por exemplo, arquivos que você adicionou à pasta OCA.extension) e os backups (pasta AppData\Local\OCA\Plugin OCA\Backups) foram mantidos.
+UninstalledAll=O %1 foi removido.%n%nSe o Revit estiver aberto, clique em pyRevit > Reload (ou reinicie o Revit) para a aba OCA sumir.%n%nArquivos que não foram instalados por este instalador (por exemplo, arquivos que você adicionou à pasta {#ExtName}) e os backups (pasta AppData\Local\OCA\Plugin OCA\Backups) foram mantidos.
 
 [Files]
 #emit ListaArquivos
@@ -252,8 +278,11 @@ var
   CandDirs, CandLabels: TStringList;     { pastas onde o pyRevit procura extensões }
   RegisteredDirs: TStringList;           { pastas registradas em pyRevit_config.ini }
   EnvLines: TStringList;                 { texto da página de diagnóstico }
-  ExistingInstalls: TStringList;         { ...\OCA.extension encontrados }
-  ConflictExts: TStringList;             { outras *.extension que também têm OCA.tab }
+  ExistingInstalls: TStringList;         { ...\<EXT_NAME> encontrados }
+  ConflictExts: TStringList;             { outras *.extension com OCA.tab (versões antigas) }
+  OldPage: TInputOptionWizardPage;
+  MigratedOld: TStringList;
+  PrevStateExt: String;
   PyRevitFound, RevitRunning: Boolean;
   AttachedYears: String;
 
@@ -790,6 +819,7 @@ var Text, Line: String; L: TStringList; I, P1, P2: Integer;
 begin
   PrevStateDir := '';
   PrevStateVersion := '';
+  PrevStateExt := 'OCA.extension';   { instalações antigas não gravavam o nome }
   PrevCount := 0;
   if ReadTextFile(StateDir + '\estado_instalacao.txt', Text) then
   begin
@@ -801,6 +831,7 @@ begin
         Line := L[I];
         if Copy(Line, 1, 6) = 'pasta=' then PrevStateDir := Copy(Line, 7, Length(Line));
         if Copy(Line, 1, 7) = 'versao=' then PrevStateVersion := Copy(Line, 8, Length(Line));
+        if Copy(Line, 1, 9) = 'extensao=' then PrevStateExt := Copy(Line, 10, Length(Line));
       end;
     finally
       L.Free;
@@ -903,7 +934,7 @@ begin
   { 4. Pastas de extensões }
   { (a pasta padrão e as registradas já foram adicionadas acima) }
   LoadPreviousState;
-  if (PrevStateDir <> '') and DirExists(PrevStateDir + '\' + EXT_NAME) then
+  if (PrevStateDir <> '') and (DirExists(PrevStateDir + '\' + EXT_NAME) or DirExists(PrevStateDir + '\' + PrevStateExt)) then
     AddCandidate(PrevStateDir, 'instalação anterior deste plugin');
   FindExistingInstalls;
 
@@ -912,7 +943,7 @@ begin
   begin
     EnvLines.Add('  - ' + CandDirs[I] + '  [' + CandLabels[I] + ']');
     if DirExists(CandDirs[I] + '\' + EXT_NAME) then
-      EnvLines.Add('      já contém OCA.extension (versão ' +
+      EnvLines.Add('      já contém ' + EXT_NAME + ' (versão ' +
         DescribeVersion(VersionFromSobre(CandDirs[I] + '\' + EXT_NAME)) + ')')
     else if not DirExists(CandDirs[I]) then
       EnvLines.Add('      (a pasta ainda não existe; será criada na instalação)');
@@ -920,17 +951,16 @@ begin
   if ConflictExts.Count > 0 then
   begin
     EnvLines.Add('');
-    EnvLines.Add('ATENÇÃO: outra(s) extensão(ões) também contêm a aba OCA.tab:');
+    EnvLines.Add('ATENÇÃO: outra(s) extensão(ões) também contêm a aba OCA (OCA.tab):');
     for I := 0 to ConflictExts.Count - 1 do
-      EnvLines.Add('  - ' + ConflictExts[I]);
-    EnvLines.Add('  Pode ser uma versão antiga instalada com outro nome. Isso pode duplicar');
-    EnvLines.Add('  botões na aba OCA. O instalador NÃO remove essas pastas; se forem');
-    EnvLines.Add('  versões antigas, remova-as manualmente.');
+      EnvLines.Add('  - ' + ConflictExts[I] + '  (versão ' + DescribeVersion(VersionFromSobre(ConflictExts[I])) + ')');
+    EnvLines.Add('  Provavelmente são versões antigas do plugin com outro nome de pasta. Se ficarem,');
+    EnvLines.Add('  a aba OCA terá botões DUPLICADOS. Mais adiante você poderá movê-las para o backup.');
   end;
   if ExistingInstalls.Count > 1 then
   begin
     EnvLines.Add('');
-    EnvLines.Add('ATENÇÃO: há mais de uma OCA.extension em pastas carregadas pelo pyRevit.');
+    EnvLines.Add('ATENÇÃO: há mais de uma ' + EXT_NAME + ' em pastas carregadas pelo pyRevit.');
     EnvLines.Add('  Mantenha apenas uma, para evitar botões duplicados ou conflito de versões.');
   end;
 
@@ -965,15 +995,20 @@ var I: Integer;
 begin
   Result := DefaultExtDir;
   { 1. pasta da instalação anterior feita por este instalador }
-  if (PrevStateDir <> '') and DirExists(PrevStateDir + '\' + EXT_NAME) then
+  if (PrevStateDir <> '') and (DirExists(PrevStateDir + '\' + EXT_NAME) or DirExists(PrevStateDir + '\' + PrevStateExt)) then
   begin
     Result := NormDir(PrevStateDir);
     Exit;
   end;
-  { 2. primeira OCA.extension encontrada numa pasta do pyRevit }
+  { 2. primeira cópia do plugin (mesmo nome ou versão antiga) numa pasta do pyRevit }
   for I := 0 to ExistingInstalls.Count - 1 do
   begin
     Result := ExtractFileDir(ExistingInstalls[I]);
+    Exit;
+  end;
+  for I := 0 to ConflictExts.Count - 1 do
+  begin
+    Result := ExtractFileDir(ConflictExts[I]);
     Exit;
   end;
 end;
@@ -1033,7 +1068,7 @@ begin
   for I := 0 to ExistingInstalls.Count - 1 do
     if not SameDir(ExtractFileDir(ExistingInstalls[I]), D) then
     begin
-      Msg := 'Já existe uma OCA.extension em OUTRA pasta carregada pelo pyRevit:' + CRLF + ExistingInstalls[I] + CRLF + CRLF +
+      Msg := 'Já existe uma ' + EXT_NAME + ' em OUTRA pasta carregada pelo pyRevit:' + CRLF + ExistingInstalls[I] + CRLF + CRLF +
         'Se você instalar em ' + D + ', o pyRevit encontrará duas cópias do plugin. O instalador não remove a outra cópia. ' +
         'Recomenda-se instalar na mesma pasta (para atualizá-la) ou remover a cópia antiga manualmente.' + CRLF + CRLF +
         'Deseja continuar com ' + D + '?';
@@ -1078,7 +1113,7 @@ begin
   begin
     Lbl := CandDirs[I] + '   (' + CandLabels[I] + ')';
     if DirExists(CandDirs[I] + '\' + EXT_NAME) then
-      Lbl := Lbl + ' - contém OCA.extension ' + DescribeVersion(VersionFromSobre(CandDirs[I] + '\' + EXT_NAME));
+      Lbl := Lbl + ' - contém ' + EXT_NAME + ' ' + DescribeVersion(VersionFromSobre(CandDirs[I] + '\' + EXT_NAME));
     DirChoicePage.Add(Lbl);
   end;
   DirChoicePage.Add('Outra pasta (escolher na próxima tela)');
@@ -1092,7 +1127,7 @@ begin
 end;
 
 procedure InitializeWizard;
-var Sub: String;
+var Sub: String; I: Integer;
 begin
   EnvPage := CreateOutputMsgMemoPage(wpInfoBefore,
     'Verificação do pyRevit',
@@ -1122,6 +1157,20 @@ begin
     ExistingPage.SelectedValueIndex := 1
   else
     ExistingPage.SelectedValueIndex := 0;
+
+  OldPage := CreateInputOptionPage(ExistingPage.ID,
+    'Versões antigas do plugin',
+    'Outras pastas com a aba OCA foram encontradas.',
+    'Estas pastas também criam a aba OCA no Revit. Se ficarem junto com ' + EXT_NAME + ', os botões ' +
+    'aparecerão DUPLICADOS. As marcadas serão copiadas para o backup (' + StateDir + '\Backups), conferidas ' +
+    'e só então retiradas da pasta de extensões. Desmarque as que não forem versões antigas deste plugin.',
+    False, False);
+  for I := 0 to ConflictExts.Count - 1 do
+  begin
+    OldPage.Add(ConflictExts[I] + '   (versão ' + DescribeVersion(VersionFromSobre(ConflictExts[I])) + ')');
+    { Em instalações silenciosas: /ANTIGAS=manter deixa as versões antigas onde estão }
+    OldPage.Values[I] := CompareText(ExpandConstant('{param:ANTIGAS|mover}'), 'manter') <> 0;
+  end;
 
   ReportPage := CreateOutputMsgMemoPage(wpInstalling,
     'Relatório da instalação',
@@ -1163,7 +1212,9 @@ begin
   if PageID = wpSelectDir then
     Result := DirChoicePage.SelectedValueIndex <> OtherDirIndex
   else if PageID = ExistingPage.ID then
-    Result := not DirExists(SelectedTargetDir + '\' + EXT_NAME);
+    Result := not DirExists(SelectedTargetDir + '\' + EXT_NAME)
+  else if PageID = OldPage.ID then
+    Result := ConflictExts.Count = 0;
 end;
 
 procedure CurPageChanged(CurPageID: Integer);
@@ -1248,7 +1299,7 @@ end;
 
 function UpdateReadyMemo(Space, NewLine, MemoUserInfoInfo, MemoDirInfo, MemoTypeInfo,
   MemoComponentsInfo, MemoGroupInfo, MemoTasksInfo: String): String;
-var S, T: String;
+var S, T: String; I: Integer;
 begin
   T := SelectedTargetDir + '\' + EXT_NAME;
   S := 'Plugin:' + NewLine + Space + '{#AppName} ' + NEW_VERSION + NewLine + NewLine +
@@ -1266,6 +1317,11 @@ begin
   end
   else
     S := S + 'Ação:' + NewLine + Space + 'nova instalação' + NewLine + NewLine;
+  for I := 0 to ConflictExts.Count - 1 do
+    if OldPage.Values[I] then
+      S := S + 'Versão antiga a retirar (vai para o backup):' + NewLine + Space + ConflictExts[I] + NewLine + NewLine
+    else
+      S := S + 'ATENÇÃO: versão antiga MANTIDA (botões duplicados):' + NewLine + Space + ConflictExts[I] + NewLine + NewLine;
   if not IsRegisteredDir(SelectedTargetDir) then
     S := S + 'ATENÇÃO: esta pasta não está registrada no pyRevit (registre-a depois em pyRevit > Settings).' + NewLine + NewLine;
   if IsRevitRunningNow then
@@ -1333,6 +1389,7 @@ begin
   OverwrittenModified.Clear;
   UpdatedFiles.Clear;
   MovedToBackup.Clear;
+  MigratedOld.Clear;
   BackupDir := '';
   TargetExt := SelectedTargetDir + '\' + EXT_NAME;
 
@@ -1341,6 +1398,34 @@ begin
     Result := 'Sem permissão para gravar em ' + SelectedTargetDir + '.' + CRLF +
       'Escolha outra pasta ou execute o instalador como administrador.';
     Exit;
+  end;
+
+  { 0. Versões antigas com outro nome de pasta: backup conferido e retirada }
+  for I := 0 to ConflictExts.Count - 1 do
+  begin
+    if not OldPage.Values[I] then Continue;
+    OldDir := ConflictExts[I];
+    if not DirExists(OldDir) then Continue;
+    Err := StateDir + '\Backups\' + ExtractFileName(OldDir) + '_' + DescribeVersion(VersionFromSobre(OldDir)) + '_' +
+      GetDateTimeString('yyyy-mm-dd_hh-nn-ss', '-', '-');
+    Rel := Err;
+    if not CopyTreeVerified(OldDir, Rel, Err) then
+    begin
+      Result := 'Não foi possível fazer o backup da versão antiga ' + OldDir + ' (' + Err + ').' + CRLF + CRLF +
+        'Nada foi alterado nessa pasta. Verifique o espaço em disco e tente novamente, ou desmarque essa pasta.';
+      Exit;
+    end;
+    H := OldDir + '.antigo-' + GetDateTimeString('yyyymmddhhnnss', #0, #0);
+    if not RenameFile(OldDir, H) then
+    begin
+      Result := 'Não foi possível retirar a versão antiga:' + CRLF + OldDir + CRLF + CRLF +
+        'Feche o Revit e programas que possam estar usando arquivos dessa pasta e tente de novo. ' +
+        'Há uma cópia completa em:' + CRLF + Rel;
+      Exit;
+    end;
+    if not DelTree(H, True, True, True) then
+      KeptModified.Add('A pasta antiga não pôde ser apagada totalmente e pode ser removida à mão: ' + H);
+    MigratedOld.Add(OldDir + '  ->  backup: ' + Rel);
   end;
 
   if not DirExists(TargetExt) then
@@ -1353,7 +1438,7 @@ begin
   if ExistingPage.SelectedValueIndex = 1 then InstallMode := MODE_CLEAN else InstallMode := MODE_UPDATE;
 
   { 1. Backup completo e conferido da pasta atual }
-  BackupDir := StateDir + '\Backups\OCA.extension_' + DescribeVersion(InstalledVersion) + '_' +
+  BackupDir := StateDir + '\Backups\' + EXT_NAME + '_' + DescribeVersion(InstalledVersion) + '_' +
     GetDateTimeString('yyyy-mm-dd_hh-nn-ss', '-', '-');
   if not CopyTreeVerified(TargetExt, BackupDir, Err) then
   begin
@@ -1363,7 +1448,7 @@ begin
   end;
 
   { O manifesto anterior só vale se a instalação anterior foi nesta mesma pasta }
-  HavePrev := (PrevCount > 0) and SameDir(PrevStateDir, SelectedTargetDir);
+  HavePrev := (PrevCount > 0) and SameDir(PrevStateDir, SelectedTargetDir) and (CompareText(PrevStateExt, EXT_NAME) = 0);
 
   Existing := TStringList.Create;
   try
@@ -1525,7 +1610,7 @@ begin
 end;
 
 procedure VerifyAndReport;
-var L, Manifest: TStringList; I, OkCount: Integer; P, H, ModeText: String;
+var L, Manifest, Others: TStringList; I, OkCount: Integer; P, H, ModeText: String;
 begin
   VerifyFailures.Clear;
   OkCount := 0;
@@ -1554,7 +1639,10 @@ begin
       MODE_UPDATE: ModeText := 'Atualização (versão anterior: ' + DescribeVersion(InstalledVersion) + ')';
       MODE_CLEAN:  ModeText := 'Reinstalação limpa (versão anterior: ' + DescribeVersion(InstalledVersion) + ')';
     else
-      ModeText := 'Nova instalação';
+      if MigratedOld.Count > 0 then
+        ModeText := 'Nova instalação em ' + EXT_NAME + ', substituindo versão antiga com outro nome de pasta'
+      else
+        ModeText := 'Nova instalação';
     end;
 
     L.Add('RELATÓRIO DE INSTALAÇÃO - {#AppName}');
@@ -1581,10 +1669,15 @@ begin
     end;
 
     AddList(L, 'PROBLEMAS ENCONTRADOS NA CONFERÊNCIA', VerifyFailures);
-    if ConflictExts.Count > 0 then
-    begin
-      AddList(L, 'ATENÇÃO: outras extensões também têm a aba OCA (botões podem aparecer DUPLICADOS). ' +
-        'Se forem cópias antigas do plugin, apague-as manualmente e use pyRevit > Reload', ConflictExts);
+    AddList(L, 'Versões antigas do plugin retiradas da pasta de extensões (cópia completa no backup)', MigratedOld);
+    Others := TStringList.Create;
+    try
+      for I := 0 to ConflictExts.Count - 1 do
+        if DirExists(ConflictExts[I]) then Others.Add(ConflictExts[I]);
+      AddList(L, 'ATENÇÃO: estas extensões também têm a aba OCA e foram MANTIDAS (botões podem aparecer ' +
+        'DUPLICADOS). Se forem cópias antigas do plugin, rode o instalador de novo e marque-as, ou apague-as', Others);
+    finally
+      Others.Free;
     end;
     AddList(L, 'Arquivos com conteúdo diferente da versão anterior, ATUALIZADOS', UpdatedFiles);
     AddList(L, 'Arquivos obsoletos da versão anterior removidos', RemovedObsolete);
@@ -1617,7 +1710,7 @@ begin
     end;
     L.Add('');
     L.Add('As configurações dos comandos (pastas, opções salvas) ficam no pyRevit_config.ini e nas pastas de');
-    L.Add('dados do pyRevit, fora de OCA.extension, e não foram alteradas.');
+    L.Add('dados do pyRevit, fora da pasta do plugin, e não foram alteradas.');
 
     ReportFile := StateDir + '\relatorio_instalacao_' + GetDateTimeString('yyyy-mm-dd_hh-nn-ss', '-', '-') + '.txt';
     L.Add('');
@@ -1630,7 +1723,7 @@ begin
     { Estado para a próxima atualização }
     WriteTextFileUTF8(StateDir + '\manifesto_instalado.txt', Manifest.Text);
     WriteTextFileUTF8(StateDir + '\estado_instalacao.txt',
-      'versao=' + NEW_VERSION + CRLF + 'pasta=' + SelectedTargetDir + CRLF +
+      'versao=' + NEW_VERSION + CRLF + 'pasta=' + SelectedTargetDir + CRLF + 'extensao=' + EXT_NAME + CRLF +
       'data=' + GetDateTimeString('yyyy-mm-dd hh:nn:ss', '-', ':') + CRLF);
   finally
     L.Free;
@@ -1660,6 +1753,7 @@ begin
   EnvLines := TStringList.Create;
   ExistingInstalls := TStringList.Create;
   ConflictExts := TStringList.Create;
+  MigratedOld := TStringList.Create;
   RemovedObsolete := TStringList.Create;
   KeptModified := TStringList.Create;
   KeptExtras := TStringList.Create;

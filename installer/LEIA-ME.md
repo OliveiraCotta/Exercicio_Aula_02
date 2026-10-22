@@ -1,7 +1,8 @@
 # Instalador do Plugin OCA (pyRevit)
 
-Gera `dist/Instalador_Plugin_OCA.exe`, que instala a extensão `OCA.extension` na
-pasta de extensões do pyRevit de outro computador, sem depender dos arquivos
+Gera `dist/Instalador_Plugin_OCA1.01.exe`, que instala a extensão
+`OCA1.01.extension` na pasta de extensões do pyRevit de outro computador
+(padrão: `%APPDATA%\pyRevit\Extensions`), sem depender dos arquivos
 originais nem do caminho onde o código foi desenvolvido.
 
 ## Arquivos
@@ -13,16 +14,22 @@ originais nem do caminho onde o código foi desenvolvido.
 | `installer/build-wine.sh` | Compila no Linux via Wine (foi assim que o `.exe` deste repositório foi gerado). |
 | `installer/LEIA_ANTES_DE_INSTALAR.txt` | Texto exibido no assistente antes da instalação. |
 | `installer/assets/` | Ícone e imagens do assistente (gerados por `installer/tools/gerar_assets.py` a partir do logo OCA). |
-| `dist/Instalador_Plugin_OCA.exe` | Instalador pronto. |
+| `dist/Instalador_Plugin_OCA1.01.exe` | Instalador pronto. |
 
-Nenhum arquivo de `OCA.extension` é alterado pelo processo de build.
+Nenhum arquivo da extensão é alterado pelo processo de build.
+
+**Nomes automáticos:** o `.iss` usa a única pasta `*.extension` na raiz do
+repositório. O nome dela é o nome instalado no pyRevit e define o nome do
+instalador: `OCA1.01.extension` → `Instalador_Plugin_OCA1.01.exe`. A compilação
+para com erro se houver zero ou mais de uma pasta `*.extension`, e avisa se a
+versão do botão Sobre não aparecer no nome da pasta.
 
 ## Estrutura da extensão analisada
 
 Versão atual: **1.01** (recebida como `OCA1.01.extension.zip`).
 
 ```
-OCA.extension/
+OCA1.01.extension/
   startup.py                    pinta a barra de título dos painéis (lê os bundle.yaml)
   Instaladores/                 scripts da impressora "OCA PDF24" (.cmd/.ps1) - só copiados
   lib/oca_ds/                   biblioteca compartilhada (WPF, Excel, relatórios, logo)
@@ -40,13 +47,15 @@ OCA.extension/
 
 51 arquivos, 7 painéis, 9 botões.
 
-**Nome da pasta:** o zip veio como `OCA1.01.extension`, mas o instalador grava
-sempre como `OCA.extension`. Com o número da versão no nome, o pyRevit
-carregaria a versão nova *ao lado* da anterior (aba OCA com botões duplicados), e
-cada versão futura somaria mais uma pasta. Os scripts encontram seus arquivos por
-caminho relativo, então o nome da pasta não muda o funcionamento. Se já existir
-uma `OCA1.01.extension` copiada à mão, o instalador avisa (tela de verificação e
-relatório) para apagá-la; ele não a remove sozinho.
+**Nome da pasta e versões antigas:** a pasta é instalada com o nome que tem no
+repositório (`OCA1.01.extension`). Como cada versão tem um nome de pasta
+diferente, a versão anterior (por exemplo `OCA.extension`) não é sobrescrita: se
+ficasse, o pyRevit mostraria os botões da aba OCA **duplicados**. Por isso o
+instalador procura outras extensões com `OCA.tab` nas pastas do pyRevit e mostra
+a tela **Versões antigas do plugin**, com cada uma marcada. As marcadas são
+copiadas para o backup, conferidas e só então retiradas da pasta de extensões
+(renomeadas e apagadas). Desmarque o que não for versão antiga deste plugin. Os
+scripts usam caminhos relativos, então o nome da pasta não muda o funcionamento.
 
 **Pasta Instaladores / impressora PDF24:** o botão Exportação DWG/PDF (opção
 PDF24) precisa da impressora "OCA PDF24". Os scripts que a criam pedem
@@ -60,7 +69,7 @@ como reserva e usa a pasta real de `__file__`.
 **Onde ficam as configurações do usuário:** os comandos usam
 `script.get_config()` / `script.save_config()` (gravam no `pyRevit_config.ini`) e
 `script.get_document_data_file()` / `get_universal_data_file()` (gravam em
-`%APPDATA%\pyRevit\...`). Nada disso fica dentro de `OCA.extension`, então
+`%APPDATA%\pyRevit\...`). Nada disso fica dentro da pasta do plugin, então
 atualizar ou reinstalar o plugin não apaga as opções salvas. O instalador não
 toca no `pyRevit_config.ini`.
 
@@ -75,7 +84,7 @@ toca no `pyRevit_config.ini`.
    ```
    ou abra `installer\Instalador_Plugin_OCA.iss` no Inno Setup e clique em
    *Build > Compile*.
-3. O resultado sai em `dist\Instalador_Plugin_OCA.exe`.
+3. O resultado sai em `dist\Instalador_Plugin_OCA1.01.exe`.
 
 Se o Inno Setup estiver em outro local: `build.ps1 -IsccPath "C:\...\ISCC.exe"`.
 
@@ -108,7 +117,7 @@ Wine corrompe o nome da pasta `02_Atualização Descrição por Keynotes.pushbut
      `PyRevitLoader` em `%APPDATA%\Autodesk\Revit\Addins\<ano>` e
      `%PROGRAMDATA%\Autodesk\Revit\Addins\<ano>`) e onde o pyRevit está instalado;
    - o pyRevit em *Programas instalados*;
-   - as pastas de extensões, e se alguma já contém `OCA.extension` (com a versão);
+   - as pastas de extensões, e se alguma já contém `OCA1.01.extension` (com a versão);
    - outras extensões que também tenham `OCA.tab` (por exemplo, uma antiga
      `ESCRITORIO.extension`), que duplicariam a aba;
    - se o Revit está aberto.
@@ -119,17 +128,19 @@ Wine corrompe o nome da pasta `02_Atualização Descrição por Keynotes.pushbut
    registradas no `pyRevit_config.ini` ou *Outra pasta* (configuração manual). A
    pasta pré-selecionada é a da instalação anterior, se houver.
 4. **Validações da pasta**: recusa a raiz de um disco ou uma pasta `*.extension`
-   (erro comum: escolher a própria `OCA.extension`); avisa se a pasta é interna
+   (erro comum: escolher a própria pasta do plugin); avisa se a pasta é interna
    do pyRevit (apagada quando o pyRevit é atualizado), se ela não é carregada
-   pelo pyRevit, ou se já existe outra `OCA.extension` em outra pasta.
-5. **Instalação existente**: mostra versão instalada × nova e oferece
+   pelo pyRevit, ou se já existe outra cópia da mesma pasta em outra pasta de extensões.
+5. **Versões antigas com outro nome de pasta** (ex.: `OCA.extension` ao instalar
+   `OCA1.01.extension`): lista marcada para mover ao backup (ver acima).
+6. **Instalação existente com o mesmo nome**: mostra versão instalada × nova e oferece
    *Atualizar*, *Reinstalação limpa* ou *Cancelar*. Avisa quando a versão
    instalada é mais nova que a do instalador.
-6. **Resumo** (tela *Pronto para instalar*) e **progresso** da cópia.
-7. **Backup**: antes de qualquer alteração, copia a pasta atual para
-   `%LOCALAPPDATA%\OCA\Plugin OCA\Backups\OCA.extension_<versão>_<data>` e confere
+7. **Resumo** (tela *Pronto para instalar*) e **progresso** da cópia.
+8. **Backup**: antes de qualquer alteração, copia a pasta atual para
+   `%LOCALAPPDATA%\OCA\Plugin OCA\Backups\<pasta>_<versão>_<data>` e confere
    cada arquivo copiado. Se o backup falhar, a instalação para sem mexer em nada.
-8. **Conferência**: depois de copiar, confere existência e SHA-256 de todos os
+9. **Conferência**: depois de copiar, confere existência e SHA-256 de todos os
    arquivos e mostra o **relatório** (pasta, tipo de instalação, backup, arquivos
    instalados, atualizados, removidos e mantidos, próximos passos). O relatório é
    salvo em `%LOCALAPPDATA%\OCA\Plugin OCA\relatorio_instalacao_<data>.txt`.
@@ -163,13 +174,14 @@ Wine corrompe o nome da pasta `02_Atualização Descrição por Keynotes.pushbut
 ### Instalação silenciosa (TI)
 
 ```
-Instalador_Plugin_OCA.exe /VERYSILENT /SUPPRESSMSGBOXES /LOG="C:\temp\oca.log"
+Instalador_Plugin_OCA1.01.exe /VERYSILENT /SUPPRESSMSGBOXES /LOG="C:\temp\oca.log"
 ```
 
 | Parâmetro | Efeito |
 |---|---|
 | `/DIR="C:\...\Extensions"` | Pasta de extensões (padrão: a detectada). |
-| `/MODO=limpa` | Reinstalação limpa quando já houver uma versão (padrão: atualizar). |
+| `/MODO=limpa` | Reinstalação limpa quando já houver a mesma pasta instalada (padrão: atualizar). |
+| `/ANTIGAS=manter` | Não retira versões antigas com outro nome de pasta (padrão: move para o backup). |
 | `/ALLUSERS` | Modo administrador (para pastas protegidas). |
 
 Em modo silencioso, as perguntas assumem a resposta padrão segura: continua se o
@@ -178,22 +190,24 @@ instala em pasta interna do pyRevit e falha se não houver permissão de gravaç
 
 ## Procedimento para atualizar o plugin no futuro
 
-1. Altere os arquivos em `OCA.extension` normalmente.
+1. Altere os arquivos da extensão normalmente.
 2. Atualize `VERSAO` em `OCA.tab/Sobre.panel/Sobre.pushbutton/script.py` (ex.:
    `u"1.02"`). Esse valor vira a versão do instalador e é o mesmo mostrado no
-   botão Sobre. Mantenha a pasta com o nome `OCA.extension` no repositório (não
-   `OCA1.02.extension`).
+   botão Sobre. Renomeie a pasta no repositório para o mesmo número
+   (`OCA1.02.extension`); deve existir só uma pasta `*.extension` na raiz.
+   O instalador sai como `dist\Instalador_Plugin_OCA1.02.exe`.
 3. Gere o `.exe` (`installer\build.ps1`).
 4. **Não altere o `AppGuid`** no `.iss`. Ele identifica o produto; é o que faz a
    versão nova reconhecer e atualizar a anterior.
-5. Nos computadores, rode o novo instalador e escolha **Atualizar**.
+5. Nos computadores, rode o novo instalador. A versão anterior (`OCA1.01.extension`)
+   aparece na tela *Versões antigas do plugin*, marcada para ir para o backup.
 
 O que é preservado: as opções dos comandos (no `pyRevit_config.ini` e nas pastas
-de dados do pyRevit, fora de `OCA.extension`), arquivos que você tenha
+de dados do pyRevit, fora da pasta do plugin), arquivos que você tenha
 adicionado à pasta do plugin e um backup completo da versão anterior.
 
-Para renomear ou remover um botão: basta fazê-lo em `OCA.extension`. Na
-atualização, o instalador remove os arquivos antigos não modificados (se a
+Para renomear ou remover um botão: basta fazê-lo na extensão. Ao reinstalar a
+mesma pasta, o instalador remove os arquivos antigos não modificados (se a
 instalação anterior foi feita por ele) e lista no relatório o que sobrou.
 
 ## Desinstalação
@@ -217,7 +231,7 @@ relatórios são mantidos. Depois, use pyRevit > Reload ou reinicie o Revit.
 
 O `.exe` foi compilado com Inno Setup 6.4.3 e executado sob Wine (Windows 10
 emulado) nos cenários abaixo. A árvore instalada foi comparada byte a byte com
-`OCA.extension` (`diff -r`), além da conferência SHA-256 do próprio instalador.
+a pasta original (`diff -r`), além da conferência SHA-256 do próprio instalador.
 
 - Instalação nova sem pyRevit (aviso e opção de cancelar) e com pyRevit simulado
   (`pyRevit_config.ini` com `userextensions`, `.addin` para 2025/2026).
@@ -230,7 +244,12 @@ emulado) nos cenários abaixo. A árvore instalada foi comparada byte a byte com
   desinstalação (arquivo do usuário preservado).
 - Interface: todas as telas capturadas, incluindo *Outra pasta* com aviso de
   pasta não registrada e cancelamento na tela final sem criar nada.
-- Versão 1.01: instalação nova (51 arquivos idênticos ao zip) e atualização de
+- Pasta `OCA1.01.extension` / `Instalador_Plugin_OCA1.01.exe`: instalação nova
+  (idêntica ao zip); atualização de uma máquina com `OCA.extension` 2026.10.13
+  (versão antiga copiada para o backup e retirada, sem duplicar a aba);
+  `/ANTIGAS=manter` mantém a antiga e o relatório avisa; reinstalação da mesma
+  versão cai em *Atualizar*.
+- Versão 1.01 com pasta `OCA.extension` (build anterior): instalação nova (51 arquivos idênticos ao zip) e atualização de
   uma máquina com a versão 2026.10.13 instalada pelo instalador anterior: os
   botões removidos/renomeados na 1.01 (`02_Abertura de Multiplas Vistas`,
   `03_Abertura de Multiplas Vistas por Ambientes`) foram apagados com as pastas,

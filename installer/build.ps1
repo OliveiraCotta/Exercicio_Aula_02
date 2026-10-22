@@ -1,6 +1,7 @@
 ﻿<#
 .SYNOPSIS
-  Gera dist\Instalador_Plugin_OCA.exe a partir de OCA.extension.
+  Gera dist\Instalador_Plugin_<extensão>.exe a partir da pasta *.extension do
+  repositório (ex.: OCA1.01.extension -> dist\Instalador_Plugin_OCA1.01.exe).
 
 .DESCRIPTION
   1. Localiza o compilador do Inno Setup (ISCC.exe, versão 6.4 ou superior).
@@ -27,7 +28,6 @@ $ErrorActionPreference = "Stop"
 $here = Split-Path -Parent $MyInvocation.MyCommand.Path
 $root = Split-Path -Parent $here
 $iss  = Join-Path $here "Instalador_Plugin_OCA.iss"
-$out  = Join-Path $root "dist\Instalador_Plugin_OCA.exe"
 
 function Find-Iscc {
     if ($IsccPath) {
@@ -62,11 +62,15 @@ $isccArgs = @()
 if ($AppVersion) { $isccArgs += "/DAppVersion=$AppVersion" }
 $isccArgs += $iss
 
+$inicio = Get-Date
 & $iscc @isccArgs
 if ($LASTEXITCODE -ne 0) {
     throw "A compilação falhou (código $LASTEXITCODE). Veja a mensagem do Inno Setup acima."
 }
-if (-not (Test-Path $out)) { throw "Instalador não encontrado após compilar: $out" }
+$gerado = Get-ChildItem -Path (Join-Path $root "dist") -Filter "Instalador_Plugin_*.exe" -ErrorAction SilentlyContinue |
+    Where-Object { $_.LastWriteTime -ge $inicio.AddSeconds(-2) } | Sort-Object LastWriteTime -Descending | Select-Object -First 1
+if (-not $gerado) { throw "Instalador não encontrado em dist após compilar." }
+$out = $gerado.FullName
 
 $hash = (Get-FileHash -Algorithm SHA256 $out).Hash.ToLower()
 $size = [math]::Round((Get-Item $out).Length / 1MB, 2)

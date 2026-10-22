@@ -18,4 +18,4 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 RUN=(wine)
 if [ -z "${DISPLAY:-}" ] && command -v xvfb-run >/dev/null; then RUN=(xvfb-run -a wine); fi
 "${RUN[@]}" "$ISCC" "$@" "Z:$ROOT/installer/Instalador_Plugin_OCA.iss"
-sha256sum "$ROOT/dist/Instalador_Plugin_OCA.exe"
+ls -t "$ROOT"/dist/Instalador_Plugin_*.exe | head -1 | xargs -d '\n' sha256sum
