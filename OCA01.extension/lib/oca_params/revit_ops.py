@@ -47,6 +47,15 @@ Vinculação (uma única transação, tudo ou nada):
 - Nunca chama BindingMap.Remove nem Document.Delete; Definitions.Create só na
   exportação.
 
+Edição de um parâmetro de projeto (aba "Parâmetros no projeto", update_binding):
+- grupo de propriedades: InternalDefinition.SetGroupTypeId (2022+) ou, sem ele,
+  ReInsert com o grupo novo;
+- categorias: ReInsert com o mesmo tipo de vínculo e a lista nova. Categorias
+  retiradas apagam os valores preenchidos nelas (o Revit faz isso): a janela
+  conta esses valores (count_values) e pede confirmação antes;
+- valores das categorias que continuam são conferidos antes do commit; o
+  vínculo final é conferido (tipo, categorias, grupo). Erro -> RollBack.
+
 Engine: IronPython 2.7 (pyRevit).
 """
 
@@ -66,6 +75,7 @@ except NameError:           # IronPython 3
 
 TRANSACTION_NAME = u"OCA · Gerenciador de Parâmetros Compartilhados"
 VERIFY_LIMIT = 300          # elementos conferidos por parâmetro ampliado (extend)
+EXPORT_GROUP = u"Exported Parameters"   # grupo do TXT usado SEMPRE na exportação
 
 # categorias sem tipos: um parâmetro de Tipo vinculado a elas não aparece
 _NO_TYPE_BICS = ("OST_Rooms", "OST_Areas", "OST_MEPSpaces", "OST_HVAC_Zones",
@@ -485,7 +495,7 @@ def _verify_snapshot(doc, guid, snapshot, name):
         element = doc.GetElement(eid)
         param = element.get_Parameter(sys_guid) if element is not None else None
         if param is None or not param.HasValue or _param_value(param) != before:
-            raise ApplyError(u"'{}': ao adicionar categorias, um valor já preenchido mudou "
+            raise ApplyError(u"'{}': ao alterar o vínculo, um valor já preenchido mudou "
                              u"(elemento {}). Nada foi gravado.".format(name, eid_int(eid)))
 
 
@@ -734,3 +744,102 @@ def export_definitions(doc, path, guids, group_name):
         raise ExportError(u"Erro do Revit ao gravar no TXT: {}".format(to_unicode(ex)),
                           written, backup)
     return written, backup
+
+
+# ------------------------------------------------------------------
+# edição de parâmetro de projeto já vinculado (grupo e categorias)
+# ------------------------------------------------------------------
+def count_values(doc, guid, kind, categories):
+    """Quantos elementos (ou tipos, se kind = Tipo) dessas categorias têm valor
+    preenchido no parâmetro. Texto vazio não conta."""
+    total = 0
+    sys_guid = System.Guid(guid)
+    for cat in categories:
+        collector = DB.FilteredElementCollector(doc).OfCategoryId(cat.Id)
+        collector = (collector.WhereElementIsElementType() if kind == P.TYPE
+                     else collector.WhereElementIsNotElementType())
+        for element in collector:
+            try:
+                param = element.get_Parameter(sys_guid)
+                if param is None or not param.HasValue:
+                    continue
+                if param.StorageType == DB.StorageType.String and not param.AsString():
+                    continue
+                total += 1
+            except Exception:
+                continue
+    return total
+
+
+def binding_categories(doc, guid):
+    """[Category] do vínculo atual do parâmetro (vazio se não estiver vinculado)."""
+    definition, binding = _bound_definition(doc, guid)
+    return list(binding.Categories) if binding is not None else []
+
+
+def update_binding(doc, guid, cat_ids, group_key, categories_by_id):
+    """Muda o grupo de propriedades e/ou as categorias de um parâmetro de projeto
+    compartilhado, mantendo Instância/Tipo. Uma transação; erro -> RollBack.
+    Lança ApplyError (projeto inalterado)."""
+    cat_ids = set(cat_ids)
+    if not cat_ids:
+        raise ApplyError(u"Marque ao menos uma categoria. Para tirar o parâmetro do projeto, "
+                         u"use Gerenciar > Parâmetros de projeto.")
+    if doc.IsReadOnly:
+        raise ApplyError(u"O modelo está aberto como somente leitura.")
+    definition, binding = _bound_definition(doc, guid)
+    if definition is None:
+        raise ApplyError(u"O parâmetro não está vinculado ao projeto.")
+    name = to_unicode(definition.Name)
+    kind = _binding_kind(binding)
+    old_cats = list(binding.Categories)
+    old_ids = set(eid_int(c.Id) for c in old_cats)
+    old_key, old_group = _definition_group(definition)
+    group_changed = group_key is not None and group_key != old_key
+    cats_changed = cat_ids != old_ids
+    if not (group_changed or cats_changed):
+        raise ApplyError(u"Nada mudou: grupo e categorias são os atuais.")
+    new_cats = []
+    for cid in sorted(cat_ids):
+        cat = categories_by_id.get(cid)
+        if cat is None:
+            raise ApplyError(u"Categoria {} não encontrada no projeto.".format(cid))
+        new_cats.append(cat)
+    kept = [c for c in old_cats if eid_int(c.Id) in cat_ids]
+    app = doc.Application
+
+    tx = DB.Transaction(doc, TRANSACTION_NAME + u" - editar parâmetro")
+    try:
+        tx.Start()
+        snapshot = _snapshot(doc, guid, kind, kept)
+        group = old_group
+        if group_changed:
+            group = group_object(group_key)
+            if hasattr(definition, "SetGroupTypeId"):           # Revit 2022+
+                definition.SetGroupTypeId(group)
+            elif not cats_changed:                               # versões antigas: ReInsert
+                cats_changed = True
+        if cats_changed:
+            if not doc.ParameterBindings.ReInsert(definition, _new_binding(app, kind, new_cats), group):
+                raise ApplyError(u"'{}': o Revit recusou a alteração do vínculo.".format(name))
+        doc.Regenerate()
+        current, now_binding = _bound_definition(doc, guid)
+        if current is None or _binding_kind(now_binding) != kind:
+            raise ApplyError(u"'{}': o vínculo não ficou como esperado.".format(name))
+        now_ids = set(eid_int(c.Id) for c in now_binding.Categories)
+        if now_ids != cat_ids:
+            raise ApplyError(u"'{}': as categorias não ficaram como escolhido.".format(name))
+        if group_changed and _definition_group(current)[0] != group_key:
+            raise ApplyError(u"'{}': o grupo de propriedades não foi alterado.".format(name))
+        _verify_snapshot(doc, guid, snapshot, name)
+        status = tx.Commit()
+        if status != DB.TransactionStatus.Committed:
+            raise ApplyError(u"O Revit não confirmou a transação (status {}).".format(status))
+    except ApplyError:
+        _rollback(tx)
+        raise
+    except Exception as ex:
+        _rollback(tx)
+        raise ApplyError(u"Erro do Revit: {}".format(to_unicode(ex)))
+    finally:
+        tx.Dispose()

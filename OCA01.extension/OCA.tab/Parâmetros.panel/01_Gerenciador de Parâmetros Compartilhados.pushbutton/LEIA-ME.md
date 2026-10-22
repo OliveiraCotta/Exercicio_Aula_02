@@ -31,16 +31,30 @@ pincéis `oca.*`, tema claro/escuro seguindo o Revit, janela redimensionável).
 ## Janela
 
 Duas abas principais no topo, no estilo das abas do Explorador de Arquivos, com a barra do arquivo
-TXT logo abaixo (vale para as duas):
+TXT logo abaixo (vale para as duas). Tooltip do botão: "Gerência, importa e exporta os parâmetros
+compartilhados através dos parâmetros existentes no projeto e/ou do TXT de parâmetros."
 
-- **Vincular do TXT ao projeto**: etapas 1 · Parâmetros do arquivo, 2 · Configuração, 3 · Revisão.
-- **Parâmetros no projeto**: todos os parâmetros compartilhados do modelo (`SharedParameterElement`),
-  com tipo de dado, Instância/Tipo, grupo de propriedades, categorias, origem (parâmetro de projeto
-  ou só em famílias), GUID e situação no TXT carregado (no TXT, no TXT com outro nome, conflito de
-  nome, fora do TXT). Busca, filtros, detalhe com todas as categorias da linha selecionada e
-  **Exportar para o TXT** (grupo existente do TXT ou grupo novo).
+**Vincular do TXT ao projeto**: passo a passo, com a etapa atual destacada no topo e uma faixa
+explicando o que fazer. **← Voltar** e **Avançar →** no rodapé (as marcações e configurações são
+mantidas ao voltar).
 
-O botão principal do rodapé acompanha a aba: "Aplicar no projeto" ou "Exportar para o TXT".
+1. **Escolher parâmetros**: marque na coluna ✓. Filtros: busca, grupo do TXT e situação (todas,
+   novos, já no projeto). Para marcar vários: selecione as linhas com Shift (ou Ctrl) + clique e
+   clique na caixa ✓ de uma delas; Shift + clique numa caixa marca o intervalo desde a última
+   caixa clicada; Espaço alterna as linhas selecionadas.
+2. **Configurar**: lista do lote | categorias (coluna própria, cerca de 1/3 da largura) | grupo de
+   propriedades e Instância/Tipo. **Aplicar às selecionadas** grava grupo, vínculo e categorias nas
+   linhas selecionadas. Só avança quando todos têm categoria e grupo.
+3. **Revisar e aplicar**: o que será feito com cada parâmetro; **Aplicar no projeto** confirma e grava.
+
+**Parâmetros no projeto**: todos os parâmetros compartilhados do modelo (tipo de dado,
+Instância/Tipo, grupo, categorias, origem, GUID, situação no TXT). À direita, **Editar parâmetro
+selecionado**: grupo de propriedades e categorias → **Atualizar no modelo**. **Exportar para o TXT**
+grava os marcados no TXT carregado, **sempre no grupo "Exported Parameters"** (o caminho aparece
+na tela).
+
+As tabelas com ✓ não podem ser ordenadas pelo cabeçalho e têm ordem fixa: marcar uma linha não
+a muda de lugar.
 
 ## Arquitetura
 
@@ -60,7 +74,9 @@ O botão principal do rodapé acompanha a aba: "Aplicar no projeto" ou "Exportar
    confirmado → `RollBack` e o projeto fica como estava.
 6. **Parâmetros do projeto (`list_project_shared`)**: lê os `SharedParameterElement` e cruza com
    os vínculos lidos em `scan_project`. Só leitura, sem transação.
-7. **Exportação (`export_definitions`)**: valida tudo antes da primeira gravação, faz a cópia do TXT
+7. **Edição (`update_binding`)**: `InternalDefinition.SetGroupTypeId` para o grupo (2022+) e
+   `BindingMap.ReInsert` para as categorias, numa transação, com conferência do resultado.
+8. **Exportação (`export_definitions`)**: valida tudo antes da primeira gravação, faz a cópia do TXT
    e grava pelo Revit (`Definitions.Create` com `ExternalDefinitionCreationOptions.GUID` = GUID do
    projeto). Depois, o TXT é relido e as duas abas são atualizadas.
 
@@ -81,6 +97,10 @@ O botão principal do rodapé acompanha a aba: "Aplicar no projeto" ou "Exportar
   excluir o parâmetro e os valores.
 - Nome igual a outro parâmetro de projeto (outro GUID ou não compartilhado), ou dois itens do lote
   com o mesmo nome: não é aplicado.
+- Editar parâmetro no projeto: Instância/Tipo não muda. Adicionar categoria e mudar o grupo não
+  apagam nada. **Retirar uma categoria apaga os valores preenchidos nela** (é o Revit que faz isso):
+  a quantidade de valores é mostrada na confirmação, e os valores das categorias que continuam são
+  conferidos antes de gravar (se algum mudar, tudo é desfeito). Sem categoria nenhuma não é aceito.
 
 ## Riscos e limitações da API (conhecidos antes da implementação)
 
@@ -126,24 +146,27 @@ Vinculação:
 
 ## Roteiro de teste (numa cópia do modelo)
 
-1. Abrir o comando: o TXT configurado no Revit (ou o último usado) é carregado sozinho. Conferir
-   contagem, codificação e linhas cinza (motivo em Observações).
-2. Buscar com e sem acento, filtrar por grupo, tipo de dado e situação; "Só marcados".
-3. Marcar vários (checkbox, ou Shift+clique e Espaço), "Configurar marcados".
-4. Na Configuração: escolher grupo, Instância/Tipo e categorias; "Aplicar a todas"; depois
-   selecionar uma linha, mudar para Tipo e "Aplicar às selecionadas"; "+ Adicionar parâmetros"
-   e incluir mais um.
-5. Revisão: conferir ações e observações; "Aplicar no projeto" → confirmar.
-6. No Revit: Gerenciar → Parâmetros de projeto. Conferir nome,
-   Instância/Tipo, categorias e grupo na paleta Propriedades. Ctrl+Z deve desfazer tudo de uma vez.
-7. Rodar de novo com um parâmetro já vinculado: acrescentar uma categoria (Adicionar categorias)
-   e confirmar que valores já preenchidos continuam iguais.
+1. Passar o mouse no botão: o tooltip mostra o texto inteiro.
+2. Abrir o comando: o TXT configurado no Revit (ou o último usado) é carregado sozinho. Conferir a
+   contagem, a codificação e as linhas cinza (motivo em Observações).
+3. Passo 1: buscar com e sem acento; filtrar por grupo do TXT e por situação (todas, novos, já no
+   projeto). Selecionar 5 linhas com Shift + clique e clicar na caixa ✓ de uma delas: as 5 ficam
+   marcadas. Shift + clique numa caixa mais abaixo: o intervalo é marcado. Avançar.
+4. Passo 2: selecionar linhas, marcar categorias (a lista não muda de ordem ao marcar), escolher
+   grupo e Instância/Tipo, "Aplicar às selecionadas". Tentar avançar com um parâmetro sem
+   categoria: deve parar com a mensagem. Voltar: as marcações do passo 1 continuam.
+5. Passo 3: conferir ações e observações; "Aplicar no projeto" → confirmar.
+6. No Revit: Gerenciar → Parâmetros de projeto. Conferir nome, Instância/Tipo, categorias e grupo
+   na paleta Propriedades. Ctrl+Z deve desfazer tudo de uma vez.
+7. Rodar de novo com um parâmetro já vinculado: acrescentar uma categoria e confirmar que valores
+   já preenchidos continuam iguais.
 8. Pedir Tipo para um parâmetro que já está como Instância: deve aparecer "Não será aplicado".
-9. Em Opções → Arquivo, conferir que o caminho do arquivo de parâmetros compartilhados do usuário
-   voltou ao original.
-10. Aba **Parâmetros no projeto**: conferir grupo, vínculo e categorias contra Gerenciar →
-    Parâmetros de projeto; filtrar "Só em famílias" e "Fora do TXT".
-11. Numa **cópia** do TXT: marcar dois parâmetros "Fora do TXT", exportar para um grupo novo.
-    Conferir a cópia `_backup_` criada, o grupo novo no TXT, os GUIDs iguais aos do projeto e que
-    a situação passou para "No TXT". Exportar de novo os mesmos não deve ser possível.
+9. Aba **Parâmetros no projeto**: clicar num parâmetro de projeto, mudar o grupo e acrescentar uma
+   categoria → "Atualizar no modelo". Depois retirar uma categoria com valores preenchidos: a
+   confirmação deve mostrar quantos valores serão apagados. Ctrl+Z desfaz.
+10. Numa **cópia** do TXT: marcar dois parâmetros "Fora do TXT" e exportar. Conferir a cópia
+    `_backup_`, o grupo "Exported Parameters" no TXT, os GUIDs iguais aos do projeto e que a
+    situação passou para "No TXT".
+11. Em Opções → Arquivo, conferir que o caminho do arquivo de parâmetros compartilhados do usuário
+    voltou ao original.
 12. Repetir no tema escuro do Revit e em pelo menos duas versões (ex.: 2024 e 2025).
