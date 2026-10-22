@@ -9,7 +9,7 @@
 # Onde cada dado mora:
 #   * Keynote ........ parâmetro nativo KEYNOTE dos TIPOS usados no modelo.
 #   * Descrição PT ... parâmetro nativo "Description" do tipo.
-#   * Descrição IN ... parâmetro compartilhado "Descrição IN" do tipo, associado
+#   * Descrição em IN ... parâmetro compartilhado "Descrição em IN" do tipo, associado
 #                      pelo GUID 70307f6e-3b31-4049-bed4-62dfc3570fec
 #                      (OCA_Parametros_Template.txt). OPCIONAL: onde não existe
 #                      (ou tem outro GUID) o campo é "Não aplicável" e a
@@ -29,7 +29,7 @@
 #      Excel nunca apaga o modelo.
 #   2. Tipos SEM Keynote ou SEM Descrição: só o Keynote é digitado. A linha
 #      fica destacada quando a Keynote existe no Excel (correspondência - não
-#      quer dizer gravado). "Verificar no Excel" traz Descrição / Descrição IN
+#      quer dizer gravado). "Verificar no Excel" traz Descrição / Descrição em IN
 #      da planilha para os campos vazios.
 #   3. Tipos com Keynote que não existe no Excel (só consulta).
 #   Clicar numa linha seleciona no Revit todas as instâncias do tipo e
@@ -66,7 +66,7 @@
 __title__ = "Atualização\ndas Descrições\npor Keynote"
 __persistentengine__ = True        # janela não modal + ExternalEvent
 __doc__ = ("Confere as Keynotes dos tipos do modelo com a planilha de materiais "
-           "(aba MATERIAIS) e atualiza Description e Descrição IN pelo código de "
+           "(aba MATERIAIS) e atualiza Description e Descrição em IN pelo código de "
            "Keynote.\n\n"
            "Fluxo: Excel > Modelo. Nada é gravado sem confirmação.\n"
            "Inclui conferência em tabelas, seleção no modelo, TXT de Keynote e "
@@ -127,16 +127,16 @@ NO_GROUP = u"SEM AGRUPAMENTO"
 # Parâmetro compartilhado da descrição em inglês (OCA_Parametros_Template.txt).
 # A associação é feita pelo GUID - um parâmetro de mesmo nome com outro GUID
 # NÃO é considerado (não aparece nas tabelas/etiquetas do template).
-PARAM_IN_NAME = u"Descrição IN"
+PARAM_IN_NAME = u"Descrição em IN"
 PARAM_IN_GUID_STR = "70307f6e-3b31-4049-bed4-62dfc3570fec"
 PARAM_IN_GUID = Guid(PARAM_IN_GUID_STR)
 # opções do modo de diagnóstico (Shift+Clique no botão) - padrão = normal
 DIAG = {"skip_cleanup": False, "skip_txt_reload": False, "simple_group_rows": False}
-NOT_APPLICABLE = u"Não aplicável"   # Descrição IN inexistente no tipo (≠ campo vazio)
+NOT_APPLICABLE = u"Não aplicável"   # Descrição em IN inexistente no tipo (≠ campo vazio)
 MATERIALS_LABEL = u"Materiais"     # categoria usada no relatório p/ materiais
 
 TOOL_TITLE = u"ATUALIZAÇÃO DAS DESCRIÇÕES DO MODELO POR KEYNOTE"
-SCRIPT_VERSION = u"2026.10.22"     # aparece na janela e no log: confira se é a cópia nova
+SCRIPT_VERSION = u"2026.10.22b"     # aparece na janela e no log: confira se é a cópia nova
 # fluxo único: Excel -> Modelo (o Excel é só lido)
 MODES = OrderedDict([("to_model", u"Excel → Modelo")])
 MODE_DIRS = {"to_model": ("model",)}
@@ -428,7 +428,7 @@ KN_BODY = u"""
   <StackPanel>
     <HeaderedContentControl Header="RESUMO" Style="{StaticResource oca.Section}">
       <TextBlock Style="{StaticResource oca.Hint}"
-                 Text="Lê a aba MATERIAIS da planilha de Keynote e atualiza a Descrição e a Descrição IN dos tipos do modelo pelo código de Keynote. Na próxima etapa você confere as tabelas e grava só o que marcar (com confirmação). Ao executar, o TXT de Keynote é gerado a partir do Excel e recarregado no projeto."/>
+                 Text="Lê a aba MATERIAIS da planilha de Keynote e atualiza a Descrição e a Descrição em IN dos tipos do modelo pelo código de Keynote. Na próxima etapa você confere as tabelas e grava só o que marcar (com confirmação). Ao executar, o TXT de Keynote é gerado a partir do Excel e recarregado no projeto."/>
     </HeaderedContentControl>
 
     <HeaderedContentControl Header="FLUXO" Style="{StaticResource oca.Section}">
@@ -898,7 +898,7 @@ def desc_param(elem):
 
 
 def in_param(elem):
-    """Parâmetro compartilhado 'Descrição IN', localizado pelo GUID
+    """Parâmetro compartilhado 'Descrição em IN', localizado pelo GUID
     (None se o parâmetro não estiver vinculado a este tipo / material)."""
     try:
         p = elem.get_Parameter(PARAM_IN_GUID)
@@ -910,7 +910,7 @@ def in_param(elem):
 
 
 def in_param_clash(elem):
-    """True se existe um parâmetro chamado 'Descrição IN' que NÃO é o
+    """True se existe um parâmetro chamado 'Descrição em IN' que NÃO é o
     compartilhado do escritório (GUID diferente / parâmetro de projeto)."""
     try:
         p = elem.LookupParameter(PARAM_IN_NAME)
@@ -1028,7 +1028,7 @@ FILE_TEXT = {}
 
 
 # ------------------------------------------------------------------
-# 3b. 'Descrição IN' é OPCIONAL
+# 3b. 'Descrição em IN' é OPCIONAL
 #   O comando nunca cria nem vincula o parâmetro. Onde ele não existe, o campo
 #   é ignorado ("Não aplicável") e a Description continua sendo atualizada.
 #   Parâmetro com o MESMO NOME e GUID diferente: só aparece no diagnóstico
@@ -1101,7 +1101,7 @@ def where_label(h):
 def plan_to_model():
     """-> (plan, bloqueados). plan: alterações possíveis; bloqueados: diferenças
     que não podem ser gravadas (parâmetro somente leitura, workshared...).
-    'Descrição IN' ausente no tipo (ou com GUID diferente) NÃO é bloqueio: o
+    'Descrição em IN' ausente no tipo (ou com GUID diferente) NÃO é bloqueio: o
     campo é simplesmente ignorado e a Description segue normalmente."""
     plan, blocked = [], []
     for key, holders in MODEL.items():
@@ -1116,7 +1116,7 @@ def plan_to_model():
                     continue                      # Excel vazio nunca apaga o modelo
                 p = h[pkey]
                 if p is None and field == "en":
-                    continue                      # Descrição IN não aplicável neste tipo
+                    continue                      # Descrição em IN não aplicável neste tipo
                 if p is not None:
                     try:
                         label = to_unicode(p.Definition.Name)
@@ -1174,7 +1174,7 @@ def cat_rank(cat):
 
 
 # ------------------------------------------------------------------
-# 5d. Situação dos TIPOS no modelo (sem keynote / descrição / descrição IN)
+# 5d. Situação dos TIPOS no modelo (sem keynote / descrição / descrição em IN)
 #   O comando NÃO colore mais o modelo: a conferência é feita selecionando a
 #   linha da tabela, que seleciona e mostra os elementos na vista ativa.
 #   As cores deixadas pelas versões anteriores são localizadas e removidas
@@ -1238,7 +1238,7 @@ def scan_types(view=None):
 
 
 def type_status(t):
-    """-> (keynote, descrição, descrição IN, tem parâmetro IN, campos faltando)"""
+    """-> (keynote, descrição, descrição em IN, tem parâmetro IN, campos faltando)"""
     key = keynote_of(t)
     desc = param_text(desc_param(t))
     ip = in_param(t)
@@ -1635,10 +1635,10 @@ def excel_rec(key):
 
 def verify_incomplete(r, autofill):
     """Confere a linha com o Excel. autofill=True: quando a Keynote existe na
-    planilha, PROPÕE a Description e a Descrição IN do Excel (preenche campo
+    planilha, PROPÕE a Description e a Descrição em IN do Excel (preenche campo
     vazio ou substitui valor diferente), igual à tabela 1. A proposta só é
     gravada se a linha estiver marcada e o usuário confirmar 'Atualizar
-    descrições'. Valor vazio no Excel nunca apaga o modelo. Descrição IN só
+    descrições'. Valor vazio no Excel nunca apaga o modelo. Descrição em IN só
     entra onde o parâmetro existe."""
     for f in ("key", "pt", "en"):
         r[f] = clean(r[f])
@@ -1666,7 +1666,7 @@ def verify_incomplete(r, autofill):
     elif rec is not None and rec["pt"] and r["pt"] != rec["pt"]:
         warns.append(u"Descrição difere do Excel")
     if not r["hasIn"]:
-        pass                              # Descrição IN não aplicável: nada a avisar
+        pass                              # Descrição em IN não aplicável: nada a avisar
     elif not r["en"]:
         warns.append(u"{} vazia".format(PARAM_IN_NAME))
     elif rec is not None and rec["en"] and r["en"] != rec["en"]:
@@ -2562,7 +2562,7 @@ class VerifyWindow(forms.WPFWindow):
 
     def _verify_all(self, sender, args):
         """Confere de novo cada Keynote no Excel, propõe Description /
-        Descrição IN da planilha e MARCA as linhas que têm algo a gravar.
+        Descrição em IN da planilha e MARCA as linhas que têm algo a gravar.
         Gravar é outro passo (Atualizar descrições + confirmação)."""
         self._commit()
         self._busy = True
@@ -3542,7 +3542,7 @@ def save_run(chosen_rows, chosen_inc):
                     if not new or new == old:
                         continue
                     if f == "en" and not r["hasIn"]:
-                        continue                  # Descrição IN não aplicável neste tipo
+                        continue                  # Descrição em IN não aplicável neste tipo
                     try:
                         p = getp(tp)
                     except Exception:
@@ -3689,11 +3689,11 @@ def refresh_run():
 #   modelo. Registro = TIPO (família + tipo) usado por elementos do modelo
 #   em categoria com parâmetro Keynote (mesmo universo das tabelas).
 #   Critérios por registro:
-#     falta ........ Keynote vazio · Description vazia · Descrição IN vazia
+#     falta ........ Keynote vazio · Description vazia · Descrição em IN vazia
 #     divergência .. Keynote não está no Excel · Description diferente do
-#                    Excel · Descrição IN diferente do Excel (só compara quando
+#                    Excel · Descrição em IN diferente do Excel (só compara quando
 #                    os DOIS lados têm valor)
-#     não verificado parâmetro Descrição IN inexistente no tipo, ou Excel sem
+#     não verificado parâmetro Descrição em IN inexistente no tipo, ou Excel sem
 #                    descrição para comparar com a do modelo
 #   Situação (uma por registro, nesta ordem): Informação faltante >
 #   Divergência > Não verificado > Correto.
@@ -3703,7 +3703,7 @@ DASH = {"records": [], "analyzedAt": u""}
 
 
 def classify_type(t, info):
-    """Situação de UM tipo para o dashboard (só leitura). 'Descrição IN'
+    """Situação de UM tipo para o dashboard (só leitura). 'Descrição em IN'
     inexistente no tipo é 'não aplicável': não conta como falta, divergência
     nem 'não verificado'."""
     key, desc, en, has_in, _missing = type_status(t)
@@ -4156,7 +4156,7 @@ def _demo_data():
 
 def write_selftest(source):
     """Teste de gravação SEM alterar o modelo: grava um valor de teste na
-    Description (e na Descrição IN, se existir) de um tipo, relê e DESFAZ a
+    Description (e na Descrição em IN, se existir) de um tipo, relê e DESFAZ a
     transação (RollBack). -> lista de linhas para o relatório/log."""
     lines = [u"Executor: {}".format(source)]
     target = None

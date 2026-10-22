@@ -11,6 +11,24 @@
 
 ---
 
+## 0d. Parâmetro renomeado para "Descrição em IN" (revisão 2026.10.22b)
+
+Na janela, nas mensagens, no log e no dashboard, o parâmetro agora se chama
+**"Descrição em IN"** (`PARAM_IN_NAME`). A lógica não mudou.
+
+- **O comando encontra o parâmetro pelo GUID** `70307f6e-3b31-4049-bed4-62dfc3570fec`,
+  não pelo nome. No `OCA_Parametros_Template.txt` do escritório (01/10), esse GUID está
+  como `Descrição IN`, tipo `TEXT`.
+  - Se o parâmetro foi **renomeado no arquivo de parâmetros compartilhados mantendo o
+    GUID**, tudo funciona, mesmo em modelos que ainda mostram o nome antigo (testado no
+    simulador).
+  - Se foi **criado um parâmetro novo** "Descrição em IN", ele tem **outro GUID**. Nesse
+    caso o comando não grava nele e mostra no topo: "Atenção: 'Descrição em IN' com GUID
+    diferente do oficial … não é usado" (testado no simulador). Para usar o GUID novo,
+    troque `PARAM_IN_GUID_STR` no `script.py`.
+- Não mudaram: os cabeçalhos aceitos na planilha. A coluna pode se chamar "DESCRIÇÃO IN"
+  ou "DESCRIÇÃO EM IN".
+
 ## 0c. Pasta de backup `<nome>_obsoletos` e botão Atualizar (revisão 2026.10.22)
 
 **Pasta de backup.** O TXT anterior não vai mais para `Obsoletos`. Agora vai para uma
@@ -129,7 +147,7 @@ quando moveu o comando para `OCA01.extension/…`. **Por isso nenhuma correção
 "versão …".
 
 Esta versão está em `OCA01.extension/OCA.tab/Keynote.panel/02_Atualização Descrição por
-Keynotes.pushbutton/`. A janela de verificação mostra **"versão 2026.10.22"** no subtítulo,
+Keynotes.pushbutton/`. A janela de verificação mostra **"versão 2026.10.22b"** no subtítulo,
 e o log também. Se o texto não aparecer, o Revit está rodando outra cópia.
 
 ---
@@ -292,12 +310,12 @@ Cada etapa registra início, fim e duração. Também entram no log:
 | Regra | Onde | Resultado |
 |-------|------|-----------|
 | Célula vazia no Excel nunca apaga o modelo | `plan_to_model`, `save_run` (tabela 2: `if not new … continue`) | Ok. A tabela mostra "(mantém)". |
-| A Description é atualizada mesmo sem Descrição IN | `plan_to_model`, `save_run` | Ok. No cenário `noin`: Description 4, IN 0, sem erro. |
+| A Description é atualizada mesmo sem Descrição em IN | `plan_to_model`, `save_run` | Ok. No cenário `noin`: Description 4, IN 0, sem erro. |
 | A IN é identificada **pelo GUID** `70307f6e-3b31-4049-bed4-62dfc3570fec` | `in_param` (`get_Parameter(Guid)`) | Ok. |
 | Parâmetro com o mesmo nome e outro GUID nunca é gravado | `in_param_clash` | Ok. Aviso no topo e no log ("Generic Models … ignorado"); nenhum valor gravado nele. |
 | Somente leitura e emprestado (workshared) | Tabela 1: o plano marca o bloqueio, e a linha fica desabilitada com o motivo. Tabela 2: `IsReadOnly` / `owned_by_other` na gravação. | Ok. Vão para **Bloqueados** no resumo. |
 | As marcações correspondem ao que pode ser gravado | Tabela 1: linhas bloqueadas não podem ser marcadas. Tabela 2: só grava o que mudou. | Ok. Limite: na tabela 2, somente leitura e workshared só são detectados **na gravação**, e a linha continua marcável. Fica no resumo como bloqueio; não é erro silencioso. |
-| A confirmação lista os campos | `_apply` | Ok: "Description N · Descrição IN N · Keynote N" e quantas linhas substituem valor. |
+| A confirmação lista os campos | `_apply` | Ok: "Description N · Descrição em IN N · Keynote N" e quantas linhas substituem valor. |
 | O relatório final separa os resultados | `save_run` | Concluído / Ignorados / Bloqueados / Erros. |
 | As tabelas atualizam sem duplicar | `reload` + reanálise | Ok. O simulador confere "duplicadas: 0" em todos os modos. |
 | Nada é gravado sem confirmação | `_apply` (MessageBox Sim/Não) | Ok. "Não" → `sets: 0`. |
@@ -412,7 +430,7 @@ Se quiser, faço isso num commit separado.
 | Cenário | O que confere |
 |---------|---------------|
 | `full` | Fluxo completo. Agrupamentos, busca e Limpar. Seleção visível e **não visível** (pré-seleção mantida). Dashboard. Gravação recusada (`sets 0`) e confirmada: 11 gravados e conferidos. Finalizar. |
-| `noin` | Modelo sem Descrição IN: Description grava, IN = "Não aplicável". |
+| `noin` | Modelo sem Descrição em IN: Description grava, IN = "Não aplicável". |
 | `typeonly` | Keynote digitada na tabela 2 e gravada sem "Verificar". |
 | `back` | Voltar e reabrir. |
 | `txfail1` / `txfail2` | O Revit desfaz a transação da tabela 1 ou da 2. Aparece em **Erros**, e a outra tabela grava. |
@@ -513,7 +531,7 @@ Use **cópias** dos modelos. A ordem sugerida em cada combinação de pyRevit e 
    - confira nas Propriedades do tipo;
    - Ctrl+Z.
 7. **Workshared**: um tipo emprestado por outro usuário deve aparecer em **Bloqueados**.
-8. **Modelo sem Descrição IN e com IN de outro GUID**.
+8. **Modelo sem Descrição em IN e com IN de outro GUID**.
 9. **Shift+Clique → H**: se a versão normal fecha o Revit e a H não, a causa é a linha de
    título do DataGrid.
 
@@ -542,7 +560,7 @@ Anote em cada teste: a versão (do log), o teste, o resultado e, se o Revit fech
    Keynotes.pushbutton` se ela ainda existir **e** estiver registrada no pyRevit. Duas
    cópias do botão causam exatamente o problema do item 1.
 4. pyRevit → **Reload**.
-5. Abra o comando e confira **"versão 2026.10.22"** no subtítulo. Espere 3 s: não pode
+5. Abra o comando e confira **"versão 2026.10.22b"** no subtítulo. Espere 3 s: não pode
    aparecer nenhum "ATENÇÃO" na linha verde.
 
 **Como testar com segurança:**
