@@ -11,6 +11,24 @@
 
 ---
 
+## 0e. Coluna "DESCRIÇÃO EM IN" do Excel → parâmetro "Descrição em IN" (revisão 2026.10.22c)
+
+O valor da coluna **DESCRIÇÃO EM IN** da aba MATERIAIS vai para o parâmetro
+**Descrição em IN**. A coluna é reconhecida sem diferenciar maiúsculas, acentos e
+espaços repetidos, e também com texto depois do nome, como "DESCRIÇÃO EM IN (inglês)" ou
+com quebra de linha no cabeçalho.
+
+- Se a aba tiver **as duas** colunas ("DESCRIÇÃO EM IN" e a antiga "DESCRIÇÃO IN"), vale
+  a **DESCRIÇÃO EM IN**. Antes valia a que estivesse mais à esquerda.
+- Planilhas antigas, só com "DESCRIÇÃO IN", continuam funcionando.
+- Sem nenhuma das duas, a leitura para com a mensagem "Colunas não encontradas na aba
+  'MATERIAIS': DESCRIÇÃO EM IN".
+- O log registra a coluna usada, por exemplo:
+  `Descrição em IN = coluna G 'DESCRICAO EM IN'`.
+- A mesma coluna alimenta o texto do TXT de keynotes ("DESCRIÇÃO | DESCRIÇÃO EM IN").
+- Alterado: `HEADER_ALIASES["en"]`, `EN_HEADER_PREFIX` e a escolha da coluna em
+  `read_excel`. Nada mais.
+
 ## 0d. Parâmetro renomeado para "Descrição em IN" (revisão 2026.10.22b)
 
 Na janela, nas mensagens, no log e no dashboard, o parâmetro agora se chama
@@ -147,7 +165,7 @@ quando moveu o comando para `OCA01.extension/…`. **Por isso nenhuma correção
 "versão …".
 
 Esta versão está em `OCA01.extension/OCA.tab/Keynote.panel/02_Atualização Descrição por
-Keynotes.pushbutton/`. A janela de verificação mostra **"versão 2026.10.22b"** no subtítulo,
+Keynotes.pushbutton/`. A janela de verificação mostra **"versão 2026.10.22c"** no subtítulo,
 e o log também. Se o texto não aparecer, o Revit está rodando outra cópia.
 
 ---
@@ -560,7 +578,7 @@ Anote em cada teste: a versão (do log), o teste, o resultado e, se o Revit fech
    Keynotes.pushbutton` se ela ainda existir **e** estiver registrada no pyRevit. Duas
    cópias do botão causam exatamente o problema do item 1.
 4. pyRevit → **Reload**.
-5. Abra o comando e confira **"versão 2026.10.22b"** no subtítulo. Espere 3 s: não pode
+5. Abra o comando e confira **"versão 2026.10.22c"** no subtítulo. Espere 3 s: não pode
    aparecer nenhum "ATENÇÃO" na linha verde.
 
 **Como testar com segurança:**

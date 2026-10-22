@@ -136,7 +136,7 @@ NOT_APPLICABLE = u"Não aplicável"   # Descrição em IN inexistente no tipo (�
 MATERIALS_LABEL = u"Materiais"     # categoria usada no relatório p/ materiais
 
 TOOL_TITLE = u"ATUALIZAÇÃO DAS DESCRIÇÕES DO MODELO POR KEYNOTE"
-SCRIPT_VERSION = u"2026.10.22b"     # aparece na janela e no log: confira se é a cópia nova
+SCRIPT_VERSION = u"2026.10.22c"     # aparece na janela e no log: confira se é a cópia nova
 # fluxo único: Excel -> Modelo (o Excel é só lido)
 MODES = OrderedDict([("to_model", u"Excel → Modelo")])
 MODE_DIRS = {"to_model": ("model",)}
@@ -701,7 +701,9 @@ HEADER_ALIASES = {
     "key": [u"KEYNOTE", u"KEYNOTES", u"NOTA CHAVE", u"KEY"],
     "pt": [u"DESCRICAO", u"DESCRICAO PT", u"DESCRICAO PORTUGUES", u"DESCRIPTION",
            u"DESCRIPTION PT"],
-    "en": [u"DESCRICAO IN", u"DESCRICAO EM IN", u"DESCRICAO EN", u"DESCRICAO INGLES",
+    # Descrição em IN: a coluna "DESCRIÇÃO EM IN" tem prioridade; os nomes
+    # antigos só valem se ela não existir (ver EN_HEADER_PREFIX)
+    "en": [u"DESCRICAO EM IN", u"DESCRICAO IN", u"DESCRICAO EN", u"DESCRICAO INGLES",
            u"DESCRIPTION IN", u"DESCRIPTION EN"],
     "cat": [u"CATEGORIA"],
     "grp": [u"GRUPO"],
@@ -709,6 +711,9 @@ HEADER_ALIASES = {
     "seq": [u"SEQUENCIA"],
     "obs": [u"OBSERVACOES", u"OBSERVACAO"],
 }
+
+
+EN_HEADER_PREFIX = u"DESCRICAO EM IN"  # aceita também "DESCRIÇÃO EM IN (inglês)" etc.
 
 
 def open_xlsx(path):
@@ -810,15 +815,28 @@ def read_excel(path):
     name, part, pos, grid, frows, header_row, heads = chosen
     cols = {}
     for key, aliases in HEADER_ALIASES.items():
+        if key == "en":
+            continue
         for ci in sorted(heads.keys()):
             if heads[ci] in aliases:
                 cols[key] = ci
                 break
+    # Descrição em IN: 1º a coluna "DESCRIÇÃO EM IN" (também com texto depois,
+    # ex. "DESCRIÇÃO EM IN (INGLÊS)"); só sem ela, os nomes antigos na ordem
+    en_cols = sorted(ci for ci in heads if heads[ci] == EN_HEADER_PREFIX or
+                     heads[ci].startswith(EN_HEADER_PREFIX + u" "))
+    if not en_cols:
+        for alias in HEADER_ALIASES["en"]:
+            en_cols = sorted(ci for ci in heads if heads[ci] == alias)
+            if en_cols:
+                break
+    if en_cols:
+        cols["en"] = en_cols[0]
     missing = [k for k in ("key", "pt", "en") if k not in cols]
     if missing:
         raise Exception(u"Colunas não encontradas na aba '{}': {}".format(
             name, u", ".join({"key": u"KEYNOTE", "pt": u"DESCRIÇÃO",
-                              "en": u"DESCRIÇÃO IN"}[m] for m in missing)))
+                              "en": u"DESCRIÇÃO EM IN"}[m] for m in missing)))
 
     def cell(cells, key):
         ci = cols.get(key)
@@ -839,6 +857,17 @@ def read_excel(path):
             last_row = max(last_row, rn)
         if rec["key"]:
             rows.append(rec)
+
+    def _col_letter(ci):
+        out, n = u"", ci + 1
+        while n:
+            n, r = divmod(n - 1, 26)
+            out = unichr(65 + r) + out
+        return out
+    LOG.info(u"Excel: aba '{}', cabeçalho na linha {} · {}".format(name, header_row, u" · ".join(
+        u"{} = coluna {} '{}'".format(lbl, _col_letter(cols[k]), heads.get(cols[k], u""))
+        for k, lbl in (("key", u"Keynote"), ("pt", u"Description"), ("en", PARAM_IN_NAME))
+        if k in cols)))
 
     by_key, dups = OrderedDict(), defaultdict(list)
     for rec in rows:
