@@ -19,20 +19,40 @@ Nenhum arquivo de `OCA.extension` é alterado pelo processo de build.
 
 ## Estrutura da extensão analisada
 
+Versão atual: **1.01** (recebida como `OCA1.01.extension.zip`).
+
 ```
 OCA.extension/
   startup.py                    pinta a barra de título dos painéis (lê os bundle.yaml)
+  Instaladores/                 scripts da impressora "OCA PDF24" (.cmd/.ps1) - só copiados
   lib/oca_ds/                   biblioteca compartilhada (WPF, Excel, relatórios, logo)
+  lib/oca_params/               parâmetros compartilhados (usada pelo painel Gerência)
   OCA.tab/                      aba "OCA"; ordem dos painéis em bundle.yaml
     Sobre.panel/Sobre.pushbutton                         (contém VERSAO = versão do plugin)
     Keynote.panel/01_Acabamentos de Ambiente.pushbutton  (+ .xlsx e .html usados pelo script)
     Keynote.panel/02_Atualização Descrição por Keynotes.pushbutton
-    Vistas.panel/01_, 02_, 03_ ... .pushbutton
+    Vistas.panel/01_Abertura de Vista, 02_Abertura de Multiplas Vistas por Ambientes
     Coordenadas.panel/01_Exportar Coordenadas.pushbutton
+    Gerência.panel/01_Gerenciador de Parâmetros Compartilhados.pushbutton
+    Exportação.panel/ExportarPranchas.pushbutton         (título "Exportação DWG/PDF")
     Visualizar.panel/01_Visualizador de IFC.pushbutton   (+ ifc-hud-viewer.html)
 ```
 
-38 arquivos, 5 painéis, 8 botões. Os scripts encontram seus recursos por caminho
+51 arquivos, 7 painéis, 9 botões.
+
+**Nome da pasta:** o zip veio como `OCA1.01.extension`, mas o instalador grava
+sempre como `OCA.extension`. Com o número da versão no nome, o pyRevit
+carregaria a versão nova *ao lado* da anterior (aba OCA com botões duplicados), e
+cada versão futura somaria mais uma pasta. Os scripts encontram seus arquivos por
+caminho relativo, então o nome da pasta não muda o funcionamento. Se já existir
+uma `OCA1.01.extension` copiada à mão, o instalador avisa (tela de verificação e
+relatório) para apagá-la; ele não a remove sozinho.
+
+**Pasta Instaladores / impressora PDF24:** o botão Exportação DWG/PDF (opção
+PDF24) precisa da impressora "OCA PDF24". Os scripts que a criam pedem
+administrador, alteram o registro do PDF24 (HKLM) e criam porta e impressora. O
+instalador **não** os executa; apenas os copia. O próprio botão oferece
+instalar a impressora, e o relatório final indica o `.cmd`. Os scripts encontram seus recursos por caminho
 relativo (`os.path.dirname(__file__)`), então funcionam em qualquer pasta de
 extensões. O `startup.py` tem `%APPDATA%\pyRevit\Extensions\OCA.extension` apenas
 como reserva e usa a pasta real de `__file__`.
@@ -69,8 +89,11 @@ Wine corrompe o nome da pasta `02_Atualização Descrição por Keynotes.pushbut
 - **Valida a extensão** e aborta com mensagem clara se faltar `startup.py`,
   `OCA.tab`, `OCA.tab\bundle.yaml`, `lib\oca_ds\__init__.py`, o logo, ou se algum
   `.pushbutton` não tiver `script.py`.
-- **Lê a versão** de `VERSAO = u"13/10/2026"` no botão Sobre e a converte em
-  `2026.10.13`. Para forçar outra: `build.ps1 -AppVersion 2026.12.01`.
+- **Lê a versão** de `VERSAO` no botão Sobre: `u"1.01"` é usada como está; o
+  formato antigo `u"13/10/2026"` vira `2026.10.13`. Para forçar outra:
+  `build.ps1 -AppVersion 1.02`. A comparação é numérica (1.01 < 1.2 < 1.10) e a
+  mudança da numeração por data para 1.01 é reconhecida (não gera falso aviso de
+  "versão instalada mais nova").
 - **Gera a lista de arquivos e o SHA-256** de cada um a partir da mesma
   varredura que alimenta a seção `[Files]`. Ignora `__pycache__`, `*.pyc`,
   `Thumbs.db`, `desktop.ini`, `.DS_Store` e arquivos temporários do Office (`~$*`).
@@ -157,8 +180,9 @@ instala em pasta interna do pyRevit e falha se não houver permissão de gravaç
 
 1. Altere os arquivos em `OCA.extension` normalmente.
 2. Atualize `VERSAO` em `OCA.tab/Sobre.panel/Sobre.pushbutton/script.py` (ex.:
-   `u"20/11/2026"`). Essa data vira a versão do instalador (`2026.11.20`) e é a
-   mesma mostrada no botão Sobre.
+   `u"1.02"`). Esse valor vira a versão do instalador e é o mesmo mostrado no
+   botão Sobre. Mantenha a pasta com o nome `OCA.extension` no repositório (não
+   `OCA1.02.extension`).
 3. Gere o `.exe` (`installer\build.ps1`).
 4. **Não altere o `AppGuid`** no `.iss`. Ele identifica o produto; é o que faz a
    versão nova reconhecer e atualizar a anterior.
@@ -183,7 +207,7 @@ relatórios são mantidos. Depois, use pyRevit > Reload ou reinicie o Revit.
 1. Revit fechado: abra o Revit 2025/2026 normalmente (não precisa ser como
    administrador). Revit aberto: aba **pyRevit > Reload**.
 2. A aba **OCA** deve aparecer com os painéis Sobre, Keynote, Vistas,
-   Coordenadas e Visualizar.
+   Coordenadas, Gerência, Exportação e Visualizar.
 3. **OCA > Sobre** deve mostrar a versão instalada.
 4. Se a aba não aparecer: confirme que o pyRevit está conectado a essa versão do
    Revit (`pyrevit attached` no Prompt de Comando) e que a pasta escolhida é a
@@ -206,6 +230,11 @@ emulado) nos cenários abaixo. A árvore instalada foi comparada byte a byte com
   desinstalação (arquivo do usuário preservado).
 - Interface: todas as telas capturadas, incluindo *Outra pasta* com aviso de
   pasta não registrada e cancelamento na tela final sem criar nada.
+- Versão 1.01: instalação nova (51 arquivos idênticos ao zip) e atualização de
+  uma máquina com a versão 2026.10.13 instalada pelo instalador anterior: os
+  botões removidos/renomeados na 1.01 (`02_Abertura de Multiplas Vistas`,
+  `03_Abertura de Multiplas Vistas por Ambientes`) foram apagados com as pastas,
+  sem deixar botão duplicado; `OCA1.01.extension` copiada à mão é detectada.
 - Erros de compilação: botão sem `script.py`, `startup.py` ausente, pasta da
   extensão inexistente; versão forçada por `/DAppVersion`.
 

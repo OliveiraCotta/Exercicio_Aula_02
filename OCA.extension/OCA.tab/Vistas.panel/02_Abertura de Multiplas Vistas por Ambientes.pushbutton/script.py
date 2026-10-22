@@ -1,9 +1,14 @@
 # -*- coding: utf-8 -*-
-# Abertura de Múltiplas Vistas - extensão do 01_Abertura de Vistas para vários ambientes.
+# Abertura de Múltiplas Vistas por Ambientes - variante do 02_Abertura de
+# Múltiplas Vistas em que os ambientes são escolhidos numa lista do diálogo.
 #
-# Mesma lógica do 01 (geometria, recorte orientado, nomenclatura, tipos de
-# vista, diálogo), aplicada a CADA ambiente da seleção:
-#   1. Usa a seleção atual (ou pede para selecionar) Ambientes (Rooms).
+# Mesma lógica do 01/02 (geometria, recorte orientado, nomenclatura, tipos de
+# vista, elevações, diálogo), aplicada a CADA ambiente marcado:
+#   1. Lista todos os Ambientes (Rooms) colocados e delimitados do modelo
+#      (seção AMBIENTES do diálogo), agrupados por nível, com filtro, marcar/
+#      desmarcar todos, marcar por nível ou um a um. Ambientes que estiverem
+#      selecionados no Revit ao abrir o comando já vêm marcados. A geometria
+#      só é lida dos ambientes marcados, depois de confirmar o diálogo.
 #   2. Tipo de vista: Plantas, Elevações ou Plantas + Elevações.
 #      Plantas - margem (m) e o que fazer, UMA vista POR AMBIENTE:
 #        - criar nova vista de planta (Piso, Forro, Estrutural, Área), no
@@ -12,7 +17,10 @@
 #      ("Recortar a vista ativa" do 01 não se aplica: uma vista só não pode
 #      ter o recorte de vários ambientes separados.)
 #   3. Destino no Navegador de Projeto: pasta existente ou nova, gravada no
-#      parâmetro de projeto "Pasta" (pelo qual o navegador agrupa as vistas).
+#      parâmetro de projeto "Pasta" e/ou "Pasta Project Browser" (pelo qual o
+#      navegador agrupa as vistas). Leitura: "Pasta" preenchido; senão "Pasta
+#      Project Browser". Gravação: nos dois que existirem no projeto, para
+#      manter os dois iguais até a unificação em "Pasta" (seção 6b).
 #      O texto antes do 1º "_" da pasta (D000_...) vira o prefixo do View Name.
 #   4. View Template opcional (só os compatíveis com o tipo de vista).
 #   5. Nomenclatura escolhida uma vez e composta para cada ambiente:
@@ -23,7 +31,7 @@
 #   7. Ordem: nível (de baixo para cima) e número do ambiente. As vistas
 #      criadas são abertas nessa ordem; a primeira fica ativa no final.
 #   8. Ambiente sem vista (não colocado, sem geometria ou falha na criação)
-#      é ignorado; ao final, um resumo lista o que precisa ser revisado.
+#      é ignorado (sem relatório ao final da execução).
 #   9. Elevações (seção 6d): UM ElevationMarker nativo NOVO por ambiente,
 #      num ponto dentro do Room, e as elevações Norte/Leste/Sul/Oeste criadas
 #      a partir dele (como Vista > Elevação). Elevações já existentes são
@@ -35,10 +43,10 @@
 # pyRevit 5.2 lê a docstring do módulo com .decode('utf-8'), que falha com
 # acentos no IronPython e deixa o botão sem tooltip. O tooltip é só __doc__.
 
-__title__ = u"Abertura de\nMúltiplas Vistas"
-__doc__ = u"""Cria plantas e/ou elevações (marcador nativo do Revit) recortadas para cada ambiente selecionado, já com nome, pasta no Navegador de Projeto e Modelo de Vista (View Template).
+__title__ = u"Abertura de Vistas\npor Ambientes"
+__doc__ = u"""Cria plantas e/ou elevações (marcador nativo do Revit) recortadas para cada ambiente marcado na lista, já com nome, pasta no Navegador de Projeto e Modelo de Vista (View Template).
 
-Selecione os ambientes e clique no botão."""
+Clique no botão e marque os ambientes no diálogo."""
 
 import re
 import math
@@ -46,10 +54,10 @@ import math
 from pyrevit import revit, DB, script, forms
 from oca_ds import build_xaml, alert_title
 from Autodesk.Revit.DB.Architecture import Room
-from Autodesk.Revit.UI.Selection import ISelectionFilter, ObjectType
-from Autodesk.Revit.Exceptions import OperationCanceledException
+from System.Windows import FontWeights, Thickness, Visibility, TextTrimming
+from System.Windows.Controls import CheckBox, StackPanel, TextBlock, WrapPanel
 
-ALERT_TITLE = alert_title(__title__)   # título de todas as mensagens do comando: "OCA · Abertura de Múltiplas Vistas"
+ALERT_TITLE = alert_title(__title__)   # título de todas as mensagens do comando: "OCA · Abertura de Vistas por Ambientes"
 
 doc = revit.doc
 uidoc = revit.uidoc
@@ -103,7 +111,7 @@ LOCATION_WEIGHT = 10.0                    # peso extra do eixo de paredes retas
 
 
 # ------------------------------------------------------------------
-# 1. Categorias aceitas + seleção
+# 1. Categorias aceitas + ambientes do modelo
 # ------------------------------------------------------------------
 def _bic_int(name):
     bic = getattr(DB.BuiltInCategory, name, None)   # OST_Toposolid: Revit 2024+
@@ -115,7 +123,8 @@ def _bic_int(name):
         return None
 
 
-# comando 02: só ambientes (o 01 aceita também linhas, terreno, pisos e paredes)
+# comando 03 (igual ao 02): só ambientes (o 01 aceita também linhas, terreno,
+# pisos e paredes)
 ALLOWED_CATS = {}
 for _name, _label in (("OST_Rooms", u"Ambiente"),):
     _v = _bic_int(_name)
@@ -131,50 +140,13 @@ def elem_cat_int(el):
         return None
 
 
-class AllowedFilter(ISelectionFilter):
-    def AllowElement(self, el):
-        return elem_cat_int(el) in ALLOWED_CATS
-
-    def AllowReference(self, ref, point):
-        return False
-
-
-def _unique(elements):
-    seen, out = set(), []
-    for el in elements:
-        key = eid_int(el.Id)
-        if key not in seen:
-            seen.add(key)
-            out.append(el)
-    return out
-
-
-PICK_PROMPT = (u"Abertura de Múltiplas Vistas: selecione os ambientes (um ou vários) e clique "
-               u"em Concluir na Barra de opções  ·  Esc cancela")
-
-
-def get_target_elements():
-    """Seleção atual filtrada; se vazia, abre a seleção de ambientes no modelo."""
-    current = list(revit.get_selection().elements)
-    picked = [el for el in current if elem_cat_int(el) in ALLOWED_CATS]
-    ignored = len(current) - len(picked)
-    if picked:   # já havia ambientes selecionados: segue exatamente como antes
-        return _unique(picked), ignored
-
-    # sem seleção prévia: abre direto a seleção múltipla nativa (orientação na
-    # barra de status; Concluir na Barra de opções; Esc cancela)
+def preselected_room_ids():
+    """Ambientes selecionados no Revit ao abrir o comando: já vêm marcados na lista."""
     try:
-        refs = uidoc.Selection.PickObjects(ObjectType.Element, AllowedFilter(), PICK_PROMPT)
-    except OperationCanceledException:
-        script.exit()   # Esc: encerra sem mensagem, sem transação, sem alterar o modelo
-    except Exception as exc:   # vista que não permite seleção (folha, tabela...)
-        forms.alert(u"Não foi possível selecionar ambientes na vista ativa.",
-                    sub_msg=u"Abra uma planta, corte ou elevação e tente de novo.\n\n{}"
-                    .format(to_unicode(exc)), title=ALERT_TITLE, exitscript=True)
-    elements = _unique([doc.GetElement(r) for r in refs])
-    if not elements:   # Concluir sem nenhum ambiente = cancelar, sem mensagem
-        script.exit()
-    return elements, ignored
+        return set(eid_int(el.Id) for el in revit.get_selection().elements
+                   if elem_cat_int(el) in ALLOWED_CATS)
+    except Exception:
+        return set()
 
 
 def elem_label(el):
@@ -882,14 +854,38 @@ def apply_title_on_sheet(view, title, notes):
 
 
 # ------------------------------------------------------------------
-# 6b. Pasta do Navegador de Projeto = parâmetro de projeto "Pasta"
+# 6b. Pasta do Navegador de Projeto = parâmetro "Pasta" / "Pasta Project Browser"
 # ------------------------------------------------------------------
-# A organização do navegador do escritório agrupa as vistas pelo parâmetro
-# de projeto "Pasta" (texto, instância, categoria Vistas). As pastas
-# existentes são os valores já usados nas vistas; "mandar a vista para a
-# pasta" = gravar o valor nesse parâmetro. Nova pasta = valor novo.
-FOLDER_PARAM = u"Pasta"
+# A organização do navegador do escritório agrupa as vistas por um parâmetro
+# de projeto de texto, por instância, na categoria Vistas. O padrão é "Pasta";
+# projetos mais antigos usam "Pasta Project Browser". As pastas existentes são
+# os valores já usados nas vistas; "mandar a vista para a pasta" = gravar o
+# valor no parâmetro. Nova pasta = valor novo.
+#   Leitura: "Pasta" preenchido; vazio ou inexistente = "Pasta Project Browser".
+#   Gravação: nos DOIS parâmetros que existirem no projeto - a vista fica na
+#   pasta certa qualquer que seja o parâmetro do navegador, e "Pasta" já fica
+#   preenchido para a unificação (objetivo: só "Pasta").
+FOLDER_PARAM = u"Pasta"                        # parâmetro padrão (unificação)
+FOLDER_PARAM_ALT = u"Pasta Project Browser"    # nomenclatura alternativa aceita
+FOLDER_PARAMS = (FOLDER_PARAM, FOLDER_PARAM_ALT)   # ordem = prioridade de leitura
 _FOLDER_PREFIX = re.compile(u"^([^_]+)_")
+
+
+def folder_value(el, names=FOLDER_PARAMS):
+    """Pasta do elemento: o 1º parâmetro de texto preenchido, na ordem de prioridade."""
+    for pname in names:
+        p = el.LookupParameter(pname)
+        if p is None or p.StorageType != DB.StorageType.String or not p.HasValue:
+            continue
+        value = to_unicode(p.AsString()).strip()
+        if value:
+            return value
+    return u""
+
+
+def quoted(names):
+    """('Pasta', 'Pasta Project Browser') -> "'Pasta' e 'Pasta Project Browser'"."""
+    return u" e ".join(u"'{}'".format(n) for n in names)
 
 
 def folder_prefix(name):
@@ -905,23 +901,39 @@ def name_prefix(folder):
 
 
 class ProjectFolders(object):
-    """Pastas existentes: valores do parâmetro 'Pasta' nas vistas do modelo."""
+    """Pastas existentes: valores de 'Pasta' (ou 'Pasta Project Browser') nas vistas."""
 
     def __init__(self):
-        self.param_name = FOLDER_PARAM
-        self.param_id = None
+        self.param_ids = {}    # nome -> ElementId, só os parâmetros de texto encontrados
+        self.not_text = []     # parâmetros encontrados que não são de texto (ignorados)
+        self.divergent = 0     # vistas com os dois preenchidos e valores diferentes
         self.reason = None
-        self.entries = []   # [{"label", "name"}]
+        self.entries = []      # [{"label", "name"}]
         try:
             self._load()
         except Exception as exc:
-            self.reason = u"Não foi possível ler o parâmetro '{}' ({}).".format(
-                FOLDER_PARAM, to_unicode(exc))
+            self.reason = u"Não foi possível ler o parâmetro {} ({}).".format(
+                quoted(FOLDER_PARAMS), to_unicode(exc))
             self.entries = []
 
     @property
     def available(self):
         return self.reason is None
+
+    @property
+    def params(self):
+        """Parâmetros de pasta usáveis neste projeto, na ordem de prioridade."""
+        return [n for n in FOLDER_PARAMS if n in self.param_ids]
+
+    @property
+    def param_name(self):
+        """Texto para as mensagens: "'Pasta'", "'Pasta Project Browser'" ou os dois."""
+        return quoted(self.params or FOLDER_PARAMS)
+
+    @property
+    def only_alt(self):
+        """Projeto só com 'Pasta Project Browser' (ainda não unificado em 'Pasta')."""
+        return self.params == [FOLDER_PARAM_ALT]
 
     def _load(self):
         values = set()
@@ -929,26 +941,52 @@ class ProjectFolders(object):
             # folhas e tabelas têm organização própria no navegador
             if v.IsTemplate or isinstance(v, (DB.ViewSheet, DB.ViewSchedule)):
                 continue
-            p = v.LookupParameter(FOLDER_PARAM)
-            if p is None:
-                continue
-            if p.StorageType != DB.StorageType.String:
-                self.reason = u"O parâmetro '{}' não é de texto.".format(FOLDER_PARAM)
-                return
-            if self.param_id is None:
-                self.param_id = p.Id
-            value = to_unicode(p.AsString()).strip()
-            if value:
-                values.add(value)
-        if self.param_id is None:
-            self.reason = (u"Parâmetro de projeto '{}' não encontrado nas vistas (precisa ser "
-                           u"de texto, por instância, na categoria Vistas).".format(FOLDER_PARAM))
+            found = {}
+            for pname in FOLDER_PARAMS:
+                p = v.LookupParameter(pname)
+                if p is None:
+                    continue
+                if p.StorageType != DB.StorageType.String:
+                    if pname not in self.not_text:
+                        self.not_text.append(pname)
+                    continue
+                if pname not in self.param_ids:
+                    self.param_ids[pname] = p.Id
+                found[pname] = to_unicode(p.AsString()).strip() if p.HasValue else u""
+            main, alt = found.get(FOLDER_PARAM, u""), found.get(FOLDER_PARAM_ALT, u"")
+            if main and alt and main != alt:
+                self.divergent += 1
+            if main or alt:   # prioridade: 'Pasta'
+                values.add(main or alt)
+        if not self.param_ids:
+            if self.not_text:
+                self.reason = u"O parâmetro {} não é de texto.".format(quoted(self.not_text))
+            else:
+                self.reason = (u"Parâmetro de projeto {} não encontrado nas vistas (precisa ser "
+                               u"de texto, por instância, na categoria Vistas)."
+                               .format(u" ou ".join(u"'{}'".format(n) for n in FOLDER_PARAMS)))
             return
         self.entries = [{"label": v, "name": v} for v in sorted(values, key=natural_key)]
 
+    def hints(self):
+        """Avisos do diálogo sobre os parâmetros de pasta (unificação em 'Pasta')."""
+        out = []
+        if self.only_alt:
+            out.append(u"O projeto usa só '{}': as vistas são gravadas nele. Para unificar, {} "
+                       u"o parâmetro '{}' (texto, por instância, categoria Vistas).".format(
+                           FOLDER_PARAM_ALT,
+                           u"recrie" if FOLDER_PARAM in self.not_text else u"crie", FOLDER_PARAM))
+        if self.divergent:
+            out.append(u"{} vista(s) com '{}' e '{}' diferentes: vale '{}'. As vistas novas "
+                       u"recebem o mesmo valor nos dois.".format(
+                           self.divergent, FOLDER_PARAM, FOLDER_PARAM_ALT, FOLDER_PARAM))
+        if self.not_text and self.params:
+            out.append(u"Parâmetro {} ignorado: não é de texto.".format(quoted(self.not_text)))
+        return out
+
     def template_value(self, template_id):
-        """Valor de 'Pasta' imposto pelo View Template; None se ele não controla a pasta."""
-        if self.param_id is None or template_id is None:
+        """Pasta imposta pelo View Template; None se ele não controla nenhum dos parâmetros."""
+        if not self.param_ids or template_id is None:
             return None
         tpl = doc.GetElement(template_id)
         try:
@@ -956,32 +994,42 @@ class ProjectFolders(object):
                           - set(eid_int(i) for i in tpl.GetNonControlledTemplateParameterIds()))
         except Exception:
             return None
-        if eid_int(self.param_id) not in controlled:
+        names = [n for n in self.params if eid_int(self.param_ids[n]) in controlled]
+        if not names:
             return None
-        p = tpl.LookupParameter(FOLDER_PARAM)
-        return to_unicode(p.AsString()).strip() if p is not None and p.HasValue else u""
+        return folder_value(tpl, names)
 
-    @staticmethod
-    def apply(view, name, notes):
+    def apply(self, view, name, notes):
+        """Grava a pasta em todos os parâmetros de pasta do projeto (os dois, se houver).
+        Os que o View Template controlar são sobrescritos por ele depois."""
         if not name:
             return
-        p = view.LookupParameter(FOLDER_PARAM)
-        if p is None or p.IsReadOnly:
-            notes.append(u"Parâmetro '{}' indisponível na vista; pasta não definida."
-                         .format(FOLDER_PARAM))
-        else:
+        written = 0
+        for pname in self.params:
+            p = view.LookupParameter(pname)
+            if p is None or p.IsReadOnly:
+                continue
             p.Set(name)
+            written += 1
+        if not written:
+            notes.append(u"Parâmetro {} indisponível na vista; pasta não definida."
+                         .format(self.param_name))
 
-    @staticmethod
-    def check(view, name, notes):
-        """Depois do View Template: avisa se a vista não ficou na pasta esperada."""
+    def check(self, view, name, notes):
+        """Depois do View Template: avisa se a vista não ficou na pasta esperada
+        ou se 'Pasta' e 'Pasta Project Browser' ficaram diferentes."""
         if not name:
             return
-        p = view.LookupParameter(FOLDER_PARAM)
-        got = to_unicode(p.AsString()).strip() if p is not None and p.HasValue else u""
+        got = folder_value(view, self.params)
         if got != name:
             notes.append(u"Pasta: ficou '{}' em vez de '{}' (definida pelo Modelo de Vista)."
                          .format(got, name))
+        if len(self.params) > 1:
+            vals = [folder_value(view, [n]) for n in self.params]
+            if len(set(vals)) > 1:
+                notes.append(u"Pasta: {} ficaram diferentes ({}) - o Modelo de Vista controla "
+                             u"só um deles.".format(quoted(self.params),
+                                                    u" / ".join(u"'{}'".format(x) for x in vals)))
 
 
 # ------------------------------------------------------------------
@@ -1105,24 +1153,38 @@ def _family_label(sym):
     return u"{} : {}".format(to_unicode(sym.FamilyName), _type_name(sym))
 
 
+# só famílias de marcador de elevação INTERNA: "INT" como parte do nome da
+# família, separado por _ - . ou espaço (OCA_SIMB_ELEVAÇÃO_INT). O nome do tipo
+# de vista (ex.: "EL. INTERNA") não conta.
+ELEV_FAMILY_TOKEN = re.compile(u"(?:^|[_\\s\\-.])INT(?:$|[_\\s\\-.])", re.IGNORECASE | re.UNICODE)
+
+
+def is_int_family(sym):
+    """Família do marcador com "INT" no nome (OCA_SIMB_ELEVAÇÃO_INT)."""
+    try:
+        return bool(ELEV_FAMILY_TOKEN.search(to_unicode(sym.FamilyName)))
+    except Exception:
+        return False
+
+
 def elev_type_items():
-    """Combo 'Tipo de elevação': as famílias de marcador carregadas no modelo.
-    Família já usada por um tipo de elevação -> esse tipo; família carregada
-    sem tipo -> um tipo novo é criado ao aplicar (ensure_elev_type)."""
+    """Combo 'Tipo de elevação': as famílias de marcador INTERNAS (com "INT" no
+    nome da família, ver is_int_family) carregadas no modelo. Família já usada
+    por um tipo de elevação -> esse tipo; família carregada sem tipo -> um tipo
+    novo é criado ao aplicar (ensure_elev_type). Tipo de elevação com marcador
+    não identificado fica fora: não dá para saber se a família é INT."""
     items, used = [], set()
     for vft in ELEV_TYPES:
         sym = _tag_link(vft)[3]
         if sym is not None:
             used.add(eid_int(sym.Id))
-            items.append({"label": u"{}   (tipo: {})".format(_family_label(sym), _vft_name(vft)),
-                          "id": vft.Id, "family": _family_label(sym), "symbol": None})
-        else:
-            items.append({"label": u"{}   (marcador não identificado)".format(_vft_name(vft)),
-                          "id": vft.Id, "family": u"", "symbol": None})
+            if is_int_family(sym):
+                items.append({"label": u"{}   (tipo: {})".format(_family_label(sym), _vft_name(vft)),
+                              "id": vft.Id, "family": _family_label(sym), "symbol": None})
     if any(_tag_link(v)[2] is not None for v in ELEV_TYPES):   # há tipo para duplicar
         for sym in (DB.FilteredElementCollector(doc).OfClass(DB.FamilySymbol)
                     .OfCategory(DB.BuiltInCategory.OST_ElevationMarks)):
-            if _is_elev_mark(sym) and eid_int(sym.Id) not in used:
+            if _is_elev_mark(sym) and eid_int(sym.Id) not in used and is_int_family(sym):
                 items.append({"label": u"{}   (novo tipo de elevação)".format(_family_label(sym)),
                               "id": None, "family": _family_label(sym), "symbol": sym.Id})
     return sorted(items, key=lambda i: natural_key(i["label"]))
@@ -1370,6 +1432,59 @@ def room_sort_key(g):
             natural_key(number), natural_key(name))
 
 
+class RoomItem(object):
+    """Um ambiente da lista do diálogo. Só dados leves (nome, nível): a
+    geometria é lida depois, apenas dos ambientes marcados."""
+
+    def __init__(self, room):
+        self.el = room
+        self.id = eid_int(room.Id)
+        self.label = elem_label(room)
+        lid = element_level_id(room)
+        self.level = doc.GetElement(lid) if lid is not None else None
+        self.level_name = to_unicode(self.level.Name) if self.level is not None else u"(sem nível)"
+        self.level_key = eid_int(self.level.Id) if self.level is not None else -1
+        self.has_en = bool(room_info(room)[2])
+        self.search_folded = search_text(u"{} {}".format(self.label, self.level_name))
+        self.sort_key = room_sort_key(self)   # nível (de baixo para cima), número, nome
+
+
+def search_text(text):
+    """Texto para o filtro: minúsculo e sem acentos ('Área de Serviço' -> 'area de servico')."""
+    text = to_unicode(text).lower()
+    try:   # o mesmo tratamento no filtro e nos itens: sem .NET, compara com acento
+        from System import String
+        from System.Globalization import CharUnicodeInfo, UnicodeCategory
+        from System.Text import NormalizationForm
+        return u"".join(c for c in String.Normalize(text, NormalizationForm.FormD)
+                        if CharUnicodeInfo.GetUnicodeCategory(c) != UnicodeCategory.NonSpacingMark)
+    except Exception:
+        return text
+
+
+def collect_rooms():
+    """Ambientes colocados e delimitados do modelo, na ordem nível/número/nome.
+    Devolve (itens, quantos foram omitidos por não estarem colocados/delimitados)."""
+    items, omitted = [], 0
+    for el in (DB.FilteredElementCollector(doc).OfCategory(DB.BuiltInCategory.OST_Rooms)
+               .WhereElementIsNotElementType()):
+        if not isinstance(el, Room):
+            continue
+        try:
+            ok = el.Area > 0   # não colocado / não delimitado / redundante = 0
+        except Exception:
+            ok = False
+        if not ok:
+            omitted += 1
+            continue
+        try:
+            items.append(RoomItem(el))
+        except Exception:
+            omitted += 1
+    items.sort(key=lambda r: r.sort_key)
+    return items, omitted
+
+
 # ------------------------------------------------------------------
 # 8. Diálogo (padrão visual OCA - lib/oca_ds; três colunas para caber na tela)
 # ------------------------------------------------------------------
@@ -1378,13 +1493,12 @@ def room_sort_key(g):
 FOLDER_BLOCK = u"""
             <TextBlock Text="@T@" FontWeight="SemiBold" Margin="0,4,0,6"/>
             <StackPanel x:Name="@K@_box">
-              <RadioButton x:Name="@K@_f_exist" GroupName="@K@_folder" Content="Pasta existente"/>
-              <ComboBox x:Name="@K@_list" Margin="22,0,0,8"/>
+              <RadioButton x:Name="@K@_f_exist" GroupName="@K@_folder" Content="Pasta"/>
+              <ComboBox x:Name="@K@_list" Margin="22,0,0,8"
+                        ToolTip="Pastas existentes no modelo. 'Não definir pasta' = a vista fica sem pasta e o nome sem prefixo."/>
               <RadioButton x:Name="@K@_f_new" GroupName="@K@_folder" Content="Nova pasta"/>
               <TextBox x:Name="@K@_new" Margin="22,0,0,8"
                        ToolTip="Ex.: D003_DETALHAMENTO - o texto antes do 1º '_' vira o prefixo do nome da vista (View Name)"/>
-              <RadioButton x:Name="@K@_f_none" GroupName="@K@_folder"
-                           Content="Não definir pasta (nome da vista sem prefixo)"/>
             </StackPanel>
             <Border Style="{StaticResource oca.Msg.Warn}" Visibility="{Binding Visibility, ElementName=@K@_lock}">
               <TextBlock x:Name="@K@_lock" Style="{StaticResource oca.MsgText}"/>
@@ -1397,6 +1511,32 @@ CROP_BODY = u"""
   <ScrollViewer VerticalScrollBarVisibility="Auto">
   <StackPanel>
     <TextBlock x:Name="info" Style="{StaticResource oca.Hint}" Margin="0,0,0,12"/>
+
+    <HeaderedContentControl Header="AMBIENTES  ·  UMA VISTA POR AMBIENTE MARCADO" Style="{StaticResource oca.Section}">
+      <StackPanel>
+        <DockPanel Margin="0,0,0,8">
+          <TextBlock x:Name="rooms_count" DockPanel.Dock="Right" Style="{StaticResource oca.Hint}"
+                     VerticalAlignment="Center" Margin="12,0,0,0"/>
+          <StackPanel Orientation="Horizontal">
+            <TextBlock Text="Filtrar" Style="{StaticResource oca.Label}" VerticalAlignment="Center" Margin="0,0,8,0"/>
+            <TextBox x:Name="rooms_filter" Width="260"
+                     ToolTip="Mostra só os ambientes cujo número, nome ou nível contém o texto. Marcar/Desmarcar todos valem para os ambientes visíveis."/>
+            <Button x:Name="rooms_all" Content="Marcar todos" Style="{StaticResource oca.Compact}" Margin="12,0,6,0"
+                    ToolTip="Marca todos os ambientes visíveis na lista (respeita o filtro)."/>
+            <Button x:Name="rooms_none" Content="Desmarcar todos" Style="{StaticResource oca.Compact}"
+                    ToolTip="Desmarca todos os ambientes visíveis na lista (respeita o filtro)."/>
+          </StackPanel>
+        </DockPanel>
+        <Border Background="{StaticResource oca.Field}" BorderBrush="{StaticResource oca.FieldLine}" BorderThickness="1"
+                CornerRadius="{StaticResource oca.RadiusControl}" Padding="10,8,4,4">
+          <ScrollViewer MaxHeight="210" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+            <StackPanel x:Name="rooms_list"/>
+          </ScrollViewer>
+        </Border>
+        <TextBlock x:Name="rooms_hint" Style="{StaticResource oca.Hint}" Margin="0,6,0,0"
+                   Text="Clique no nome do nível para marcar ou desmarcar todos os ambientes dele. Ambientes selecionados no Revit ao abrir o comando já vêm marcados."/>
+      </StackPanel>
+    </HeaderedContentControl>
 
     <Grid>
       <Grid.Resources>
@@ -1570,57 +1710,63 @@ CROP_FOOTER = u"""
 CROP_XAML = build_xaml(title=__title__, subtitle=__doc__, body=CROP_BODY,
                        footer_right=CROP_FOOTER, size="M", width=1240)
 
-FOLDER_MODES = ("existing", "new", "none")
+ROOM_ITEM_WIDTH = 270   # largura de cada ambiente na lista (4 por linha na janela de 1240)
+FOLDER_MODES = ("existing", "new")   # botões do bloco; "none" = 1º item da lista "Pasta"
+NO_FOLDER = u"Não definir pasta"     # 1º item da lista "Pasta": vista sem pasta, nome sem prefixo
 CREATE_MODES = ("plans", "elev", "both")
 DIR_ORDER = ("N", "L", "S", "O")   # ordem dos checkboxes: ELEVAÇÃO 01..04
 
 
 class FolderPicker(object):
-    """Um bloco de destino (pasta existente / nova / nenhuma). Se o View
-    Template escolhido controla o parâmetro 'Pasta', o bloco trava: a vista
-    vai para a pasta do template e o prefixo vem dela."""
+    """Um bloco de destino: "Pasta" (lista: 'Não definir pasta' + pastas
+    existentes) ou "Nova pasta". Se o View Template escolhido controla 'Pasta'
+    ou 'Pasta Project Browser', o bloco trava: a vista vai para a pasta do
+    template e o prefixo vem dela."""
 
     def __init__(self, win, key, folders, saved, on_change):
         def ctl(name):
             return getattr(win, u"{}_{}".format(key, name))
         self.folders = folders
-        self.rb = {"existing": ctl("f_exist"), "new": ctl("f_new"), "none": ctl("f_none")}
+        self.rb = {"existing": ctl("f_exist"), "new": ctl("f_new")}
         self.box, self.list, self.new = ctl("box"), ctl("list"), ctl("new")
         self.lock_txt, self.prefix_txt = ctl("lock"), ctl("prefix")
 
-        labels = [e["label"] for e in folders.entries]
+        # 1º item = 'Não definir pasta'; depois as pastas existentes
+        labels = [NO_FOLDER] + [e["label"] for e in folders.entries]
         self.list.ItemsSource = labels
-        if labels:
-            self.list.SelectedIndex = (labels.index(saved["folder"])
-                                       if saved["folder"] in labels else 0)
+        self.list.SelectedIndex = (labels.index(saved["folder"])
+                                   if saved["folder"] in labels else 0)
         self.new.Text = saved["folder_new"]
-        allowed = {"existing": folders.available and bool(labels),
-                   "new": folders.available, "none": True}
+        allowed = {"existing": True, "new": folders.available}   # 'Pasta' sempre tem 'Não definir pasta'
         for k, rb in self.rb.items():
             rb.IsEnabled = allowed[k]
             rb.Checked += on_change
         self.list.SelectionChanged += on_change
         self.new.TextChanged += on_change
-        # sempre abre em "Pasta existente" (igual ao 01; a pasta escolhida da
-        # última vez continua selecionada na lista); sem pastas, a próxima opção
-        start = next(k for k in FOLDER_MODES if allowed[k])
-        self.rb[start].IsChecked = True
+        # sempre abre em "Pasta" (igual ao 01; a pasta escolhida da última vez
+        # continua selecionada na lista)
+        self.rb["existing"].IsChecked = True
 
     @property
     def mode(self):
+        """Botão marcado: "existing" (Pasta) ou "new" (Nova pasta)."""
         return next((k for k in FOLDER_MODES if self.rb[k].IsChecked), "none")
 
     def choice(self, template):
-        """{"mode", "name", "locked"}: name = pasta onde a vista fica (define o prefixo)."""
+        """{"mode", "name", "locked"}: name = pasta onde a vista fica (define o prefixo).
+        "Pasta" com 'Não definir pasta' = mode "none" (sem pasta, sem prefixo)."""
         forced = self.folders.template_value(template["id"]) if template else None
         if forced is not None:
             return {"mode": "template", "name": forced, "locked": True}
         mode = self.mode
         name = u""
         if mode == "existing":
-            idx = self.list.SelectedIndex
+            idx = self.list.SelectedIndex - 1   # índice em entries (o 0 da lista é NO_FOLDER)
             entries = self.folders.entries
-            name = entries[idx]["name"] if 0 <= idx < len(entries) else u""
+            if idx == -1:
+                mode = "none"
+            else:
+                name = entries[idx]["name"] if 0 <= idx < len(entries) else u""
         elif mode == "new":
             name = to_unicode(self.new.Text).strip()
         return {"mode": mode, "name": name, "locked": False}
@@ -1630,8 +1776,9 @@ class FolderPicker(object):
         self.box.IsEnabled = not c["locked"]
         self.box.Opacity = 0.4 if c["locked"] else 1.0
         if not c["locked"]:
-            self.list.IsEnabled = c["mode"] == "existing"
-            self.new.IsEnabled = c["mode"] == "new"
+            # pelo botão marcado: com 'Não definir pasta' a lista continua ativa
+            self.list.IsEnabled = self.mode == "existing"
+            self.new.IsEnabled = self.mode == "new"
         self.lock_txt.Text = (u"Atenção, o Modelo de Vista (View Template) selecionado já "
                               u"prevê uma pasta no navegador de projeto." if c["locked"] else u"")
         prefix = name_prefix(c)
@@ -1640,13 +1787,13 @@ class FolderPicker(object):
 
     def saved_values(self):
         sel = self.list.SelectedItem
-        return {"folder_mode": self.mode,
+        return {"folder_mode": self.choice(None)["mode"],
                 "folder": to_unicode(sel) if sel is not None else u"",
                 "folder_new": to_unicode(self.new.Text).strip()}
 
 
 class CropWindow(forms.WPFWindow):
-    def __init__(self, xaml, info, ctx, reasons, cfg):
+    def __init__(self, xaml, ctx, reasons, cfg):
         forms.WPFWindow.__init__(self, xaml, literal_string=True)
         try:   # telas baixas: a janela rola em vez de passar da área útil
             from System.Windows import SystemParameters
@@ -1664,15 +1811,12 @@ class CropWindow(forms.WPFWindow):
         self._cradios = {"plans": self.rb_c_plans, "elev": self.rb_c_elev, "both": self.rb_c_both}
         self._dir_boxes = {"N": self.cb_n, "S": self.cb_s, "L": self.cb_l, "O": self.cb_o}
 
-        self.info.Text = info
-        self.rooms_txt.Text = ctx["rooms_text"]
         self.view_txt.Text = ctx["view_text"]
         self.margin.Text = u"{:.2f}".format(cfg["margin"])
         self.e_margin.Text = u"{:.2f}".format(cfg["e_margin"])
         self.reasons.Text = u"\n".join(
             u"• {}: {}".format(MODE_LABELS[k], reasons[k]) for k in MODES if k in reasons)
-        self.name_hint.Text = u"\n".join(ctx["hints"])
-        self.pv_lbl.Text = u"PRÉ-VISUALIZAÇÃO  ·  exemplo (1º ambiente): {}".format(ctx["example"])
+        self._init_rooms()   # lista de ambientes; define exemplo, nomes e avisos do ctx
         self.open_views.IsChecked = bool(cfg["open"])
         self._suffix_idx = next(
             (i for i, s in enumerate(SUFFIXES) if s[0] == cfg["suffix"]), 0)
@@ -1687,8 +1831,9 @@ class CropWindow(forms.WPFWindow):
 
         f = ctx["folders"]
         if f.available:
-            self.folder_src.Text = u"Parâmetro de projeto '{}'  ·  {} pasta(s) no modelo".format(
+            self.folder_src.Text = u"Parâmetro de projeto {}  ·  {} pasta(s) no modelo".format(
                 f.param_name, len(f.entries))
+            self.folder_reason.Text = u"\n".join(f.hints())   # unificação em 'Pasta'
         else:
             self.folder_reason.Text = f.reason
         self.p_folder = FolderPicker(self, "p", f, cfg["p_folder"], self._on_name)
@@ -1711,6 +1856,171 @@ class CropWindow(forms.WPFWindow):
 
         self.ok.Click += self._ok
         self.cancel.Click += self._cancel
+
+    # --- ambientes: lista com checkboxes, agrupada por nível ---------------
+    def _init_rooms(self):
+        """Monta a lista (um grupo por nível: cabeçalho que marca o nível todo +
+        ambientes). Os CheckBox criados aqui herdam o estilo oca da janela."""
+        self._bulk = False     # marcar vários de uma vez: atualiza a prévia só no fim
+        self._groups = []      # [(painel do grupo, cabeçalho, nome do nível, [(RoomItem, CheckBox)])]
+        self._room_boxes = []  # [(RoomItem, CheckBox)] na ordem da lista
+        preselected = self.ctx["preselected"]
+        order, by_level = [], {}
+        for item in self.ctx["rooms"]:
+            if item.level_key not in by_level:
+                by_level[item.level_key] = []
+                order.append(item.level_key)
+            by_level[item.level_key].append(item)
+
+        for idx, key in enumerate(order):
+            items = by_level[key]
+            header = CheckBox()
+            header.Tag = idx
+            header.Margin = Thickness(0, 2, 0, 4)
+            header.ToolTip = u"Marca ou desmarca todos os ambientes visíveis deste nível."
+            header.Click += self._on_level_click
+            wrap = WrapPanel()
+            wrap.Margin = Thickness(22, 0, 0, 4)
+            boxes = []
+            for item in items:
+                cb = CheckBox()
+                text = TextBlock()
+                text.Text = item.label
+                text.TextTrimming = TextTrimming.CharacterEllipsis
+                cb.Content = text
+                cb.Width = ROOM_ITEM_WIDTH
+                cb.Margin = Thickness(0, 0, 12, 6)
+                cb.ToolTip = u"{}  ·  {}".format(item.label, item.level_name)
+                cb.IsChecked = item.id in preselected   # antes dos eventos: sem disparo
+                cb.Checked += self._on_room
+                cb.Unchecked += self._on_room
+                wrap.Children.Add(cb)
+                boxes.append((item, cb))
+            panel = StackPanel()
+            panel.Children.Add(header)
+            panel.Children.Add(wrap)
+            self.rooms_list.Children.Add(panel)
+            self._groups.append((panel, header, items[0].level_name, boxes))
+            self._room_boxes.extend(boxes)
+
+        self.rooms_filter.TextChanged += self._on_filter
+        self.rooms_all.Click += self._on_mark_all
+        self.rooms_none.Click += self._on_mark_none
+        self._sync_rooms()
+
+    @property
+    def marked(self):
+        """RoomItem marcados, na ordem da lista (nível, número, nome) - mesmo os
+        que o filtro esconde."""
+        return [item for item, cb in self._room_boxes if cb.IsChecked]
+
+    @staticmethod
+    def _shown(cb):
+        return cb.Visibility == Visibility.Visible
+
+    def _set_boxes(self, boxes, value):
+        self._bulk = True
+        try:
+            for _item, cb in boxes:
+                if self._shown(cb):
+                    cb.IsChecked = value
+        finally:
+            self._bulk = False
+        self._on_rooms_changed()
+
+    def _on_mark_all(self, sender, args):
+        self._set_boxes(self._room_boxes, True)
+
+    def _on_mark_none(self, sender, args):
+        self._set_boxes(self._room_boxes, False)
+
+    def _on_level_click(self, sender, args):
+        # o clique já alternou o cabeçalho: True = marcar o nível, False = desmarcar
+        _panel, _header, _name, boxes = self._groups[int(sender.Tag)]
+        self._set_boxes(boxes, sender.IsChecked == True)
+
+    def _on_room(self, sender, args):
+        if not self._bulk:
+            self._on_rooms_changed()
+
+    def _on_filter(self, sender, args):
+        words = search_text(self.rooms_filter.Text).split()
+        for panel, _header, _name, boxes in self._groups:
+            any_shown = False
+            for item, cb in boxes:
+                show = all(w in item.search_folded for w in words)
+                cb.Visibility = Visibility.Visible if show else Visibility.Collapsed
+                any_shown = any_shown or show
+            panel.Visibility = Visibility.Visible if any_shown else Visibility.Collapsed
+        self._sync_headers()
+        self._sync_count()
+
+    def _on_rooms_changed(self):
+        self._sync_rooms()
+        if self._ready:
+            self._relabel_names()
+            self._update_names()
+
+    def _sync_headers(self):
+        """Cabeçalho do nível: marcado quando todos os ambientes visíveis dele estão."""
+        for _panel, header, name, boxes in self._groups:
+            shown = [cb for _i, cb in boxes if self._shown(cb)]
+            n_on = sum(1 for _i, cb in boxes if cb.IsChecked)
+            header.IsChecked = bool(shown) and all(cb.IsChecked for cb in shown)
+            text = TextBlock()
+            text.Text = u"{}   ({}/{})".format(name.upper(), n_on, len(boxes))
+            text.FontWeight = FontWeights.SemiBold
+            header.Content = text
+
+    def _sync_count(self):
+        marked = [cb for _i, cb in self._room_boxes if cb.IsChecked]
+        hidden = sum(1 for cb in marked if not self._shown(cb))
+        text = u"{} de {} ambiente(s) marcado(s)".format(len(marked), len(self._room_boxes))
+        if hidden:
+            text += u"  ·  {} fora do filtro".format(hidden)
+        self.rooms_count.Text = text
+
+    def _sync_rooms(self):
+        """Atualiza o ctx (exemplo da prévia, nº de vistas, nível do complemento,
+        opções de nome) e os textos que dependem dos ambientes marcados. Sem
+        nenhum marcado, o exemplo é o 1º ambiente da lista."""
+        ctx = self.ctx
+        marked = self.marked
+        example = marked[0] if marked else ctx["rooms"][0]
+        ctx["room"] = example.el
+        ctx["example"] = example.label
+        ctx["count"] = len(marked)
+        ctx["level"]["plans"] = example.level
+        ctx["names"] = names_by_mode(example.el, max(len(marked) - 1, 0))
+
+        self.info.Text = (u"{} ambiente(s) marcado(s) → uma vista por ambiente".format(len(marked))
+                          if marked else u"Marque na lista os ambientes que vão receber vistas.")
+        preview = u", ".join(i.label for i in marked[:6]) + (u"..." if len(marked) > 6 else u"")
+        self.rooms_txt.Text = (u"{} ambiente(s) marcado(s): {}".format(len(marked), preview)
+                               if marked else u"Nenhum ambiente marcado.")
+        self.pv_lbl.Text = u"PRÉ-VISUALIZAÇÃO  ·  exemplo ({}): {}".format(
+            u"1º ambiente marcado" if marked else u"nenhum marcado - 1º da lista", example.label)
+        self.name_hint.Text = u"\n".join(room_hints(marked) + ctx["hints"])
+        self._sync_headers()
+        self._sync_count()
+
+    def _relabel_names(self):
+        """Rótulos 'Nº - AMBIENTE - ...' e complemento (nível) do novo exemplo,
+        mantendo as escolhas: a lista de opções tem sempre as mesmas chaves."""
+        mode = self.mode
+        if mode is None:
+            return
+        self._busy = True   # trocar ItemsSource dispara SelectionChanged
+        try:
+            idx = self.vname.SelectedIndex
+            self._names = self.ctx["names"][mode]
+            self.vname.ItemsSource = [o["label"] for o in self._names]
+            self.vname.SelectedIndex = idx if 0 <= idx < len(self._names) else 0
+            sidx = self.vsuffix.SelectedIndex
+            self.vsuffix.ItemsSource = suffix_labels(self.ctx["level"][mode])
+            self.vsuffix.SelectedIndex = sidx if sidx >= 0 else self._suffix_idx
+        finally:
+            self._busy = False
 
     # --- plantas / elevações / ambas ------------------------------------
     def _init_create(self, plans_ok):
@@ -1748,7 +2058,9 @@ class CropWindow(forms.WPFWindow):
                         if u"OCA_SIMB_ELEVA" in it["family"].upper()), 0)
             self.etype.SelectedIndex = labels.index(saved) if saved in labels else oca
         else:
-            self.elev_reason.Text = (u"Nenhum tipo de vista de Elevação no modelo: crie um em "
+            self.elev_reason.Text = (u"Nenhuma família de marcador de elevação interna (com 'INT' no "
+                                     u"nome, ex.: OCA_SIMB_ELEVAÇÃO_INT) carregada no modelo, ou nenhum "
+                                     u"tipo de vista de Elevação: carregue a família ou crie o tipo em "
                                      u"Vista > Elevação > Editar tipo.")
         for key, box in self._dir_boxes.items():
             box.IsChecked = key in self._saved["elev_dirs"]
@@ -1992,9 +2304,20 @@ class CropWindow(forms.WPFWindow):
         if self.do_plans and self.ctx["count"] > 1 and not unique:
             hints.append(u"Nomes sem o número e o nome do ambiente se repetem entre as vistas "
                          u"e recebem (2), (3)...; no nome manual, use # para numerar.")
+        # a lista traz o modelo todo: chamada de ambiente de outro nível cai na vista ativa
+        level = self.ctx["level"]["callout"]
+        if self.do_plans and self.mode == "callout" and level is not None:
+            other = sum(1 for i in self.marked if i.level_key != eid_int(level.Id))
+            if other:
+                hints.append(u"{} ambiente(s) marcado(s) fora do nível da vista ativa ('{}'): a "
+                             u"chamada é desenhada nesta vista mesmo assim.".format(
+                                 other, to_unicode(level.Name)))
         return hints
 
     def _ok(self, sender, args):
+        if not self.marked:
+            self.error.Text = u"Marque pelo menos um ambiente na lista."
+            return
         try:
             self.margin_m = parse_margin(self.margin.Text)
             self.e_margin_m = parse_margin(self.e_margin.Text)
@@ -2028,6 +2351,7 @@ class CropWindow(forms.WPFWindow):
     @property
     def result(self):
         return {"mode": self.mode, "margin": self.margin_m, "e_margin": self.e_margin_m,
+                "rooms": self.marked,
                 "create": self.create,
                 "type": self.vtype_item,
                 "vname": self.name_opt["key"], "suffix": self.suffix_key,
@@ -2050,80 +2374,80 @@ class CropWindow(forms.WPFWindow):
 warnings = []
 skipped = []   # ambientes sem vista: (rótulo, motivo)
 
-elements, ignored = get_target_elements()
-if ignored:
-    warnings.append(u"{} elemento(s) da seleção ignorado(s): não são ambientes.".format(ignored))
-
-geoms = []
-for el in elements:
-    if isinstance(el, DB.SpatialElement) and el.Area <= 0:
-        skipped.append((elem_label(el), u"ambiente não colocado ou não delimitado"))
-        continue
-    g = extract_geometry(el)
-    if not g.points:
-        skipped.append((g.label, u"sem geometria utilizável"))
-        continue
-    geoms.append(g)
-
 
 def skipped_lines(items):
     return [u"- {}: {}".format(label, why) for label, why in items]
 
 
-if not geoms:
-    forms.alert(u"Nenhum ambiente válido selecionado.",
-                sub_msg=u"\n".join(skipped_lines(skipped) + warnings) or None,
+def names_by_mode(room, others):
+    """A - Principal de cada modo: 'Manter nomenclatura atual da vista' só na
+    chamada (no topo); versões por ambiente com o número e o nome reais do
+    ambiente de exemplo (+ quantos outros estiverem marcados)."""
+    return dict((m, ([dict(KEEP_NAME_OPT)] if m == "callout" else [])
+                 + name_options(target_kind(m), room, others))
+                for m in MODES)
+
+
+def room_hints(marked):
+    """Avisos de nomenclatura que dependem dos ambientes marcados."""
+    hints = []
+    level_ids = set(i.level_key for i in marked if i.level is not None)
+    if len(level_ids) > 1:
+        hints.append(u"Ambientes em {} níveis: cada planta é criada no nível do seu ambiente "
+                     u"e o complemento usa esse nível.".format(len(level_ids)))
+    no_en = [i for i in marked if not i.has_en]
+    if no_en:
+        hints.append(u"'{}' vazio em {} ambiente(s): o título em inglês usará o nome em português."
+                     .format(ROOM_EN_PARAM, len(no_en)))
+    return hints
+
+
+rooms, omitted = collect_rooms()
+if not rooms:
+    forms.alert(u"Nenhum ambiente colocado e delimitado no modelo.",
+                sub_msg=(u"{} ambiente(s) não colocado(s) ou não delimitado(s) foram ignorados."
+                         .format(omitted) if omitted else None),
                 title=ALERT_TITLE, exitscript=True)
 
-geoms.sort(key=room_sort_key)
-room_levels = [pick_plan_level([g])[0] for g in geoms]   # cada planta no nível do seu ambiente
-
-plan_level = next((l for l in room_levels if l is not None), None)
+plan_level = next((r.level for r in rooms if r.level is not None), None)
 plan_items = plan_type_items()
 callout_items = callout_type_items(active_view)
 reasons = check_modes(plan_items, callout_items, plan_level)
 elev_items = elev_type_items()
 if len(reasons) == len(MODES) and not elev_items:
-    forms.alert(u"Nenhuma ação disponível para a seleção.",
-                sub_msg=u"\n".join(reasons.values()) + u"\nNenhum tipo de vista de Elevação no modelo.",
+    forms.alert(u"Nenhuma ação disponível para os ambientes do modelo.",
+                sub_msg=u"\n".join(reasons.values()) + u"\nNenhuma família de marcador de elevação interna (com 'INT' no nome) no modelo.",
                 title=ALERT_TITLE, exitscript=True)
 
 folders = ProjectFolders()
 
-name_hints = []
-level_ids = set(eid_int(l.Id) for l in room_levels if l is not None)
-if len(level_ids) > 1:
-    name_hints.append(u"Ambientes em {} níveis: cada planta é criada no nível do seu ambiente "
-                      u"e o complemento usa esse nível.".format(len(level_ids)))
-no_en = [g for g in geoms if not room_info(g.el)[2]]
-if no_en:
-    name_hints.append(u"'{}' vazio em {} ambiente(s): o título em inglês usará o nome em português."
-                      .format(ROOM_EN_PARAM, len(no_en)))
+name_hints = []   # avisos fixos (os que dependem dos ambientes marcados: room_hints)
+if omitted:
+    name_hints.append(u"{} ambiente(s) não colocado(s) ou não delimitado(s) fora da lista."
+                      .format(omitted))
 if not en_param_bound():
     name_hints.append(u"'{}' não está vinculado à categoria Vistas: o título em inglês "
                       u"não será gravado.".format(EN_TITLE_PARAM))
 if folders.available and not folders.entries:
-    name_hints.append(u"Nenhuma vista tem o parâmetro '{}' preenchido ainda: use 'Nova pasta'."
+    name_hints.append(u"Nenhuma vista tem o parâmetro {} preenchido ainda: use 'Nova pasta'."
                       .format(folders.param_name))
 
 active_level = getattr(active_view, "GenLevel", None)
 parent_names = view_names(active_view)   # 'Manter nomenclatura atual' na chamada
-rooms_preview = u", ".join(g.label for g in geoms[:6]) + (u"..." if len(geoms) > 6 else u"")
 dialog_ctx = {
+    "rooms": rooms,
+    "preselected": preselected_room_ids(),
     "types": {"plans": plan_items, "callout": callout_items},
-    # A - Principal: 'Manter nomenclatura atual da vista' só na chamada (no topo);
-    # versões por ambiente com o número e o nome reais do 1º ambiente da lista
-    "names": dict((m, ([dict(KEEP_NAME_OPT)] if m == "callout" else [])
-                   + name_options(target_kind(m), geoms[0].el, len(geoms) - 1))
-                  for m in MODES),
+    # exemplo, contagem, nível da planta e opções de nome: atualizados pela
+    # janela a cada ambiente marcado/desmarcado (CropWindow._sync_rooms)
+    "names": {},
     "active_names": parent_names,
-    "level": {"plans": room_levels[0], "callout": active_level},
-    "room": geoms[0].el,
-    "example": geoms[0].label,
-    "count": len(geoms),
+    "level": {"plans": None, "callout": active_level},
+    "room": None,
+    "example": u"",
+    "count": 0,
     "kinds": dict((m, target_kind(m)) for m in MODES),
     "view_text": active_view_text(callout_items),
-    "rooms_text": u"{} ambiente(s) selecionado(s): {}".format(len(geoms), rooms_preview),
     "hints": name_hints,
     "folders": folders,
     "elev_types": elev_items,
@@ -2151,8 +2475,7 @@ cfg = {"margin": INITIAL_MARGIN_M,
        "elev_dirs": config.get_option("elev_dirs", u"NLSO"),
        "etemplate": config.get_option("etemplate", NO_TEMPLATE)}
 
-info = u"{} ambiente(s) → uma vista por ambiente".format(len(geoms))
-win = CropWindow(CROP_XAML, info, dialog_ctx, reasons, cfg)
+win = CropWindow(CROP_XAML, dialog_ctx, reasons, cfg)
 win.ShowDialog()
 if not win.confirmed:
     script.exit()
@@ -2182,6 +2505,23 @@ do_elev = opts["create"] in ("elev", "both")
 margin_ft = m_to_ft(opts["margin"])        # plantas
 e_margin_ft = m_to_ft(opts["e_margin"])    # elevações
 
+# --- geometria só dos ambientes marcados (igual ao 02, depois do diálogo) ----
+geoms = []
+for item in opts["rooms"]:
+    g = extract_geometry(item.el)
+    if not g.points:
+        skipped.append((g.label, u"sem geometria utilizável"))
+        continue
+    geoms.append(g)
+
+if not geoms:
+    forms.alert(u"Nenhum ambiente marcado tem geometria utilizável.",
+                sub_msg=u"\n".join(skipped_lines(skipped)) or None,
+                title=ALERT_TITLE, exitscript=True)
+
+geoms.sort(key=room_sort_key)
+room_levels = [pick_plan_level([g])[0] for g in geoms]   # cada planta no nível do seu ambiente
+
 # --- verificações específicas do modo, antes de qualquer alteração ---------
 if do_plans and mode == "callout":
     visible = set(eid_int(i) for i in
@@ -2201,8 +2541,12 @@ e_prefix = name_prefix(e_folder)
 
 
 def folder_to_write(fold):
-    """Pasta gravada pelo comando; travada = o Modelo de Vista já define."""
-    return u"" if fold["locked"] else fold["name"]
+    """Pasta gravada pelo comando. Travada pelo Modelo de Vista: grava o mesmo
+    valor do template - o parâmetro que ele controla é sobrescrito por ele, e o
+    outro ('Pasta' ou 'Pasta Project Browser') fica igual, rumo à unificação."""
+    return fold["name"]
+
+
 template = opts["template"]
 elev_type = opts["elev_type"]
 elev_dirs = opts["elev_dirs"]
@@ -2239,7 +2583,7 @@ def create_room_view(g, level):
                                   opts["texts"], opts["simple_kind"], parent_names)
     apply_names(view, vname, en, room_notes)      # View Name (com prefixo) + English
     apply_title_on_sheet(view, title, room_notes)  # Title on Sheet (sem prefixo)
-    ProjectFolders.apply(view, folder_to_write(folder), room_notes)
+    folders.apply(view, folder_to_write(folder), room_notes)
     doc.Regenerate()
 
     # recalcula no sistema da vista-alvo (igual ao 01)
@@ -2251,7 +2595,7 @@ def create_room_view(g, level):
     if template is not None:
         apply_template(view, template, room_notes)
         doc.Regenerate()
-        ProjectFolders.check(view, folder["name"], room_notes)
+        folders.check(view, folder["name"], room_notes)
     return view, room_notes
 
 
@@ -2261,13 +2605,13 @@ def setup_elevation(view, g, key, notes_out):
     vname, title, en = elevation_names(g.el, key, e_prefix)
     apply_names(view, vname, en, notes_out)
     apply_title_on_sheet(view, title, notes_out)
-    ProjectFolders.apply(view, folder_to_write(e_folder), notes_out)
+    folders.apply(view, folder_to_write(e_folder), notes_out)
     doc.Regenerate()
     apply_elevation_crop(view, g, e_margin_ft)
     if elev_template is not None:
         apply_template(view, elev_template, notes_out)
         doc.Regenerate()
-        ProjectFolders.check(view, e_folder["name"], notes_out)
+        folders.check(view, e_folder["name"], notes_out)
 
 
 def create_room_elevations(g, host, etype_id):
@@ -2327,7 +2671,7 @@ def elev_label(g, key):
 
 # um grupo = um único Desfazer; uma transação por ambiente (planta e
 # elevações separadas) = falha isolada
-tgroup = DB.TransactionGroup(doc, u"OCA - Abertura de Múltiplas Vistas")
+tgroup = DB.TransactionGroup(doc, u"OCA - Abertura de Vistas por Ambientes")
 tgroup.Start()
 try:
     # família do marcador sem tipo de elevação: cria o tipo uma vez, antes
@@ -2408,24 +2752,3 @@ if opts["open"] and created:
             notes.append(u"{}: vista criada, mas não foi possível abri-la ({}).".format(
                 g.label, to_unicode(exc)))
 
-
-# ------------------------------------------------------------------
-# 10. Resumo: só aparece se houver falha ou algo a revisar
-# ------------------------------------------------------------------
-report = []
-if skipped:
-    report.append(u"Ambientes ignorados (nenhuma vista criada):")
-    report.extend(skipped_lines(skipped))
-if failed:
-    report.append(u"Não foi possível criar (ambiente · vista: motivo):")
-    report.extend(skipped_lines(failed))
-if warnings or notes:
-    report.append(u"Avisos:")
-    report.extend(u"- " + w for w in warnings + notes)
-
-if not created:
-    forms.alert(u"Nenhuma vista criada.", sub_msg=u"\n".join(report) or None, title=ALERT_TITLE)
-elif report:
-    forms.alert(u"{} vista(s) criada(s) para {} ambiente(s), com avisos:".format(
-                    len(created), len(geoms)),
-                sub_msg=u"\n".join(report), title=ALERT_TITLE)

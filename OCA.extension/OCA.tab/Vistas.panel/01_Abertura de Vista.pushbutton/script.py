@@ -30,8 +30,9 @@
 #      definida ou manual, versões por ambiente (1 ambiente selecionado) e
 #      títulos genéricos. B - Complemento: Sem complemento ou manual, PAV.,
 #      AMPLIAÇÃO (+ nível).
-#      Destino no Navegador de Projeto = parâmetro de projeto "Pasta" (pasta
-#      existente, nova ou nenhuma). View Template opcional, só os compatíveis;
+#      Destino no Navegador de Projeto = parâmetro de projeto "Pasta" ou, nos
+#      projetos antigos, "Pasta Project Browser" (igual ao 02): lista "Pasta"
+#      ('Não definir pasta' + pastas existentes) ou "Nova pasta". View Template opcional, só os compatíveis;
 #      na vista ativa a 1ª opção mantém o template que ela já tem.
 #   4. Calcula o retângulo ORIENTADO ao elemento (as 4 quinas, paralelo e
 #      perpendicular à direção predominante do elemento) + margem. A vista
@@ -887,14 +888,38 @@ def apply_title_on_sheet(view, title, notes):
 
 
 # ------------------------------------------------------------------
-# 6b. Pasta do Navegador de Projeto = parâmetro de projeto "Pasta" (igual ao 02)
+# 6b. Pasta do Navegador de Projeto = parâmetro "Pasta" / "Pasta Project Browser"
 # ------------------------------------------------------------------
-# A organização do navegador do escritório agrupa as vistas pelo parâmetro
-# de projeto "Pasta" (texto, instância, categoria Vistas). As pastas
-# existentes são os valores já usados nas vistas; "mandar a vista para a
-# pasta" = gravar o valor nesse parâmetro. Nova pasta = valor novo.
-FOLDER_PARAM = u"Pasta"
+# A organização do navegador do escritório agrupa as vistas por um parâmetro
+# de projeto de texto, por instância, na categoria Vistas. O padrão é "Pasta";
+# projetos mais antigos usam "Pasta Project Browser". As pastas existentes são
+# os valores já usados nas vistas; "mandar a vista para a pasta" = gravar o
+# valor no parâmetro. Nova pasta = valor novo.
+#   Leitura: "Pasta" preenchido; vazio ou inexistente = "Pasta Project Browser".
+#   Gravação: nos DOIS parâmetros que existirem no projeto - a vista fica na
+#   pasta certa qualquer que seja o parâmetro do navegador, e "Pasta" já fica
+#   preenchido para a unificação (objetivo: só "Pasta").
+FOLDER_PARAM = u"Pasta"                        # parâmetro padrão (unificação)
+FOLDER_PARAM_ALT = u"Pasta Project Browser"    # nomenclatura alternativa aceita
+FOLDER_PARAMS = (FOLDER_PARAM, FOLDER_PARAM_ALT)   # ordem = prioridade de leitura
 _FOLDER_PREFIX = re.compile(u"^([^_]+)_")
+
+
+def folder_value(el, names=FOLDER_PARAMS):
+    """Pasta do elemento: o 1º parâmetro de texto preenchido, na ordem de prioridade."""
+    for pname in names:
+        p = el.LookupParameter(pname)
+        if p is None or p.StorageType != DB.StorageType.String or not p.HasValue:
+            continue
+        value = to_unicode(p.AsString()).strip()
+        if value:
+            return value
+    return u""
+
+
+def quoted(names):
+    """('Pasta', 'Pasta Project Browser') -> "'Pasta' e 'Pasta Project Browser'"."""
+    return u" e ".join(u"'{}'".format(n) for n in names)
 
 
 def folder_prefix(name):
@@ -904,28 +929,45 @@ def folder_prefix(name):
 
 
 def name_prefix(folder):
-    """Prefixo do View Name: da pasta escolhida; 'Não definir pasta' = nenhum."""
+    """Prefixo do View Name: da pasta escolhida (o View Template não interfere);
+    'Não definir pasta' = nenhum."""
     return folder_prefix(folder["name"]) if folder["mode"] != "none" else u""
 
 
 class ProjectFolders(object):
-    """Pastas existentes: valores do parâmetro 'Pasta' nas vistas do modelo."""
+    """Pastas existentes: valores de 'Pasta' (ou 'Pasta Project Browser') nas vistas."""
 
     def __init__(self):
-        self.param_name = FOLDER_PARAM
-        self.param_id = None
+        self.param_ids = {}    # nome -> ElementId, só os parâmetros de texto encontrados
+        self.not_text = []     # parâmetros encontrados que não são de texto (ignorados)
+        self.divergent = 0     # vistas com os dois preenchidos e valores diferentes
         self.reason = None
-        self.entries = []   # [{"label", "name"}]
+        self.entries = []      # [{"label", "name"}]
         try:
             self._load()
         except Exception as exc:
-            self.reason = u"Não foi possível ler o parâmetro '{}' ({}).".format(
-                FOLDER_PARAM, to_unicode(exc))
+            self.reason = u"Não foi possível ler o parâmetro {} ({}).".format(
+                quoted(FOLDER_PARAMS), to_unicode(exc))
             self.entries = []
 
     @property
     def available(self):
         return self.reason is None
+
+    @property
+    def params(self):
+        """Parâmetros de pasta usáveis neste projeto, na ordem de prioridade."""
+        return [n for n in FOLDER_PARAMS if n in self.param_ids]
+
+    @property
+    def param_name(self):
+        """Texto para as mensagens: "'Pasta'", "'Pasta Project Browser'" ou os dois."""
+        return quoted(self.params or FOLDER_PARAMS)
+
+    @property
+    def only_alt(self):
+        """Projeto só com 'Pasta Project Browser' (ainda não unificado em 'Pasta')."""
+        return self.params == [FOLDER_PARAM_ALT]
 
     def _load(self):
         values = set()
@@ -933,26 +975,52 @@ class ProjectFolders(object):
             # folhas e tabelas têm organização própria no navegador
             if v.IsTemplate or isinstance(v, (DB.ViewSheet, DB.ViewSchedule)):
                 continue
-            p = v.LookupParameter(FOLDER_PARAM)
-            if p is None:
-                continue
-            if p.StorageType != DB.StorageType.String:
-                self.reason = u"O parâmetro '{}' não é de texto.".format(FOLDER_PARAM)
-                return
-            if self.param_id is None:
-                self.param_id = p.Id
-            value = to_unicode(p.AsString()).strip()
-            if value:
-                values.add(value)
-        if self.param_id is None:
-            self.reason = (u"Parâmetro de projeto '{}' não encontrado nas vistas (precisa ser "
-                           u"de texto, por instância, na categoria Vistas).".format(FOLDER_PARAM))
+            found = {}
+            for pname in FOLDER_PARAMS:
+                p = v.LookupParameter(pname)
+                if p is None:
+                    continue
+                if p.StorageType != DB.StorageType.String:
+                    if pname not in self.not_text:
+                        self.not_text.append(pname)
+                    continue
+                if pname not in self.param_ids:
+                    self.param_ids[pname] = p.Id
+                found[pname] = to_unicode(p.AsString()).strip() if p.HasValue else u""
+            main, alt = found.get(FOLDER_PARAM, u""), found.get(FOLDER_PARAM_ALT, u"")
+            if main and alt and main != alt:
+                self.divergent += 1
+            if main or alt:   # prioridade: 'Pasta'
+                values.add(main or alt)
+        if not self.param_ids:
+            if self.not_text:
+                self.reason = u"O parâmetro {} não é de texto.".format(quoted(self.not_text))
+            else:
+                self.reason = (u"Parâmetro de projeto {} não encontrado nas vistas (precisa ser "
+                               u"de texto, por instância, na categoria Vistas)."
+                               .format(u" ou ".join(u"'{}'".format(n) for n in FOLDER_PARAMS)))
             return
         self.entries = [{"label": v, "name": v} for v in sorted(values, key=natural_key)]
 
+    def hints(self):
+        """Avisos do diálogo sobre os parâmetros de pasta (unificação em 'Pasta')."""
+        out = []
+        if self.only_alt:
+            out.append(u"O projeto usa só '{}': as vistas são gravadas nele. Para unificar, {} "
+                       u"o parâmetro '{}' (texto, por instância, categoria Vistas).".format(
+                           FOLDER_PARAM_ALT,
+                           u"recrie" if FOLDER_PARAM in self.not_text else u"crie", FOLDER_PARAM))
+        if self.divergent:
+            out.append(u"{} vista(s) com '{}' e '{}' diferentes: vale '{}'. As vistas novas "
+                       u"recebem o mesmo valor nos dois.".format(
+                           self.divergent, FOLDER_PARAM, FOLDER_PARAM_ALT, FOLDER_PARAM))
+        if self.not_text and self.params:
+            out.append(u"Parâmetro {} ignorado: não é de texto.".format(quoted(self.not_text)))
+        return out
+
     def template_value(self, template_id):
-        """Valor de 'Pasta' imposto pelo View Template; None se ele não controla a pasta."""
-        if self.param_id is None or template_id is None:
+        """Pasta imposta pelo View Template; None se ele não controla nenhum dos parâmetros."""
+        if not self.param_ids or template_id is None:
             return None
         tpl = doc.GetElement(template_id)
         try:
@@ -960,32 +1028,42 @@ class ProjectFolders(object):
                           - set(eid_int(i) for i in tpl.GetNonControlledTemplateParameterIds()))
         except Exception:
             return None
-        if eid_int(self.param_id) not in controlled:
+        names = [n for n in self.params if eid_int(self.param_ids[n]) in controlled]
+        if not names:
             return None
-        p = tpl.LookupParameter(FOLDER_PARAM)
-        return to_unicode(p.AsString()).strip() if p is not None and p.HasValue else u""
+        return folder_value(tpl, names)
 
-    @staticmethod
-    def apply(view, name, notes):
+    def apply(self, view, name, notes):
+        """Grava a pasta em todos os parâmetros de pasta do projeto (os dois, se houver).
+        Os que o View Template controlar são sobrescritos por ele depois."""
         if not name:
             return
-        p = view.LookupParameter(FOLDER_PARAM)
-        if p is None or p.IsReadOnly:
-            notes.append(u"Parâmetro '{}' indisponível na vista (ou controlado pelo Modelo de "
-                         u"Vista); pasta não definida.".format(FOLDER_PARAM))
-        else:
+        written = 0
+        for pname in self.params:
+            p = view.LookupParameter(pname)
+            if p is None or p.IsReadOnly:
+                continue
             p.Set(name)
+            written += 1
+        if not written:
+            notes.append(u"Parâmetro {} indisponível na vista; pasta não definida."
+                         .format(self.param_name))
 
-    @staticmethod
-    def check(view, name, notes):
-        """Depois do View Template: avisa se a vista não ficou na pasta esperada."""
+    def check(self, view, name, notes):
+        """Depois do View Template: avisa se a vista não ficou na pasta esperada
+        ou se 'Pasta' e 'Pasta Project Browser' ficaram diferentes."""
         if not name:
             return
-        p = view.LookupParameter(FOLDER_PARAM)
-        got = to_unicode(p.AsString()).strip() if p is not None and p.HasValue else u""
+        got = folder_value(view, self.params)
         if got != name:
             notes.append(u"Pasta: ficou '{}' em vez de '{}' (definida pelo Modelo de Vista)."
                          .format(got, name))
+        if len(self.params) > 1:
+            vals = [folder_value(view, [n]) for n in self.params]
+            if len(set(vals)) > 1:
+                notes.append(u"Pasta: {} ficaram diferentes ({}) - o Modelo de Vista controla "
+                             u"só um deles.".format(quoted(self.params),
+                                                    u" / ".join(u"'{}'".format(x) for x in vals)))
 
 
 # ------------------------------------------------------------------
@@ -1141,13 +1219,12 @@ def active_view_text(callout_items):
 # ------------------------------------------------------------------
 FOLDER_BLOCK = u"""
             <StackPanel x:Name="p_box">
-              <RadioButton x:Name="p_f_exist" GroupName="p_folder" Content="Pasta existente"/>
-              <ComboBox x:Name="p_list" Margin="22,0,0,8"/>
+              <RadioButton x:Name="p_f_exist" GroupName="p_folder" Content="Pasta"/>
+              <ComboBox x:Name="p_list" Margin="22,0,0,8"
+                        ToolTip="Pastas existentes no modelo. 'Não definir pasta' = a vista fica sem pasta e o nome sem prefixo."/>
               <RadioButton x:Name="p_f_new" GroupName="p_folder" Content="Nova pasta"/>
               <TextBox x:Name="p_new" Margin="22,0,0,8"
                        ToolTip="Ex.: D003_DETALHAMENTO - o texto antes do 1º '_' vira o prefixo do nome da vista (View Name)"/>
-              <RadioButton x:Name="p_f_none" GroupName="p_folder"
-                           Content="Não definir pasta (nome da vista sem prefixo)"/>
             </StackPanel>
             <Border Style="{StaticResource oca.Msg.Warn}" Visibility="{Binding Visibility, ElementName=p_lock}">
               <TextBlock x:Name="p_lock" Style="{StaticResource oca.MsgText}"/>
@@ -1322,7 +1399,8 @@ CROP_FOOTER = u"""
 CROP_XAML = build_xaml(title=__title__, subtitle=__doc__, body=CROP_BODY,
                        footer_right=CROP_FOOTER, size="M", width=1240)
 
-FOLDER_MODES = ("existing", "new", "none")
+FOLDER_MODES = ("existing", "new")   # botões do bloco; "none" = 1º item da lista "Pasta"
+NO_FOLDER = u"Não definir pasta"     # 1º item da lista "Pasta": vista sem pasta, nome sem prefixo
 MODE_HINTS = {
     "plans": u"Planta nova no nível dos elementos, recortada ao redor deles.",
     "callout": u"Chamada dentro da vista ativa. Numa elevação ou corte, escolha o mesmo "
@@ -1332,51 +1410,55 @@ MODE_HINTS = {
 
 
 class FolderPicker(object):
-    """Bloco de destino (pasta existente / nova / nenhuma), igual ao 02. Se o
-    View Template controla o parâmetro 'Pasta', o bloco trava: a vista vai
-    para a pasta do template e o prefixo vem dela."""
+    """Bloco de destino, igual ao 02: "Pasta" (lista: 'Não definir pasta' +
+    pastas existentes) ou "Nova pasta". Se o View Template controla 'Pasta' ou
+    'Pasta Project Browser', o bloco trava: a vista vai para a pasta do
+    template e o prefixo vem dela."""
 
     def __init__(self, win, key, folders, saved, on_change):
         def ctl(name):
             return getattr(win, u"{}_{}".format(key, name))
         self.folders = folders
-        self.rb = {"existing": ctl("f_exist"), "new": ctl("f_new"), "none": ctl("f_none")}
+        self.rb = {"existing": ctl("f_exist"), "new": ctl("f_new")}
         self.box, self.list, self.new = ctl("box"), ctl("list"), ctl("new")
         self.lock_txt, self.prefix_txt = ctl("lock"), ctl("prefix")
 
-        labels = [e["label"] for e in folders.entries]
+        # 1º item = 'Não definir pasta'; depois as pastas existentes
+        labels = [NO_FOLDER] + [e["label"] for e in folders.entries]
         self.list.ItemsSource = labels
-        if labels:
-            self.list.SelectedIndex = (labels.index(saved["folder"])
-                                       if saved["folder"] in labels else 0)
+        self.list.SelectedIndex = (labels.index(saved["folder"])
+                                   if saved["folder"] in labels else 0)
         self.new.Text = saved["folder_new"]
-        allowed = {"existing": folders.available and bool(labels),
-                   "new": folders.available, "none": True}
+        allowed = {"existing": True, "new": folders.available}   # 'Pasta' sempre tem 'Não definir pasta'
         for k, rb in self.rb.items():
             rb.IsEnabled = allowed[k]
             rb.Checked += on_change
         self.list.SelectionChanged += on_change
         self.new.TextChanged += on_change
-        # sempre abre em "Pasta existente" (a pasta escolhida da última vez
-        # continua selecionada na lista); sem pastas, a próxima opção possível
-        start = next(k for k in FOLDER_MODES if allowed[k])
-        self.rb[start].IsChecked = True
+        # sempre abre em "Pasta" (a pasta escolhida da última vez continua
+        # selecionada na lista)
+        self.rb["existing"].IsChecked = True
 
     @property
     def mode(self):
-        return next((k for k in FOLDER_MODES if self.rb[k].IsChecked), "none")
+        """Botão marcado: "existing" (Pasta) ou "new" (Nova pasta)."""
+        return next((k for k in FOLDER_MODES if self.rb[k].IsChecked), "existing")
 
     def choice(self, template):
-        """{"mode", "name", "locked"}: name = pasta onde a vista fica (define o prefixo)."""
+        """{"mode", "name", "locked"}: name = pasta onde a vista fica (define o prefixo).
+        "Pasta" com 'Não definir pasta' = mode "none" (sem pasta, sem prefixo)."""
         forced = self.folders.template_value(template["id"]) if template else None
         if forced is not None:
             return {"mode": "template", "name": forced, "locked": True}
         mode = self.mode
         name = u""
         if mode == "existing":
-            idx = self.list.SelectedIndex
+            idx = self.list.SelectedIndex - 1   # índice em entries (o 0 da lista é NO_FOLDER)
             entries = self.folders.entries
-            name = entries[idx]["name"] if 0 <= idx < len(entries) else u""
+            if idx == -1:
+                mode = "none"
+            else:
+                name = entries[idx]["name"] if 0 <= idx < len(entries) else u""
         elif mode == "new":
             name = to_unicode(self.new.Text).strip()
         return {"mode": mode, "name": name, "locked": False}
@@ -1386,8 +1468,9 @@ class FolderPicker(object):
         self.box.IsEnabled = not c["locked"]
         self.box.Opacity = 0.4 if c["locked"] else 1.0
         if not c["locked"]:
-            self.list.IsEnabled = c["mode"] == "existing"
-            self.new.IsEnabled = c["mode"] == "new"
+            # pelo botão marcado: com 'Não definir pasta' a lista continua ativa
+            self.list.IsEnabled = self.mode == "existing"
+            self.new.IsEnabled = self.mode == "new"
         self.lock_txt.Text = (u"Atenção, o Modelo de Vista (View Template) selecionado já "
                               u"prevê uma pasta no navegador de projeto." if c["locked"] else u"")
         prefix = name_prefix(c)
@@ -1396,7 +1479,7 @@ class FolderPicker(object):
 
     def saved_values(self):
         sel = self.list.SelectedItem
-        return {"folder_mode": self.mode,
+        return {"folder_mode": self.choice(None)["mode"],
                 "folder": to_unicode(sel) if sel is not None else u"",
                 "folder_new": to_unicode(self.new.Text).strip()}
 
@@ -1441,8 +1524,9 @@ class CropWindow(forms.WPFWindow):
 
         f = ctx["folders"]
         if f.available:
-            self.folder_src.Text = u"Parâmetro de projeto '{}'  ·  {} pasta(s) no modelo".format(
+            self.folder_src.Text = u"Parâmetro de projeto {}  ·  {} pasta(s) no modelo".format(
                 f.param_name, len(f.entries))
+            self.folder_reason.Text = u"\n".join(f.hints())   # unificação em 'Pasta' (igual ao 02)
         else:
             self.folder_reason.Text = f.reason
         self.p_folder = FolderPicker(self, "p", f, cfg["p_folder"], self._on_name)
@@ -1775,7 +1859,7 @@ if not en_param_bound():
     name_hints.append(u"'{}' não está vinculado à categoria Vistas: o título em inglês "
                       u"não será gravado.".format(EN_TITLE_PARAM))
 if folders.available and not folders.entries:
-    name_hints.append(u"Nenhuma vista tem o parâmetro '{}' preenchido ainda: use 'Nova pasta'."
+    name_hints.append(u"Nenhuma vista tem o parâmetro {} preenchido ainda: use 'Nova pasta'."
                       .format(folders.param_name))
 
 active_level = getattr(active_view, "GenLevel", None)
@@ -1895,7 +1979,7 @@ try:
 
     apply_names(view, opts["view_name"], opts["name_en"], notes)  # View Name + English
     apply_title_on_sheet(view, opts["title"], notes)              # Title on Sheet (sem prefixo)
-    ProjectFolders.apply(view, folder_write, notes)
+    folders.apply(view, folder_write, notes)
     doc.Regenerate()
 
     # recalcula no sistema da vista-alvo: a orientação relativa pode
@@ -1908,7 +1992,7 @@ try:
     if template is not None:
         apply_template(view, template, notes)
         doc.Regenerate()
-        ProjectFolders.check(view, folder_write, notes)
+        folders.check(view, folder_write, notes)
 
     status = t.Commit()
     if status != DB.TransactionStatus.Committed:

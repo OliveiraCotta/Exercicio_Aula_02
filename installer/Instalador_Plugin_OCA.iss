@@ -12,7 +12,8 @@
 ;    1. valida a estrutura de OCA.extension (startup.py, OCA.tab, lib\oca_ds,
 ;       script.py em cada .pushbutton...);
 ;    2. lê a versão do plugin em OCA.tab\Sobre.panel\Sobre.pushbutton\script.py
-;       (VERSAO = u"dd/mm/aaaa" -> aaaa.mm.dd), a mesma exibida no botão Sobre;
+;       (VERSAO = u"1.01", ou no formato antigo u"dd/mm/aaaa" -> aaaa.mm.dd),
+;       a mesma exibida no botão Sobre;
 ;    3. gera a lista de arquivos do pacote com o SHA-256 de cada um, usada para
 ;       conferir a cópia no computador de destino.
 ; =============================================================================
@@ -57,8 +58,9 @@
 #expr RequireFile("OCA.tab\Sobre.panel\Sobre.pushbutton\script.py")
 
 ; -----------------------------------------------------------------------------
-; 2. Versão: lida do botão Sobre (VERSAO = u"13/10/2026" -> 2026.10.13)
-;    Pode ser forçada com: ISCC /DAppVersion=2026.10.13
+; 2. Versão: lida do botão Sobre. Aceita VERSAO = u"1.01" (usada como está)
+;    ou o formato antigo VERSAO = u"13/10/2026" (-> 2026.10.13).
+;    Pode ser forçada com: ISCC /DAppVersion=1.02
 ; -----------------------------------------------------------------------------
 #ifndef AppVersion
   #define SobreScript SourceRoot + "\OCA.tab\Sobre.panel\Sobre.pushbutton\script.py"
@@ -77,15 +79,22 @@
   #for {0; !FileEof(FH); 0} LerLinhaVersao
   #expr FileClose(FH)
   #if VersaoLinha == ""
-    #error Linha VERSAO não encontrada no script do botão Sobre. Defina a versão com /DAppVersion=aaaa.mm.dd
+    #error Linha VERSAO não encontrada no script do botão Sobre. Defina a versão com /DAppVersion=1.01
   #endif
   #define VersaoAspas1 Pos("""", VersaoLinha)
   #define VersaoResto  Copy(VersaoLinha, VersaoAspas1 + 1)
   #define VersaoData   Copy(VersaoResto, 1, Pos("""", VersaoResto) - 1)
-  #if Len(VersaoData) != 10 || Copy(VersaoData, 3, 1) != "/" || Copy(VersaoData, 6, 1) != "/"
-    #error VERSAO do botão Sobre não está no formato dd/mm/aaaa. Defina a versão com /DAppVersion=aaaa.mm.dd
+  #define SoDigitosEPontos(str S) \
+    Len(S) == 0 ? 1 : (Pos(Copy(S, 1, 1), "0123456789.") > 0 ? SoDigitosEPontos(Copy(S, 2)) : 0)
+  #if Len(VersaoData) == 10 && Copy(VersaoData, 3, 1) == "/" && Copy(VersaoData, 6, 1) == "/"
+    #define AppVersion Copy(VersaoData, 7, 4) + "." + Copy(VersaoData, 4, 2) + "." + Copy(VersaoData, 1, 2)
+  #elif Len(VersaoData) > 0 && SoDigitosEPontos(VersaoData) && \
+        Pos(Copy(VersaoData, 1, 1), "0123456789") > 0 && \
+        Pos(Copy(VersaoData, Len(VersaoData), 1), "0123456789") > 0
+    #define AppVersion VersaoData
+  #else
+    #error VERSAO do botão Sobre deve ser numérica (ex.: 1.01) ou dd/mm/aaaa. Ou defina a versão com /DAppVersion=1.01
   #endif
-  #define AppVersion Copy(VersaoData, 7, 4) + "." + Copy(VersaoData, 4, 2) + "." + Copy(VersaoData, 1, 2)
 #endif
 
 ; -----------------------------------------------------------------------------
@@ -548,6 +557,43 @@ begin
   finally
     L.Free;
   end;
+end;
+
+{ Compara versões numéricas componente a componente ("1.01" < "1.2" < "1.10").
+  Retorna -1, 0 ou 1. }
+function NextVersionPart(var S: String): Integer;
+var P: Integer;
+begin
+  P := Pos('.', S);
+  if P = 0 then
+  begin
+    Result := StrToIntDef(S, 0);
+    S := '';
+  end
+  else
+  begin
+    Result := StrToIntDef(Copy(S, 1, P - 1), 0);
+    S := Copy(S, P + 1, Length(S));
+  end;
+end;
+
+function CompareVersions(A, B: String): Integer;
+var X, Y: Integer;
+begin
+  Result := 0;
+  while (A <> '') or (B <> '') do
+  begin
+    X := NextVersionPart(A);
+    Y := NextVersionPart(B);
+    if X < Y then begin Result := -1; Exit; end;
+    if X > Y then begin Result := 1; Exit; end;
+  end;
+end;
+
+{ Versões antigas usavam a data (aaaa.mm.dd); as novas usam 1.01, 1.02... }
+function IsDateVersion(V: String): Boolean;
+begin
+  Result := NextVersionPart(V) >= 1900;
 end;
 
 function DescribeVersion(const V: String): String;
@@ -1096,9 +1142,11 @@ begin
   InstalledVersion := V;
   Sub := 'Pasta: ' + TargetExt + CRLF +
     'Versão instalada: ' + DescribeVersion(V) + '      Nova versão: ' + NEW_VERSION + CRLF;
-  if (Length(V) = 10) and (CompareStr(V, NEW_VERSION) > 0) then
+  if (V <> '') and (IsDateVersion(V) <> IsDateVersion(NEW_VERSION)) then
+    Sub := Sub + 'A versão instalada usa a numeração antiga (por data); a atualização é segura.' + CRLF
+  else if (V <> '') and (CompareVersions(V, NEW_VERSION) > 0) then
     Sub := Sub + 'ATENÇÃO: a versão instalada é MAIS NOVA do que a deste instalador.' + CRLF
-  else if V = NEW_VERSION then
+  else if (V <> '') and (CompareVersions(V, NEW_VERSION) = 0) then
     Sub := Sub + 'Esta mesma versão já está instalada (a atualização reinstala os arquivos).' + CRLF;
   Sub := Sub + 'Antes de qualquer alteração, um backup completo da pasta atual será salvo em ' +
     StateDir + '\Backups. As configurações dos comandos (guardadas pelo pyRevit fora desta pasta) não são alteradas.';
@@ -1119,7 +1167,11 @@ begin
 end;
 
 procedure CurPageChanged(CurPageID: Integer);
+var Extra: String;
 begin
+  Extra := '';
+  if IndexInPkg('Instaladores\Instalar impressora OCA PDF24.ps1') >= 0 then
+    Extra := '- Exportação em PDF pelo PDF24: veja o item 5 do relatório.' + CRLF;
   if CurPageID = ExistingPage.ID then
     UpdateExistingPageText
   else if CurPageID = wpFinished then
@@ -1130,7 +1182,7 @@ begin
         'Próximos passos:' + CRLF +
         '- Revit fechado: basta abrir o Revit 2025/2026. A aba OCA aparece na faixa de opções.' + CRLF +
         '- Revit aberto: clique em pyRevit > Reload (ou feche e abra o Revit).' + CRLF +
-        '- Para conferir a versão, clique em OCA > Sobre.' + CRLF + CRLF +
+        '- Para conferir a versão, clique em OCA > Sobre.' + CRLF + Extra + CRLF +
         'Relatório completo: ' + ReportFile
     else
       WizardForm.FinishedLabel.Caption :=
@@ -1420,9 +1472,40 @@ begin
   end;
 end;
 
+{ title: "..." de um bundle.yaml (só a chave de primeiro nível) }
+function BundleTitle(const BundleFile: String): String;
+var Text, Line, Q: String; L: TStringList; I, P: Integer;
+begin
+  Result := '';
+  if not ReadTextFile(BundleFile, Text) then Exit;
+  L := TStringList.Create;
+  try
+    L.Text := Text;
+    for I := 0 to L.Count - 1 do
+    begin
+      Line := L[I];
+      if Copy(Line, 1, 6) <> 'title:' then Continue;
+      Line := Trim(Copy(Line, 7, Length(Line)));
+      if Line = '' then Exit;
+      Q := Line[1];
+      if (Q = '"') or (Q = '''') then
+      begin
+        Line := Copy(Line, 2, Length(Line));
+        P := Pos(Q, Line);
+        if P > 0 then Line := Copy(Line, 1, P - 1);
+      end;
+      StringChangeEx(Line, '\n', ' ', True);
+      Result := Trim(Line);
+      Exit;
+    end;
+  finally
+    L.Free;
+  end;
+end;
+
 { "OCA.tab\Vistas.panel\01_Abertura de Vista.pushbutton\script.py" -> linha do guia }
 procedure AddCommandGuide(L: TStringList);
-var I, P: Integer; Rel, Panel, Btn, Rest: String;
+var I, P: Integer; Rel, Panel, Btn, Rest, Title: String;
 begin
   for I := 0 to PkgCount - 1 do
   begin
@@ -1435,7 +1518,9 @@ begin
     Panel := Copy(Rest, 1, P - 1);
     Btn := ExtractFileName(ExtractFileDir(Rel));
     Btn := Copy(Btn, 1, Length(Btn) - Length(ExtractFileExt(Btn)));
-    L.Add('  - Painel ' + Panel + ': botão "' + ButtonTitle(TargetExt + '\' + Rel, Btn) + '"');
+    Title := BundleTitle(TargetExt + '\' + ExtractFileDir(Rel) + '\bundle.yaml');
+    if Title = '' then Title := ButtonTitle(TargetExt + '\' + Rel, Btn);
+    L.Add('  - Painel ' + Panel + ': botão "' + Title + '"');
   end;
 end;
 
@@ -1496,6 +1581,11 @@ begin
     end;
 
     AddList(L, 'PROBLEMAS ENCONTRADOS NA CONFERÊNCIA', VerifyFailures);
+    if ConflictExts.Count > 0 then
+    begin
+      AddList(L, 'ATENÇÃO: outras extensões também têm a aba OCA (botões podem aparecer DUPLICADOS). ' +
+        'Se forem cópias antigas do plugin, apague-as manualmente e use pyRevit > Reload', ConflictExts);
+    end;
     AddList(L, 'Arquivos com conteúdo diferente da versão anterior, ATUALIZADOS', UpdatedFiles);
     AddList(L, 'Arquivos obsoletos da versão anterior removidos', RemovedObsolete);
     AddList(L, 'Arquivos da versão anterior alterados localmente e MANTIDOS (revise)', KeptModified);
@@ -1514,10 +1604,17 @@ begin
     L.Add('   Revit aberto: clique na aba pyRevit > Reload, ou feche e abra o Revit.');
     L.Add('2. Confirme que a aba "OCA" aparece na faixa de opções do Revit, com os comandos:');
     AddCommandGuide(L);
-    L.Add('3. Clique em OCA > Sobre: a janela deve mostrar a versão ' + NEW_VERSION + ' (data no formato dd/mm/aaaa).');
+    L.Add('3. Clique em OCA > Sobre: a janela deve mostrar a versão ' + NEW_VERSION + '.');
     L.Add('4. Se a aba não aparecer: confira se o pyRevit está conectado a essa versão do Revit');
     L.Add('   (pyRevit > Settings, ou o comando "pyrevit attached" no Prompt de Comando) e se a pasta acima');
     L.Add('   está entre as pastas de extensões do pyRevit.');
+    if IndexInPkg('Instaladores\Instalar impressora OCA PDF24.ps1') >= 0 then
+    begin
+      L.Add('5. Exportação DWG/PDF com a opção PDF24 precisa da impressora "OCA PDF24" (e do PDF24 Creator).');
+      L.Add('   Este instalador NÃO a instala nem executa scripts. O próprio botão oferece instalá-la, ou execute');
+      L.Add('   ' + TargetExt + '\Instaladores\Instalar impressora OCA PDF24.cmd');
+      L.Add('   (pede administrador; altera configurações do PDF24 e cria uma impressora).');
+    end;
     L.Add('');
     L.Add('As configurações dos comandos (pastas, opções salvas) ficam no pyRevit_config.ini e nas pastas de');
     L.Add('dados do pyRevit, fora de OCA.extension, e não foram alteradas.');

@@ -36,7 +36,7 @@ ALERT_TITLE = alert_title(__title__)          # "OCA · Sobre"
 # ------------------------------------------------------------------
 EMPRESA = u"Oliveira Cotta"
 PLUGIN = u"OCA Automatizações em BIM"
-VERSAO = u"13/10/2026"
+VERSAO = u"1.01"
 REVIT_COMPATIVEIS = (u"2024", u"2025", u"2026")
 SITE = u"https://www.oliveiracotta.com.br"
 EMAIL = u"contato@oliveiracotta.com.br"

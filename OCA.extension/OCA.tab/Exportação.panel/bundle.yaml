@@ -1,0 +1,9 @@
+# Cor do rodape (barra de titulo) do painel: tema claro e tema escuro
+# Nome do painel na faixa
+title: "Exportação"
+
+# Amarelo: #F6E18E no tema claro, #DBAA57 no tema escuro
+background:
+  title: "#f6e18e"
+background_dark:
+  title: "#dbaa57"

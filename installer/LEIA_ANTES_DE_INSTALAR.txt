@@ -1,7 +1,7 @@
 ﻿PLUGIN OCA - AUTOMATIZAÇÕES EM BIM (extensão pyRevit)
 
 O QUE SERÁ INSTALADO
-A pasta OCA.extension, com a aba "OCA" do Revit e seus painéis (Sobre, Keynote, Vistas, Coordenadas, Visualizar), a biblioteca oca_ds e o script de inicialização startup.py. Todos os arquivos vêm dentro deste instalador; não é preciso ter os arquivos originais nem acesso à internet.
+A pasta OCA.extension, com a aba "OCA" do Revit e seus painéis (Sobre, Keynote, Vistas, Coordenadas, Gerência, Exportação, Visualizar), as bibliotecas oca_ds e oca_params, o script de inicialização startup.py e a pasta Instaladores (scripts da impressora OCA PDF24, que este instalador apenas copia e NÃO executa). Todos os arquivos vêm dentro deste instalador; não é preciso ter os arquivos originais nem acesso à internet.
 
 ONDE
 Na pasta de extensões do pyRevit. Por padrão: %APPDATA%\pyRevit\Extensions (pasta do seu usuário - não exige administrador). Se o seu pyRevit usa outra pasta de extensões (configurada em pyRevit > Settings), o instalador a detecta e permite escolhê-la.
@@ -16,7 +16,7 @@ O QUE O INSTALADOR FAZ E NÃO FAZ
 - Se já existir uma versão instalada, pergunta se deseja atualizar ou cancelar, e faz um backup completo antes.
 - Não apaga arquivos que não pertencem ao plugin.
 - Não altera as configurações do pyRevit nem as opções salvas pelos comandos.
-- Não abre o Revit, não executa comandos externos e não acessa a internet.
+- Não abre o Revit, não executa comandos externos nem os scripts da pasta Instaladores, e não acessa a internet.
 - Pede permissão de administrador somente se a pasta escolhida exigir.
 - Ao final, confere cada arquivo copiado (SHA-256) e mostra um relatório.
 

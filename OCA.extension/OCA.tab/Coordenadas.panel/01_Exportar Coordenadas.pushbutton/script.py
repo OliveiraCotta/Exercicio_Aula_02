@@ -1,41 +1,44 @@
 # -*- coding: utf-8 -*-
-"""Exportar Coordenadas - lê as coordenadas do Project Base Point / Survey Point
-do modelo (e, opcionalmente, dos vínculos Revit) e exporta para Excel.
-
-Sistemas de coordenadas tratados (cada um é uma referência DIFERENTE):
-
-  * Origem interna (Internal Origin)
-      Origem fixa (0,0,0) do banco de dados do Revit. Toda geometria devolvida
-      pela API (XYZ, BasePoint.Position, LocationPoint...) está neste sistema,
-      em PÉS, com o eixo Y = Norte do Projeto. Não pode ser movida.
-  * Project Base Point (PBP)
-      Ponto de referência do projeto. BasePoint.Position = onde ele está em
-      coordenadas INTERNAS. Os valores N/S, L/O e Elevação mostrados nas
-      propriedades do Revit são as coordenadas COMPARTILHADAS desse ponto
-      (parâmetros BASEPOINT_NORTHSOUTH/EASTWEST/ELEVATION_PARAM).
-  * Survey Point (SP)
-      Marca a origem do sistema de coordenadas compartilhadas (quando está
-      "clipped"). Os valores exibidos também são coordenadas COMPARTILHADAS.
-  * Coordenadas compartilhadas (Shared Coordinates)
-      Sistema definido pelo sítio ativo (doc.ActiveProjectLocation). A conversão
-      interna -> compartilhada de qualquer ponto é feita pela própria API em
-      ProjectLocation.GetProjectPosition(ponto) - não é calculada "na mão".
-  * Norte do Projeto (Project North)
-      É o eixo +Y interno (orientação das vistas "Norte do projeto").
-  * Norte Verdadeiro (True North)
-      É o eixo Norte/Sul do sistema compartilhado. O ângulo entre os dois é o
-      "Ângulo para o Norte verdadeiro" (BASEPOINT_ANGLETON_PARAM do PBP); é uma
-      propriedade do SÍTIO (sistema de coordenadas), não de um ponto.
-
-Por isso o comando NÃO pega a posição XYZ e a apresenta como se fossem as
-coordenadas do Revit: N/S, L/O e Elevação vêm dos parâmetros exibidos pelo
-Revit, conferidos contra BasePoint.SharedPosition e contra
-ProjectLocation.GetProjectPosition(BasePoint.Position).
-
-Compatível com Revit 2024+ (ForgeTypeId / SpecTypeId / UnitTypeId) e com o
-IronPython do pyRevit. O .xlsx é gerado direto em XML (sem Excel/COM e sem
-bibliotecas externas).
-"""
+# Exportar Coordenadas - lê as coordenadas do Project Base Point / Survey Point
+# do modelo (e, opcionalmente, dos vínculos Revit) e exporta para Excel.
+#
+# Sistemas de coordenadas tratados (cada um é uma referência DIFERENTE):
+#
+#   * Origem interna (Internal Origin)
+#       Origem fixa (0,0,0) do banco de dados do Revit. Toda geometria devolvida
+#       pela API (XYZ, BasePoint.Position, LocationPoint...) está neste sistema,
+#       em PÉS, com o eixo Y = Norte do Projeto. Não pode ser movida.
+#   * Project Base Point (PBP)
+#       Ponto de referência do projeto. BasePoint.Position = onde ele está em
+#       coordenadas INTERNAS. Os valores N/S, L/O e Elevação mostrados nas
+#       propriedades do Revit são as coordenadas COMPARTILHADAS desse ponto
+#       (parâmetros BASEPOINT_NORTHSOUTH/EASTWEST/ELEVATION_PARAM).
+#   * Survey Point (SP)
+#       Marca a origem do sistema de coordenadas compartilhadas (quando está
+#       "clipped"). Os valores exibidos também são coordenadas COMPARTILHADAS.
+#   * Coordenadas compartilhadas (Shared Coordinates)
+#       Sistema definido pelo sítio ativo (doc.ActiveProjectLocation). A conversão
+#       interna -> compartilhada de qualquer ponto é feita pela própria API em
+#       ProjectLocation.GetProjectPosition(ponto) - não é calculada "na mão".
+#   * Norte do Projeto (Project North)
+#       É o eixo +Y interno (orientação das vistas "Norte do projeto").
+#   * Norte Verdadeiro (True North)
+#       É o eixo Norte/Sul do sistema compartilhado. O ângulo entre os dois é o
+#       "Ângulo para o Norte verdadeiro" (BASEPOINT_ANGLETON_PARAM do PBP); é uma
+#       propriedade do SÍTIO (sistema de coordenadas), não de um ponto.
+#
+# Por isso o comando NÃO pega a posição XYZ e a apresenta como se fossem as
+# coordenadas do Revit: N/S, L/O e Elevação vêm dos parâmetros exibidos pelo
+# Revit, conferidos contra BasePoint.SharedPosition e contra
+# ProjectLocation.GetProjectPosition(BasePoint.Position).
+#
+# Compatível com Revit 2024+ (ForgeTypeId / SpecTypeId / UnitTypeId) e com o
+# IronPython do pyRevit. O .xlsx é gerado direto em XML (sem Excel/COM e sem
+# bibliotecas externas).
+#
+# A descrição fica em comentário (e não em docstring) de propósito: o
+# pyRevit 5.2 lê a docstring do módulo com .decode('utf-8'), que falha com
+# acentos no IronPython e deixa o botão sem tooltip. O tooltip é só __doc__.
 
 __title__ = "Exportar\nCoordenadas"
 __doc__ = ("Lê as coordenadas do Project Base Point ou do Survey Point do modelo "

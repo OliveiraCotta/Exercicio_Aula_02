@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-# ATUALIZAÇÃO DAS DESCRIÇÕES DO MODELO POR KEYNOTE  (pyRevit - Revit 2025/2026+)
+# ATUALIZAÇÃO DAS DESCRIÇÕES DO MODELO POR KEYNOTE  (pyRevit - Revit 2024/2025/2026)
 #
 # Lê a planilha de Keynotes do escritório (OCA_XXX_Lista_de_Materiais - aba
 # MATERIAIS) e atualiza as descrições dos TIPOS do modelo pelo código de Keynote.
@@ -9,10 +9,12 @@
 # Onde cada dado mora:
 #   * Keynote ........ parâmetro nativo KEYNOTE dos TIPOS usados no modelo.
 #   * Descrição PT ... parâmetro nativo "Description" do tipo.
-#   * Descrição IN ... parâmetro compartilhado "Descrição IN" do tipo, associado
+#   * Descrição em IN ... parâmetro compartilhado "Descrição em IN" do tipo, associado
 #                      pelo GUID 70307f6e-3b31-4049-bed4-62dfc3570fec
-#                      (OCA_Parametros_Template.txt). Se faltar em alguma
-#                      categoria, oferece vincular ao projeto como parâmetro de TIPO.
+#                      (OCA_Parametros_Template.txt). OPCIONAL: onde não existe
+#                      (ou tem outro GUID) o campo é "Não aplicável" e a
+#                      Description continua sendo atualizada. O comando nunca
+#                      cria nem vincula esse parâmetro.
 #   * Excel .......... aba MATERIAIS: colunas KEYNOTE, DESCRIÇÃO, DESCRIÇÃO IN
 #                      (somente leitura - o Excel não é alterado).
 #
@@ -27,14 +29,22 @@
 #      Excel nunca apaga o modelo.
 #   2. Tipos SEM Keynote ou SEM Descrição: só o Keynote é digitado. A linha
 #      fica destacada quando a Keynote existe no Excel (correspondência - não
-#      quer dizer gravado). "Verificar no Excel" traz Descrição / Descrição IN
+#      quer dizer gravado). "Verificar no Excel" traz Descrição / Descrição em IN
 #      da planilha para os campos vazios.
 #   3. Tipos com Keynote que não existe no Excel (só consulta).
 #   Clicar numa linha seleciona no Revit todas as instâncias do tipo e
 #   enquadra na vista ativa (sem transação, a janela continua aberta).
 #
 # Ao executar a 1ª aba, o TXT de Keynote é gerado do Excel e recarregado no
-# projeto (arquivo existente é substituído; o anterior vira backup com data/hora).
+# projeto em UTF-16 LE com BOM (FF FE), o "Unicode" do Bloco de Notas; caractere
+# não representável (controle, par quebrado) é listado e o TXT NÃO é gravado.
+# O anterior vai para <pasta>\<nome do TXT>_obsoletos\
+# <nome>_AAAAMMDD_HHMMSS.txt, conferido antes da troca; backups nunca são
+# apagados nem sobrescritos. Se o Revit recusar o TXT novo, a recarga é desfeita
+# e o anterior volta ao lugar (o recusado fica em <nome>_obsoletos\..._REJEITADO.txt).
+# Cabeçalho fixo: cada tabela rola por dentro.
+# pyRevit 6.x: o motor persistente é declarado no bundle.yaml (engine:
+# persistent: true) - sem ele a janela abre, mas os eventos param de funcionar.
 # Botões da 2ª aba: Voltar (1ª aba) · Dashboard HTML (qualidade dos dados,
 # offline) · Atualizar descrições (antes "Gravar marcados": pede confirmação,
 # grava e atualiza as tabelas) · Finalizar (só fecha - não grava nem gera nada).
@@ -42,12 +52,21 @@
 #
 # TXT de Keynote do Revit: mesma estrutura do arquivo do escritório -
 # CATEGORIA/prefixos, PREFIXO/GRUPO/CATEGORIA e KEYNOTE / "DESCRIÇÃO |
-# DESCRIÇÃO IN" / PREFIXO.
+# DESCRIÇÃO IN" / PREFIXO. Antes de gravar, a árvore é validada (chave vazia
+# ou repetida, pai inexistente, ciclos); só é "carregado" depois que o Revit
+# confirma a transação e a tabela do projeto bate com o arquivo.
+#
+# Diagnóstico:
+#   * Log por dia em %LOCALAPPDATA%\OCA\pyRevit\logs\Keynotes (cada etapa,
+#     transação, exceção com traceback; gravado linha a linha, sobrevive a um
+#     encerramento do Revit).
+#   * Shift+Clique no botão: modo de diagnóstico com as etapas separadas
+#     (limpeza, TXT sem recarga, recarga, análise, janela com dados de teste...).
 
 __title__ = "Atualização\ndas Descrições\npor Keynote"
 __persistentengine__ = True        # janela não modal + ExternalEvent
 __doc__ = ("Confere as Keynotes dos tipos do modelo com a planilha de materiais "
-           "(aba MATERIAIS) e atualiza Description e Descrição IN pelo código de "
+           "(aba MATERIAIS) e atualiza Description e Descrição em IN pelo código de "
            "Keynote.\n\n"
            "Fluxo: Excel > Modelo. Nada é gravado sem confirmação.\n"
            "Inclui conferência em tabelas, seleção no modelo, TXT de Keynote e "
@@ -55,13 +74,24 @@ __doc__ = ("Confere as Keynotes dos tipos do modelo com a planilha de materiais 
 
 import os
 import re
+import sys
 import json
 import codecs
 from datetime import datetime
 from collections import OrderedDict, defaultdict
 
 from pyrevit import revit, DB, script, forms
-from oca_ds import build_xaml, alert_title, brand_report
+try:
+    from pyrevit import EXEC_PARAMS
+    CONFIG_MODE = bool(getattr(EXEC_PARAMS, "config_mode", False))   # Shift+Clique
+except Exception:
+    CONFIG_MODE = False
+try:
+    from oca_ds import build_xaml, alert_title, brand_report
+except Exception as _ds_ex:
+    forms.alert(u"Design System OCA (lib/oca_ds) não encontrado na extensão.",
+                sub_msg=u"{}\n\nAtualize a extensão OCA no pyRevit e recarregue.".format(_ds_ex),
+                exitscript=True)
 
 import clr
 clr.AddReference("System.Xml")
@@ -73,9 +103,7 @@ for _asm in ("System.IO.Compression",
     except Exception:
         pass
 from System import Guid
-from System.IO import (StreamReader, StreamWriter, File, FileMode, Path,
-                       FileAccess, FileShare)
-from System.IO.Compression import ZipFile, ZipArchiveMode
+from System.IO import StreamReader, File
 from System.Text import UTF8Encoding
 from System.Xml import XmlDocument, XmlNamespaceManager
 
@@ -99,13 +127,16 @@ NO_GROUP = u"SEM AGRUPAMENTO"
 # Parâmetro compartilhado da descrição em inglês (OCA_Parametros_Template.txt).
 # A associação é feita pelo GUID - um parâmetro de mesmo nome com outro GUID
 # NÃO é considerado (não aparece nas tabelas/etiquetas do template).
-PARAM_IN_NAME = u"Descrição IN"
+PARAM_IN_NAME = u"Descrição em IN"
 PARAM_IN_GUID_STR = "70307f6e-3b31-4049-bed4-62dfc3570fec"
-PARAM_IN_GROUP = u"Informações do Modelo"        # grupo no arquivo compartilhado
 PARAM_IN_GUID = Guid(PARAM_IN_GUID_STR)
+# opções do modo de diagnóstico (Shift+Clique no botão) - padrão = normal
+DIAG = {"skip_cleanup": False, "skip_txt_reload": False, "simple_group_rows": False}
+NOT_APPLICABLE = u"Não aplicável"   # Descrição em IN inexistente no tipo (≠ campo vazio)
 MATERIALS_LABEL = u"Materiais"     # categoria usada no relatório p/ materiais
 
 TOOL_TITLE = u"ATUALIZAÇÃO DAS DESCRIÇÕES DO MODELO POR KEYNOTE"
+SCRIPT_VERSION = u"2026.10.22c"     # aparece na janela e no log: confira se é a cópia nova
 # fluxo único: Excel -> Modelo (o Excel é só lido)
 MODES = OrderedDict([("to_model", u"Excel → Modelo")])
 MODE_DIRS = {"to_model": ("model",)}
@@ -114,20 +145,215 @@ MODE_DIRS = {"to_model": ("model",)}
 # ------------------------------------------------------------------
 # Helpers (mesmo padrão das outras ferramentas OCA)
 # ------------------------------------------------------------------
+# Compatibilidade de motor: o pyRevit roda este script em IronPython 2.7 por
+# padrão; se o motor padrão do pyRevit for trocado (IronPython 3.4 / CPython 3),
+# 'unicode' e 'unichr' não existem - os nomes abaixo funcionam nos três.
+try:
+    unicode
+except NameError:
+    unicode = str
+try:
+    unichr
+except NameError:
+    unichr = chr
+PY2 = sys.version_info[0] == 2
+
+
 def to_unicode(value):
     """Coerce any Revit / .NET / byte value into clean unicode text."""
     if value is None:
         return u""
     if isinstance(value, unicode):
         return value
-    if isinstance(value, str):
+    if isinstance(value, (bytes, bytearray)) and not isinstance(value, unicode):
         for enc in ("utf-8", "cp1252", "latin-1"):
             try:
-                return value.decode(enc)
+                return bytes(value).decode(enc)
             except (UnicodeDecodeError, LookupError):
                 continue
-        return value.decode("ascii", "replace")
-    return unicode(value)
+        return bytes(value).decode("ascii", "replace")
+    try:
+        return unicode(value)
+    except Exception:
+        return unicode(repr(value))
+
+
+# ------------------------------------------------------------------
+# 0. Log de diagnóstico em arquivo
+#   Cada linha é gravada e o arquivo FECHADO na hora (append + close): se o
+#   Revit encerrar de forma nativa (sem chance de o Python tratar o erro), a
+#   última linha do log mostra a última etapa concluída/iniciada.
+#   Pasta: %LOCALAPPDATA%\OCA\pyRevit\logs\Keynotes  (ou a pasta TEMP).
+#   Um arquivo por dia; uma execução = um "run" com identificador próprio.
+# ------------------------------------------------------------------
+import time
+import traceback
+
+
+class RunLog(object):
+    def __init__(self):
+        self.run_id = datetime.now().strftime("%H%M%S")
+        self.path = None
+        self.enabled = True
+        self._t0 = {}
+        for base in (os.environ.get("LOCALAPPDATA"), os.environ.get("APPDATA"),
+                     os.environ.get("TEMP"), os.environ.get("TMP")):
+            if not base:
+                continue
+            folder = os.path.join(base, u"OCA", u"pyRevit", u"logs", u"Keynotes")
+            try:
+                if not os.path.isdir(folder):
+                    os.makedirs(folder)
+                path = os.path.join(folder, u"keynotes_{}.log".format(
+                    datetime.now().strftime("%Y%m%d")))
+                with codecs.open(path, "a", encoding="utf-8") as f:
+                    f.write(u"")
+                self.path = path
+                break
+            except Exception:
+                continue
+
+    def write(self, level, msg):
+        """Nunca levanta exceção: se o log falhar, o comando segue."""
+        if not self.enabled or not self.path:
+            return
+        try:
+            line = u"{} [{}] {:<5} {}\r\n".format(
+                datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")[:-3], self.run_id,
+                level, to_unicode(msg))
+            with codecs.open(self.path, "a", encoding="utf-8") as f:
+                f.write(line)
+        except Exception:
+            pass
+
+    def info(self, msg):
+        self.write(u"INFO", msg)
+
+    def warn(self, msg):
+        self.write(u"WARN", msg)
+
+    def error(self, msg):
+        self.write(u"ERROR", msg)
+
+    def exc(self, where):
+        """Exceção Python atual com traceback completo."""
+        try:
+            tb = to_unicode(traceback.format_exc())
+        except Exception:
+            tb = u"(traceback indisponível)"
+        self.write(u"ERROR", u"{}\r\n{}".format(where, tb.rstrip()))
+
+    def begin(self, step, detail=u""):
+        self._t0[step] = time.time()
+        self.write(u"STEP", u">> {}{}".format(step, u" - " + detail if detail else u""))
+
+    def end(self, step, detail=u""):
+        dt = time.time() - self._t0.pop(step, time.time())
+        self.write(u"STEP", u"<< {} ({:.2f} s){}".format(
+            step, dt, u" - " + detail if detail else u""))
+
+
+LOG = RunLog()
+
+
+def revit_env_info():
+    """Versões do Revit (ano + atualização + build), pyRevit, motor Python e
+    .NET. Registra no log e devolve um dicionário."""
+    info = OrderedDict()
+    app = None
+    try:
+        app = doc.Application
+    except Exception:
+        pass
+    for key, attr in (("revit_version", "VersionNumber"), ("revit_name", "VersionName"),
+                      ("revit_build", "VersionBuild"), ("revit_update", "SubVersionNumber")):
+        try:
+            info[key] = to_unicode(getattr(app, attr))
+        except Exception:
+            info[key] = u"?"
+    # ano principal (2024/2025/2026...) e atualização (ex.: 2025.4)
+    major = info.get("revit_version", u"?")
+    build = info.get("revit_build", u"")
+    m = re.match(r"^(\d{2})\.(\d+)", build or u"")      # builds 24.x / 25.x / 26.x
+    if m:
+        info["build_family"] = u"{}.x (Revit 20{})".format(m.group(1), m.group(1))
+        info["update"] = u"20{}.{}".format(m.group(1), m.group(2))
+    else:
+        info["build_family"] = u"formato antigo ou desconhecido"
+        info["update"] = info.get("revit_update", u"?")
+    info["revit_major"] = major
+    try:
+        from pyrevit import versionmgr
+        info["pyrevit"] = to_unicode(versionmgr.get_pyrevit_version().get_formatted())
+    except Exception:
+        try:
+            import pyrevit
+            info["pyrevit"] = to_unicode(getattr(pyrevit, "__version__", u"?"))
+        except Exception:
+            info["pyrevit"] = u"?"
+    if info["pyrevit"] in (u"?", u"", u"None"):
+        try:                                     # pyRevit 6/7: sessioninfo
+            from pyrevit.loader import sessioninfo
+            info["pyrevit"] = to_unicode(sessioninfo.get_runtime_info().pyrevit_version)
+        except Exception:
+            pass
+    info["python"] = to_unicode(sys.version.split("\n")[0])
+    try:
+        import platform
+        info["engine"] = u"{} {}".format(platform.python_implementation(),
+                                         platform.python_version())
+    except Exception:
+        info["engine"] = u"IronPython" if sys.platform == "cli" else u"?"
+    info["py2"] = to_unicode(PY2)
+    # motor persistente: no pyRevit 6.x/7.x vale o bundle.yaml do botão
+    try:
+        by = os.path.join(os.path.dirname(os.path.abspath(__file__)), u"bundle.yaml")
+        if os.path.isfile(by):
+            with codecs.open(by, "r", "utf-8") as f:
+                txt = f.read()
+            info["bundle_persistent"] = to_unicode(
+                re.search(r"^\s*persistent:\s*true", txt, re.M | re.I) is not None)
+        else:
+            info["bundle_persistent"] = u"bundle.yaml AUSENTE"
+    except Exception:
+        info["bundle_persistent"] = u"?"
+    try:
+        from pyrevit import EXEC_PARAMS
+        for key, attr in (("engine_id", "engine_id"), ("engine_ver", "engine_ver"),
+                          ("cached_engine", "cached_engine")):
+            try:
+                info[key] = to_unicode(getattr(EXEC_PARAMS, attr))
+            except Exception:
+                pass
+    except Exception:
+        pass
+    try:
+        import System
+        info["dotnet"] = to_unicode(System.Environment.Version)
+        try:
+            from System.Runtime.InteropServices import RuntimeInformation
+            info["dotnet_desc"] = to_unicode(RuntimeInformation.FrameworkDescription)
+        except Exception:
+            pass
+        info["os"] = to_unicode(System.Environment.OSVersion)
+    except Exception:
+        pass
+    try:
+        info["document"] = to_unicode(doc.Title)
+        info["workshared"] = to_unicode(doc.IsWorkshared)
+        info["doc_path"] = to_unicode(doc.PathName)
+    except Exception:
+        pass
+    # versões em que este script foi revisado (as demais rodam, mas sem garantia)
+    try:
+        info["supported"] = u"sim" if int(major) in (2024, 2025, 2026) else u"NÃO testado"
+    except Exception:
+        info["supported"] = u"?"
+    LOG.info(u"Ambiente: " + u" · ".join(u"{}={}".format(k, v) for k, v in info.items()))
+    if info.get("bundle_persistent") != u"True":
+        LOG.warn(u"bundle.yaml sem 'engine: persistent: true' - no pyRevit 6.x a janela "
+                 u"abre, mas os eventos podem parar quando o script termina")
+    return info
 
 
 def eid_int(eid):
@@ -202,7 +428,7 @@ KN_BODY = u"""
   <StackPanel>
     <HeaderedContentControl Header="RESUMO" Style="{StaticResource oca.Section}">
       <TextBlock Style="{StaticResource oca.Hint}"
-                 Text="Lê a aba MATERIAIS da planilha de Keynote e atualiza a Descrição e a Descrição IN dos tipos do modelo pelo código de Keynote. Na próxima etapa você confere as tabelas e grava só o que marcar (com confirmação). Ao executar, o TXT de Keynote é gerado a partir do Excel e recarregado no projeto."/>
+                 Text="Lê a aba MATERIAIS da planilha de Keynote e atualiza a Descrição e a Descrição em IN dos tipos do modelo pelo código de Keynote. Na próxima etapa você confere as tabelas e grava só o que marcar (com confirmação). Ao executar, o TXT de Keynote é gerado a partir do Excel e recarregado no projeto."/>
     </HeaderedContentControl>
 
     <HeaderedContentControl Header="FLUXO" Style="{StaticResource oca.Section}">
@@ -475,7 +701,9 @@ HEADER_ALIASES = {
     "key": [u"KEYNOTE", u"KEYNOTES", u"NOTA CHAVE", u"KEY"],
     "pt": [u"DESCRICAO", u"DESCRICAO PT", u"DESCRICAO PORTUGUES", u"DESCRIPTION",
            u"DESCRIPTION PT"],
-    "en": [u"DESCRICAO IN", u"DESCRICAO EM IN", u"DESCRICAO EN", u"DESCRICAO INGLES",
+    # Descrição em IN: a coluna "DESCRIÇÃO EM IN" tem prioridade; os nomes
+    # antigos só valem se ela não existir (ver EN_HEADER_PREFIX)
+    "en": [u"DESCRICAO EM IN", u"DESCRICAO IN", u"DESCRICAO EN", u"DESCRICAO INGLES",
            u"DESCRIPTION IN", u"DESCRIPTION EN"],
     "cat": [u"CATEGORIA"],
     "grp": [u"GRUPO"],
@@ -485,8 +713,39 @@ HEADER_ALIASES = {
 }
 
 
+EN_HEADER_PREFIX = u"DESCRICAO EM IN"  # aceita também "DESCRIÇÃO EM IN (inglês)" etc.
+
+
+def open_xlsx(path):
+    """Abre o .xlsx só para leitura, permitindo que o Excel (ou outro programa)
+    esteja com o arquivo aberto - ZipFile.OpenRead falha nesse caso. Lê o que
+    está SALVO no disco. Erros viram mensagens claras."""
+    from System.IO import FileStream, FileMode, FileAccess, FileShare
+    from System.IO.Compression import ZipArchive, ZipArchiveMode
+    if not os.path.isfile(path):
+        raise IOError(u"arquivo não encontrado: {}".format(path))
+    if not path.lower().endswith(u".xlsx"):
+        raise IOError(u"o arquivo não é .xlsx (salve a planilha como Pasta de Trabalho do "
+                      u"Excel .xlsx): {}".format(path))
+    share = getattr(FileShare, "ReadWrite") | getattr(FileShare, "Delete")
+    try:
+        stream = FileStream(path, FileMode.Open, FileAccess.Read, share)
+    except Exception as ex:
+        raise IOError(u"não foi possível abrir a planilha (sem permissão ou bloqueada): "
+                      u"{}".format(to_unicode(ex)))
+    try:
+        return ZipArchive(stream, ZipArchiveMode.Read, False)
+    except Exception as ex:
+        try:
+            stream.Dispose()
+        except Exception:
+            pass
+        raise IOError(u"a planilha está corrompida ou não é um .xlsx válido: {}".format(
+            to_unicode(ex)))
+
+
 def read_excel(path):
-    archive = ZipFile.OpenRead(path)
+    archive = open_xlsx(path)
     try:
         sheets = resolve_sheets(archive)
         shared = read_shared_strings(archive)
@@ -556,15 +815,28 @@ def read_excel(path):
     name, part, pos, grid, frows, header_row, heads = chosen
     cols = {}
     for key, aliases in HEADER_ALIASES.items():
+        if key == "en":
+            continue
         for ci in sorted(heads.keys()):
             if heads[ci] in aliases:
                 cols[key] = ci
                 break
+    # Descrição em IN: 1º a coluna "DESCRIÇÃO EM IN" (também com texto depois,
+    # ex. "DESCRIÇÃO EM IN (INGLÊS)"); só sem ela, os nomes antigos na ordem
+    en_cols = sorted(ci for ci in heads if heads[ci] == EN_HEADER_PREFIX or
+                     heads[ci].startswith(EN_HEADER_PREFIX + u" "))
+    if not en_cols:
+        for alias in HEADER_ALIASES["en"]:
+            en_cols = sorted(ci for ci in heads if heads[ci] == alias)
+            if en_cols:
+                break
+    if en_cols:
+        cols["en"] = en_cols[0]
     missing = [k for k in ("key", "pt", "en") if k not in cols]
     if missing:
         raise Exception(u"Colunas não encontradas na aba '{}': {}".format(
             name, u", ".join({"key": u"KEYNOTE", "pt": u"DESCRIÇÃO",
-                              "en": u"DESCRIÇÃO IN"}[m] for m in missing)))
+                              "en": u"DESCRIÇÃO EM IN"}[m] for m in missing)))
 
     def cell(cells, key):
         ci = cols.get(key)
@@ -585,6 +857,17 @@ def read_excel(path):
             last_row = max(last_row, rn)
         if rec["key"]:
             rows.append(rec)
+
+    def _col_letter(ci):
+        out, n = u"", ci + 1
+        while n:
+            n, r = divmod(n - 1, 26)
+            out = unichr(65 + r) + out
+        return out
+    LOG.info(u"Excel: aba '{}', cabeçalho na linha {} · {}".format(name, header_row, u" · ".join(
+        u"{} = coluna {} '{}'".format(lbl, _col_letter(cols[k]), heads.get(cols[k], u""))
+        for k, lbl in (("key", u"Keynote"), ("pt", u"Description"), ("en", PARAM_IN_NAME))
+        if k in cols)))
 
     by_key, dups = OrderedDict(), defaultdict(list)
     for rec in rows:
@@ -644,7 +927,7 @@ def desc_param(elem):
 
 
 def in_param(elem):
-    """Parâmetro compartilhado 'Descrição IN', localizado pelo GUID
+    """Parâmetro compartilhado 'Descrição em IN', localizado pelo GUID
     (None se o parâmetro não estiver vinculado a este tipo / material)."""
     try:
         p = elem.get_Parameter(PARAM_IN_GUID)
@@ -656,7 +939,7 @@ def in_param(elem):
 
 
 def in_param_clash(elem):
-    """True se existe um parâmetro chamado 'Descrição IN' que NÃO é o
+    """True se existe um parâmetro chamado 'Descrição em IN' que NÃO é o
     compartilhado do escritório (GUID diferente / parâmetro de projeto)."""
     try:
         p = elem.LookupParameter(PARAM_IN_NAME)
@@ -677,14 +960,17 @@ def is_model_category(cat):
 def collect_model(view_only, include_materials):
     col = (DB.FilteredElementCollector(doc, active_view.Id) if view_only
            else DB.FilteredElementCollector(doc))
-    instances = col.WhereElementIsNotElementType().ToElements()
+    instances = col.WhereElementIsNotElementType()
 
     type_info, mat_info = {}, {}      # id int -> [ElementId, count, set(categorias)]
     for e in instances:
-        cat = e.Category
-        if cat is None:
+        try:
+            cat = e.Category
+            if cat is None:
+                continue
+            cname = to_unicode(cat.Name)
+        except Exception:
             continue
-        cname = to_unicode(cat.Name)
         try:
             tid = e.GetTypeId()
         except Exception:
@@ -726,11 +1012,14 @@ def collect_model(view_only, include_materials):
         })
 
     for tid, count, cats in type_info.values():
-        t = doc.GetElement(tid)
-        if t is None:
-            continue
-        cname = to_unicode(t.Category.Name) if t.Category is not None else sorted(cats)[0]
-        add("type", t, cname, count, cats)
+        try:
+            t = doc.GetElement(tid)
+            if t is None:
+                continue
+            cname = to_unicode(t.Category.Name) if t.Category is not None else sorted(cats)[0]
+            add("type", t, cname, count, cats)
+        except Exception:
+            LOG.exc(u"collect_model: tipo {}".format(eid_int(tid)))
     for mid, count, cats in mat_info.values():
         m = doc.GetElement(mid)
         if m is None:
@@ -768,138 +1057,25 @@ FILE_TEXT = {}
 
 
 # ------------------------------------------------------------------
-# 3b. Vincular o parâmetro compartilhado 'Descrição IN' (quando grava no modelo)
+# 3b. 'Descrição em IN' é OPCIONAL
+#   O comando nunca cria nem vincula o parâmetro. Onde ele não existe, o campo
+#   é ignorado ("Não aplicável") e a Description continua sendo atualizada.
+#   Parâmetro com o MESMO NOME e GUID diferente: só aparece no diagnóstico
+#   (log e aviso), nunca recebe gravação.
 # ------------------------------------------------------------------
-def in_param_missing_categories():
-    """Categorias (Category) sem o parâmetro: tipos com keynote (tabela 1) e
-    tipos com parâmetro Keynote ainda vazio (tabela 2)."""
-    cats = OrderedDict()
-    for info in scan_types():
-        try:
-            if in_param(info["t"]) is None and info["t"].Category is not None:
-                cats.setdefault(eid_int(info["t"].Category.Id), info["t"].Category)
-        except Exception:
-            continue
-    for holders in MODEL.values():
-        for h in holders:
-            if h["en_p"] is not None:
-                continue
-            try:
-                if h["kind"] == "material":
-                    cat = doc.Settings.Categories.get_Item(DB.BuiltInCategory.OST_Materials)
-                else:
-                    cat = h["elem"].Category
-            except Exception:
-                cat = None
-            if cat is not None and getattr(cat, "AllowsBoundParameters", True):
-                cats.setdefault(eid_int(cat.Id), cat)
-    return list(cats.values())
-
-
-def _insert_binding(defn, binding, reinsert):
-    """Insert/ReInsert no grupo 'Dados de identidade' (API 2022+ e anterior)."""
-    pb = doc.ParameterBindings
-    fn = pb.ReInsert if reinsert else pb.Insert
-    group = getattr(DB, "GroupTypeId", None)
-    if group is not None:
-        try:
-            return fn(defn, binding, group.IdentityData)
-        except Exception:
-            pass
-    bipg = getattr(DB, "BuiltInParameterGroup", None)
-    if bipg is not None:
-        try:
-            return fn(defn, binding, bipg.PG_IDENTITY_DATA)
-        except Exception:
-            pass
-    return fn(defn, binding)
-
-
-SHARED_PARAM_TXT = u"\r\n".join([
-    u"# This is a Revit shared parameter file.",
-    u"# Do not edit manually.",
-    u"*META\tVERSION\tMINVERSION",
-    u"META\t2\t1",
-    u"*GROUP\tID\tNAME",
-    u"GROUP\t1\t" + PARAM_IN_GROUP,
-    u"*PARAM\tGUID\tNAME\tDATATYPE\tDATACATEGORY\tGROUP\tVISIBLE\tDESCRIPTION"
-    u"\tUSERMODIFIABLE\tHIDEWHENNOVALUE",
-    u"PARAM\t{}\t{}\tTEXT\t\t1\t1\t\t1\t0".format(PARAM_IN_GUID_STR, PARAM_IN_NAME),
-    u""])
-
-
-def bind_in_param(cats):
-    """Vincula 'Descrição IN' como parâmetro de TIPO às categorias informadas.
-    Se o parâmetro ainda não existe no projeto, a definição é lida de um
-    arquivo compartilhado temporário com o MESMO GUID do template OCA (o
-    arquivo configurado no Revit é restaurado em seguida).
-    -> (ok, mensagem)"""
-    app = doc.Application
-    catset = app.Create.NewCategorySet()
-    for c in cats:
-        catset.Insert(c)
-
-    spe = None
-    try:
-        spe = DB.SharedParameterElement.Lookup(doc, PARAM_IN_GUID)
-    except Exception:
-        spe = None
-
-    t = DB.Transaction(doc, u"Vincular parâmetro compartilhado Descrição IN")
-    t.Start()
-    try:
-        if spe is not None:
-            idef = spe.GetDefinition()
-            binding = doc.ParameterBindings.get_Item(idef)
-            if binding is None:
-                ok = _insert_binding(idef, app.Create.NewTypeBinding(catset), False)
-            elif isinstance(binding, DB.InstanceBinding):
-                t.RollBack()
-                return False, (u"'{}' já está no projeto como parâmetro de INSTÂNCIA. "
-                               u"Altere para TIPO em Gerenciar > Parâmetros do projeto "
-                               u"e rode de novo.".format(PARAM_IN_NAME))
-            else:
-                for c in cats:
-                    binding.Categories.Insert(c)
-                ok = _insert_binding(idef, binding, True)
+def in_param_stats(scan):
+    """-> {"with": n, "without": n, "clash": [categorias]} dos tipos analisados."""
+    st = {"with": 0, "without": 0, "clash": set()}
+    for info in scan:
+        t = info["t"]
+        if in_param(t) is not None:
+            st["with"] += 1
         else:
-            tmp = os.path.join(Path.GetTempPath(), u"OCA_Descricao_IN_shared.txt")
-            with codecs.open(tmp, "w", encoding="utf-16") as f:
-                f.write(SHARED_PARAM_TXT)
-            original = app.SharedParametersFilename
-            try:
-                app.SharedParametersFilename = tmp
-                dfile = app.OpenSharedParameterFile()
-                ext = None
-                for g in dfile.Groups:
-                    ext = g.Definitions.get_Item(PARAM_IN_NAME)
-                    if ext is not None:
-                        break
-                if ext is None:
-                    raise Exception(u"definição não encontrada no arquivo temporário")
-                ok = _insert_binding(ext, app.Create.NewTypeBinding(catset), False)
-            finally:
-                try:
-                    app.SharedParametersFilename = original or u""
-                except Exception:
-                    pass
-                try:
-                    os.remove(tmp)
-                except Exception:
-                    pass
-        if not ok:
-            t.RollBack()
-            return False, (u"o Revit recusou o vínculo (existe outro parâmetro chamado "
-                           u"'{}' no projeto?)".format(PARAM_IN_NAME))
-        t.Commit()
-        return True, u"vinculado como parâmetro de tipo em: {}".format(
-            u", ".join(to_unicode(c.Name) for c in cats))
-    except Exception as ex:
-        if t.HasStarted() and not t.HasEnded():
-            t.RollBack()
-        return False, to_unicode(ex)
-
-
+            st["without"] += 1
+            if in_param_clash(t):
+                st["clash"].add(info["category"])
+    st["clash"] = sorted(st["clash"])
+    return st
 
 
 # ------------------------------------------------------------------
@@ -931,17 +1107,6 @@ skipped = []     # {"key","where","id","eid","reason"}
 # ------------------------------------------------------------------
 # 5a. Backup de arquivos gravados (TXT de Keynotes)
 # ------------------------------------------------------------------
-def backup_path(path):
-    """<arquivo>_backup_AAAAMMDD_HHMMSS.<ext>, sem colidir com um backup já existente."""
-    base, ext = os.path.splitext(path)
-    stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    cand, n = u"{}_backup_{}{}".format(base, stamp, ext), 1
-    while os.path.exists(cand):
-        n += 1
-        cand = u"{}_backup_{}_{}{}".format(base, stamp, n, ext)
-    return cand
-
-
 # ------------------------------------------------------------------
 # 5b. Excel -> Modelo
 # ------------------------------------------------------------------
@@ -964,7 +1129,9 @@ def where_label(h):
 
 def plan_to_model():
     """-> (plan, bloqueados). plan: alterações possíveis; bloqueados: diferenças
-    que não podem ser gravadas (parâmetro ausente, somente leitura, workshared)."""
+    que não podem ser gravadas (parâmetro somente leitura, workshared...).
+    'Descrição em IN' ausente no tipo (ou com GUID diferente) NÃO é bloqueio: o
+    campo é simplesmente ignorado e a Description segue normalmente."""
     plan, blocked = [], []
     for key, holders in MODEL.items():
         rec = XL["by_key"].get(key)
@@ -977,16 +1144,18 @@ def plan_to_model():
                 if not new:
                     continue                      # Excel vazio nunca apaga o modelo
                 p = h[pkey]
+                if p is None and field == "en":
+                    continue                      # Descrição em IN não aplicável neste tipo
                 if p is not None:
-                    label = to_unicode(p.Definition.Name)
+                    try:
+                        label = to_unicode(p.Definition.Name)
+                    except Exception:
+                        pass
                 old = h[field] or u""
                 if old == new:
                     continue
                 reason = None
-                if p is None and field == "en" and h["en_clash"]:
-                    reason = (u"'{}' existente não é o parâmetro compartilhado "
-                              u"(GUID diferente)".format(label))
-                elif p is None:
+                if p is None:
                     reason = (u"parâmetro '{}' não existe neste {}".format(
                         label, u"material" if h["kind"] == "material" else u"tipo"))
                 elif p.IsReadOnly:
@@ -1034,7 +1203,7 @@ def cat_rank(cat):
 
 
 # ------------------------------------------------------------------
-# 5d. Situação dos TIPOS no modelo (sem keynote / descrição / descrição IN)
+# 5d. Situação dos TIPOS no modelo (sem keynote / descrição / descrição em IN)
 #   O comando NÃO colore mais o modelo: a conferência é feita selecionando a
 #   linha da tabela, que seleciona e mostra os elementos na vista ativa.
 #   As cores deixadas pelas versões anteriores são localizadas e removidas
@@ -1062,46 +1231,51 @@ def scan_types(view=None):
     try:
         col = (DB.FilteredElementCollector(doc, view.Id) if view is not None
                else DB.FilteredElementCollector(doc))
-        elems = col.WhereElementIsNotElementType().ToElements()
+        elems = col.WhereElementIsNotElementType()
     except Exception:
+        LOG.exc(u"scan_types: coletor")
         elems = []
     by_type = OrderedDict()
+    n_skip = 0
     for e in elems:
-        cat = e.Category
-        if cat is None or not is_model_category(cat):
-            continue
-        try:
+        try:                               # elemento inválido / inacessível: pula
+            cat = e.Category
+            if cat is None or not is_model_category(cat):
+                continue
             tid = e.GetTypeId()
+            if tid is None or tid == INVALID_ID:
+                continue
+            info = by_type.setdefault(eid_int(tid), {"tid": tid, "ids": [],
+                                                     "category": to_unicode(cat.Name)})
+            info["ids"].append(e.Id)
         except Exception:
-            continue
-        if tid is None or tid == INVALID_ID:
-            continue
-        info = by_type.setdefault(eid_int(tid), {"tid": tid, "ids": [],
-                                                 "category": to_unicode(cat.Name)})
-        info["ids"].append(e.Id)
+            n_skip += 1
     out = []
     for info in by_type.values():
-        t = doc.GetElement(info["tid"])
-        if t is None:
-            continue
         try:
-            if t.get_Parameter(BIP.KEYNOTE_PARAM) is None:
+            t = doc.GetElement(info["tid"])
+            if t is None or t.get_Parameter(BIP.KEYNOTE_PARAM) is None:
                 continue                   # categoria sem parâmetro Keynote
         except Exception:
+            n_skip += 1
             continue
         info["t"] = t
         out.append(info)
+    if n_skip:
+        LOG.warn(u"scan_types: {} elemento(s)/tipo(s) inacessível(is) ignorado(s)".format(n_skip))
     return out
 
 
 def type_status(t):
-    """-> (keynote, descrição, descrição IN, tem parâmetro IN, campos faltando)"""
+    """-> (keynote, descrição, descrição em IN, tem parâmetro IN, campos faltando)"""
     key = keynote_of(t)
     desc = param_text(desc_param(t))
     ip = in_param(t)
     en = param_text(ip) if ip is not None else u""
-    missing = [lbl for lbl, v in ((u"Keynote", key), (u"Descrição", desc),
-                                  (PARAM_IN_NAME, en)) if not v]
+    checks = [(u"Keynote", key), (u"Descrição", desc)]
+    if ip is not None:                    # sem o parâmetro: não aplicável, não é falta
+        checks.append((PARAM_IN_NAME, en))
+    missing = [lbl for lbl, v in checks if not v]
     return key, desc, en, ip is not None, missing
 
 
@@ -1192,46 +1366,69 @@ def find_old_highlight(views, progress=None):
 
 def clear_old_highlight(found):
     """Volta a sobreposição desses elementos ao padrão. -> (limpos, falhas)"""
-    ok, bad = 0, 0
-    t = DB.Transaction(doc, u"Remover cores antigas - Keynotes")
-    t.Start()
-    try:
+    cnt = {"ok": 0, "bad": 0}
+
+    def body():
         for v, ids in found:
             for eid in ids:
                 try:
                     v.SetElementOverrides(eid, DB.OverrideGraphicSettings())
-                    ok += 1
+                    cnt["ok"] += 1
                 except Exception:
-                    bad += 1
-        t.Commit()
-    except Exception:
-        if t.HasStarted() and not t.HasEnded():
-            t.RollBack()
-        return 0, ok + bad
-    return ok, bad
+                    cnt["bad"] += 1
+    ok, why = run_transaction(u"Remover cores antigas - Keynotes", body)
+    if not ok:
+        LOG.error(u"Limpeza: transação desfeita - " + why)
+        return 0, cnt["ok"] + cnt["bad"]
+    return cnt["ok"], cnt["bad"]
 
 
 # ---- ações no Revit com a janela aberta (janela não modal) ----
-from Autodesk.Revit.UI import IExternalEventHandler, ExternalEvent
+from Autodesk.Revit.UI import IExternalEventHandler, ExternalEvent, ExternalEventRequest
 from System.Collections.Generic import List
 
 
 class _RevitAction(IExternalEventHandler):
-    """Fila de funções executadas no contexto da API do Revit."""
+    """Fila de funções executadas no contexto da API do Revit (ExternalEvent).
+    Sem assinatura permanente de eventos do Revit (como Idling): um handler
+    que fica assinado pode ser chamado depois de o pyRevit recarregar e
+    descartar este motor Python, o que é um risco de encerramento do Revit.
+    Antes de cada ação confere se o documento do comando ainda está aberto;
+    toda exceção é registrada no log com traceback e mostrada ao usuário -
+    nunca sobe para o Revit."""
 
     def __init__(self):
         self.queue = []
+        self.uiapp = None
+        self.started = {}           # nome da ação -> momento em que começou
 
     def Execute(self, uiapp):
+        self.run_pending(uiapp, u"ExternalEvent")
+
+    def run_pending(self, uiapp, source):
+        self.uiapp = uiapp
         while self.queue:
-            fn = self.queue.pop(0)
+            name, fn = self.queue.pop(0)
+            self.started[name] = time.time()
+            LOG.info(u"{}: executando '{}'".format(source, name))
             try:
+                if not doc.IsValidObject:
+                    LOG.warn(u"{}: documento do comando foi fechado - ação '{}' "
+                             u"ignorada".format(source, name))
+                    continue
                 fn()
+                LOG.info(u"{}: '{}' concluída".format(source, name))
             except SystemExit:
                 pass
             except Exception as ex:
-                forms.alert(u"Não foi possível concluir a ação.", sub_msg=to_unicode(ex),
-                            title=ALERT_TITLE)
+                LOG.exc(u"{}: '{}' falhou".format(source, name))
+                try:
+                    forms.alert(u"Não foi possível concluir a ação '{}'.".format(name),
+                                sub_msg=u"{}\n\nDetalhes no log:\n{}".format(
+                                    to_unicode(ex), LOG.path or u"(log indisponível)"),
+                                title=ALERT_TITLE)
+                except Exception:
+                    pass
 
     def GetName(self):
         return u"Atualização das Descrições por Keynote"
@@ -1239,43 +1436,92 @@ class _RevitAction(IExternalEventHandler):
 
 REVIT_ACTION = _RevitAction()
 REVIT_EVENT = ExternalEvent.Create(REVIT_ACTION)
+def run_in_revit(fn, name=u"ação"):
+    """Enfileira fn para rodar no contexto da API (ExternalEvent).
+    -> True se o Revit aceitou o pedido (Accepted/Pending); False se recusou -
+    nesse caso a ação sai da fila e nada fica pendente."""
+    REVIT_ACTION.queue.append((name, fn))
+    REVIT_ACTION.started.pop(name, None)
+    res = None
+    try:
+        res = REVIT_EVENT.Raise()
+    except Exception:
+        LOG.exc(u"ExternalEvent.Raise('{}')".format(name))
+    ok = res in (ExternalEventRequest.Accepted, ExternalEventRequest.Pending)
+    (LOG.info if ok else LOG.warn)(u"ExternalEvent.Raise('{}') -> {}".format(name, res))
+    if not ok:
+        REVIT_ACTION.queue[:] = [q for q in REVIT_ACTION.queue if q[1] is not fn]
+    return ok
 
 
-def run_in_revit(fn):
-    REVIT_ACTION.queue.append(fn)
-    REVIT_EVENT.Raise()
+def action_started(name):
+    return name in REVIT_ACTION.started
+
+
+def _active_uidoc():
+    """UIDocument ativo SE for o documento deste comando; senão None."""
+    try:
+        uiapp = REVIT_ACTION.uiapp
+        uidoc = uiapp.ActiveUIDocument if uiapp is not None else revit.uidoc
+        if uidoc is None:
+            return None
+        d = uidoc.Document
+        if d.Equals(doc) or (d.PathName == doc.PathName and d.Title == doc.Title):
+            return uidoc
+    except Exception:
+        LOG.exc(u"_active_uidoc")
+    return None
 
 
 def show_in_view(ids):
-    """Seleciona os elementos e aproxima na vista ativa. -> mensagem"""
+    """Seleciona os elementos e aproxima na vista ativa (sem transação).
+    -> mensagem"""
     if not ids:
         return u""
-    uidoc = revit.uidoc
-    view = doc.ActiveView
-
-    def select():
-        try:
-            uidoc.Selection.SetElementIds(List[DB.ElementId](ids))
-        except Exception:
-            pass
-    select()
+    uidoc = _active_uidoc()
+    if uidoc is None:
+        return (u"O documento ativo não é o deste comando ({}). Volte para ele para "
+                u"selecionar os elementos.".format(to_unicode(doc.Title)))
+    view = uidoc.ActiveView
+    # só ids que ainda existem (o usuário pode ter apagado elementos)
+    ids = [i for i in ids if doc.GetElement(i) is not None]
+    if not ids:
+        return u"Os elementos desta linha não existem mais no modelo."
     try:
-        visible = set(eid_int(i) for i in DB.FilteredElementCollector(doc, view.Id)
-                      .WhereElementIsNotElementType().ToElementIds())
+        uidoc.Selection.SetElementIds(List[DB.ElementId](ids))
     except Exception:
+        LOG.exc(u"show_in_view: SetElementIds")
+        return u"Não foi possível selecionar os elementos (ver log)."
+    try:
+        is_graphic = view is not None and not view.IsTemplate and view.ViewType not in (
+            DB.ViewType.Schedule, DB.ViewType.DrawingSheet, DB.ViewType.ProjectBrowser,
+            DB.ViewType.SystemBrowser, DB.ViewType.Internal, DB.ViewType.Undefined,
+            DB.ViewType.Report, DB.ViewType.ColumnSchedule, DB.ViewType.PanelSchedule)
+    except Exception:
+        is_graphic = False
+    if not is_graphic:
+        return (u"{} elemento(s) selecionado(s). A vista ativa não é uma vista de modelo; "
+                u"abra uma planta, corte ou 3D para enquadrar.".format(len(ids)))
+    # só os elementos da linha (não percorre a vista inteira a cada clique)
+    try:
+        visible = set(eid_int(i) for i in DB.FilteredElementCollector(
+            doc, List[DB.ElementId](ids)).WherePasses(
+                DB.VisibleInViewFilter(doc, view.Id)).ToElementIds())
+    except Exception:
+        LOG.exc(u"show_in_view: elementos visíveis")
         visible = set()
     vis = [i for i in ids if eid_int(i) in visible]
     if not vis:
-        return (u"{} elemento(s) selecionado(s), mas nenhum está visível na vista ativa "
-                u"({}). Abra uma vista 3D e clique em 'Mostrar na vista ativa'.".format(
+        return (u"{} elemento(s) PRÉ-SELECIONADO(S) no Revit, mas nenhum está visível na vista "
+                u"ativa ({}). A seleção continua: abra outra vista (ex.: 3D) - ou clique na "
+                u"linha de novo depois de trocar de vista para enquadrar.".format(
                     len(ids), to_unicode(view.Name)))
     try:
         uidoc.ShowElements(List[DB.ElementId](vis))
     except Exception:
-        pass
-    select()                              # continua selecionado depois do zoom
+        LOG.exc(u"show_in_view: ShowElements")
     try:
-        uidoc.RefreshActiveView()
+        uidoc.Selection.SetElementIds(List[DB.ElementId](ids))   # seleção mantida
     except Exception:
         pass
     return u"{} de {} elemento(s) selecionado(s) e mostrado(s) na vista '{}'.".format(
@@ -1342,10 +1588,12 @@ def row_view(r):
 
     def cur(v, no_param=False):
         if no_param:
-            return u"(sem parâmetro)"
+            return NOT_APPLICABLE
         return v or u"(vazio)"
 
     def new(f):
+        if f == "en" and r["h"]["en_p"] is None:
+            return NOT_APPLICABLE
         v = r[f + "_new"]
         if v is not None:
             return v or u"(vazio)"
@@ -1372,7 +1620,7 @@ def row_view(r):
 # ------------------------------------------------------------------
 # 5e'. Tabela 2 - tipos do modelo SEM Keynote ou SEM Descrição (editável)
 # ------------------------------------------------------------------
-def collect_incomplete(t1_keys):
+def collect_incomplete(t1_keys, scan=None):
     """-> (tabela 2, tabela 3)
     Tabela 2: tipos sem Keynote, ou sem Descrição cujo Keynote está no Excel
               mas NÃO aparece na tabela 1 (o que está na tabela 1 já será
@@ -1380,7 +1628,7 @@ def collect_incomplete(t1_keys):
     Tabela 3: tipos com Keynote preenchido que NÃO existe no Excel (só
               informativo - o código precisa ser incluído na planilha)."""
     inc, notx = [], []
-    for info in scan_types():
+    for info in (scan if scan is not None else scan_types()):
         t = info["t"]
         key, desc, en, has_in, missing = type_status(t)
         row = {"t": t, "id": eid_int(t.Id), "category": info["category"],
@@ -1415,21 +1663,27 @@ def excel_rec(key):
 
 
 def verify_incomplete(r, autofill):
-    """Confere a linha com o Excel. autofill: completa Descrição / Descrição IN
-    vazias com os valores do Excel quando o Keynote existe na planilha.
-    Descrição do modelo DIFERENTE da do Excel não é substituída aqui: depois de
-    gravar o keynote, a diferença aparece na tabela 1 (Excel -> Modelo)."""
+    """Confere a linha com o Excel. autofill=True: quando a Keynote existe na
+    planilha, PROPÕE a Description e a Descrição em IN do Excel (preenche campo
+    vazio ou substitui valor diferente), igual à tabela 1. A proposta só é
+    gravada se a linha estiver marcada e o usuário confirmar 'Atualizar
+    descrições'. Valor vazio no Excel nunca apaga o modelo. Descrição em IN só
+    entra onde o parâmetro existe."""
     for f in ("key", "pt", "en"):
         r[f] = clean(r[f])
     rec = excel_rec(r["key"])
-    filled = []
-    if autofill and rec is not None:
-        if not r["pt"] and rec["pt"]:
-            r["pt"] = rec["pt"]
-            filled.append(u"Descrição")
-        if not r["en"] and rec["en"] and r["hasIn"]:
-            r["en"] = rec["en"]
-            filled.append(PARAM_IN_NAME)
+    applied = []
+    if autofill:
+        r["pt"], r["en"] = r["pt0"], r["en0"]       # parte sempre do valor do modelo
+        if rec is not None:
+            if rec["pt"] and rec["pt"] != r["pt0"]:
+                r["pt"] = rec["pt"]
+                applied.append(u"Description ({})".format(
+                    u"substitui" if r["pt0"] else u"preenche"))
+            if r["hasIn"] and rec["en"] and rec["en"] != r["en0"]:
+                r["en"] = rec["en"]
+                applied.append(u"{} ({})".format(
+                    PARAM_IN_NAME, u"substitui" if r["en0"] else u"preenche"))
     errs, warns = [], []
     if not r["key"]:
         errs.append(u"falta Keynote")
@@ -1439,10 +1693,9 @@ def verify_incomplete(r, autofill):
         errs.append(u"falta Descrição" + (u" (vazia também no Excel)"
                                           if rec is not None and not rec["pt"] else u""))
     elif rec is not None and rec["pt"] and r["pt"] != rec["pt"]:
-        warns.append(u"Descrição atual difere do Excel (mantida; após gravar o keynote "
-                     u"a troca aparece na tabela 1)")
+        warns.append(u"Descrição difere do Excel")
     if not r["hasIn"]:
-        warns.append(u"sem parâmetro {}".format(PARAM_IN_NAME))
+        pass                              # Descrição em IN não aplicável: nada a avisar
     elif not r["en"]:
         warns.append(u"{} vazia".format(PARAM_IN_NAME))
     elif rec is not None and rec["en"] and r["en"] != rec["en"]:
@@ -1450,17 +1703,12 @@ def verify_incomplete(r, autofill):
     parts = []
     if rec is not None:
         parts.append(u"Keynote encontrada no Excel (linha {})".format(rec["row"]))
-        pending = [lbl for f, lbl, ok in (("pt", u"Descrição", True),
-                                          ("en", PARAM_IN_NAME, r["hasIn"]))
-                   if ok and not r[f] and rec[f]]
-        if pending and not autofill:
-            parts.append(u"clique em 'Verificar no Excel' para usar: " + u", ".join(pending))
+    if applied:
+        parts.append(u"Do Excel ao gravar: " + u", ".join(applied))
     if errs:
         parts.append(u"Erro: " + u", ".join(errs))
     if warns:
         parts.append(u"Aviso: " + u", ".join(warns))
-    if filled:
-        parts.append(u"Completado do Excel: " + u", ".join(filled))
     r["check"] = u" · ".join(parts) if parts else u"OK"
     return r["check"]
 
@@ -1476,8 +1724,9 @@ for _asm in ("PresentationFramework", "PresentationCore", "WindowsBase", "System
 import System
 from System.Data import DataTable
 
-# tabela com altura do conteúdo: quem rola é a janela (barra à direita);
-# sem virtualização, para o agrupamento sempre redesenhar todas as linhas
+# cada tabela rola por dentro (o cabeçalho das colunas fica fixo) com altura
+# máxima ajustada à janela (_fit_tables); a página rola entre as seções.
+# Virtualização ligada: modelos grandes não criam todas as linhas de uma vez.
 # (cores, contorno e fonte: estilos implícitos do Design System - lib/oca_ds/wpf.py)
 _GRID_STYLE = u"""
               AutoGenerateColumns="False" CanUserAddRows="False"
@@ -1486,11 +1735,12 @@ _GRID_STYLE = u"""
               CanUserResizeRows="False" HeadersVisibility="Column" SelectionMode="Single"
               SelectionUnit="FullRow" GridLinesVisibility="Horizontal"
               AlternationCount="2" Margin="0,4,0,0"
-              VerticalScrollBarVisibility="Disabled" HorizontalScrollBarVisibility="Auto"
-              EnableRowVirtualization="False" EnableColumnVirtualization="False"
-              VirtualizingPanel.IsVirtualizing="False"
-              VirtualizingPanel.IsVirtualizingWhenGrouping="False"
-              ScrollViewer.CanContentScroll="False"
+              VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Auto"
+              MinHeight="120" MaxHeight="520"
+              EnableRowVirtualization="True" EnableColumnVirtualization="False"
+              VirtualizingPanel.IsVirtualizing="True" VirtualizingPanel.VirtualizationMode="Standard"
+              VirtualizingPanel.ScrollUnit="Pixel"
+              ScrollViewer.CanContentScroll="True"
               ColumnHeaderStyle="{StaticResource head}" RowStyle="{StaticResource row}" """
 
 # cor da CÉLULA que vai mudar (coluna "<campo>Mark" da linha):
@@ -1599,6 +1849,7 @@ VERIFY_RESOURCES = u"""
         <!-- linha de título do grupo (Agrupar por), na largura toda da tabela -->
         <DataTrigger Binding="{Binding Kind}" Value="group">
           <Setter Property="Focusable" Value="False"/>
+          <Setter Property="IsHitTestVisible" Value="False"/>
           <Setter Property="Template">
             <Setter.Value>
               <ControlTemplate TargetType="DataGridRow">
@@ -1609,6 +1860,15 @@ VERIFY_RESOURCES = u"""
               </ControlTemplate>
             </Setter.Value>
           </Setter>
+        </DataTrigger>
+        <!-- modo de diagnóstico: título do grupo como linha comum (sem trocar o
+             template da linha do DataGrid) -->
+        <DataTrigger Binding="{Binding Kind}" Value="grouprow">
+          <Setter Property="Focusable" Value="False"/>
+          <Setter Property="IsHitTestVisible" Value="False"/>
+          <Setter Property="Background" Value="{StaticResource oca.Surface2}"/>
+          <Setter Property="Foreground" Value="{StaticResource oca.Accent}"/>
+          <Setter Property="FontWeight" Value="Bold"/>
         </DataTrigger>
       </Style.Triggers>
     </Style>
@@ -1622,14 +1882,19 @@ VERIFY_BODY = u"""
       <Border Style="{StaticResource oca.Msg.Info}" Margin="0" Visibility="{Binding Visibility, ElementName=info}">
         <TextBlock x:Name="info" Style="{StaticResource oca.MsgText}"/>
       </Border>
-      <WrapPanel Margin="0,10,0,0">
-        <TextBlock Text="Buscar" Style="{StaticResource oca.Label}"/>
-        <TextBox x:Name="f_text" Width="300" Margin="0,0,8,0"/>
-        <Button x:Name="b_search" Content="Buscar" Margin="0,0,8,0"/>
-        <Button x:Name="b_clear" Content="Limpar busca" Margin="0,0,8,0"/>
-        <TextBlock x:Name="searchinfo" Style="{StaticResource small}" Foreground="{StaticResource oca.Ink2}"
-                   Margin="8,0,0,0"/>
-      </WrapPanel>
+      <DockPanel Margin="0,10,0,0" LastChildFill="True">
+        <Button x:Name="b_refresh" DockPanel.Dock="Right" Content="Atualizar" MinWidth="110"
+                Margin="8,0,0,0" VerticalAlignment="Top"
+                ToolTip="Relê o modelo e refaz as tabelas (ex.: depois de mudar um campo no Revit com esta janela aberta). Não relê o Excel, não gera o TXT e não grava nada."/>
+        <WrapPanel>
+          <TextBlock Text="Buscar" Style="{StaticResource oca.Label}"/>
+          <TextBox x:Name="f_text" Width="300" Margin="0,0,8,0"/>
+          <Button x:Name="b_search" Content="Buscar" Margin="0,0,8,0"/>
+          <Button x:Name="b_clear" Content="Limpar busca" Margin="0,0,8,0"/>
+          <TextBlock x:Name="searchinfo" Style="{StaticResource small}" Foreground="{StaticResource oca.Ink2}"
+                     Margin="8,0,0,0"/>
+        </WrapPanel>
+      </DockPanel>
       <Border Style="{StaticResource oca.Msg.Ok}" Visibility="{Binding Visibility, ElementName=viewinfo}">
         <TextBlock x:Name="viewinfo" Style="{StaticResource oca.MsgText}"/>
       </Border>
@@ -1682,7 +1947,7 @@ VERIFY_BODY = u"""
         </Border>
         <StackPanel x:Name="body2" Margin="0,6,0,0">
             <TextBlock Style="{StaticResource oca.Hint}"
-                       Text="Clique duas vezes no Keynote para digitar. Linha destacada (faixa verde-azulada à esquerda) = keynote encontrada no Excel (só indica correspondência; nada é gravado até 'Atualizar descrições'). 'Verificar no Excel' traz a Descrição e a Descrição em IN da planilha para os campos vazios.   Texto lilás = keynote digitado  ·  Verde = vem do Excel e será gravado  ·  Âmbar = Excel difere do modelo (mantido)"/>
+                       Text="Clique duas vezes no Keynote para digitar. Linha destacada (faixa verde-azulada à esquerda) = keynote encontrada no Excel (só indica correspondência; nada é gravado até 'Atualizar descrições'). Ao digitar a Keynote, a Description e a Descrição em IN do Excel já ficam propostas; marque a linha e use 'Atualizar descrições' (grava Keynote e descrições juntos). 'Verificar no Excel' marca todas as linhas com algo a gravar.   Texto lilás = keynote digitado  ·  Verde = preenche campo vazio  ·  Âmbar = substitui o valor atual"/>
             <DataGrid x:Name="grid2" """ + _GRID_STYLE + u""">
               <DataGrid.Columns>""" + _CHECK_COL + u"""
                 """ + _col(u"Categoria", u"Categoria", 105) + u"""
@@ -1742,13 +2007,16 @@ VERIFY_FOOTER = u"""
   <Button x:Name="b_finish" Content="Finalizar" MinWidth="110" Margin="8,0,0,0"
           ToolTip="Fecha o comando sem gravar nada"/>"""
 
-VERIFY_XAML = build_xaml(title=__title__ + u" · Verificação",
-                         subtitle=u"Excel > Modelo: confira as tabelas e grave só o que marcar "
-                                  u"(nada é gravado sem confirmação).",
-                         body=VERIFY_BODY, footer_right=VERIFY_FOOTER,
-                         footer_left=VERIFY_FOOTER_LEFT, resources=VERIFY_RESOURCES,
-                         size="L", height=980, width=1450,
-                         min_width=900, min_height=620)   # mínimos da janela original
+_VERIFY_KW = dict(title=__title__ + u" · Verificação",
+                  subtitle=u"Excel > Modelo: confira as tabelas e grave só o que marcar "
+                           u"(nada é gravado sem confirmação).  ·  versão " + SCRIPT_VERSION,
+                  body=VERIFY_BODY, footer_right=VERIFY_FOOTER,
+                  footer_left=VERIFY_FOOTER_LEFT, resources=VERIFY_RESOURCES,
+                  size="L", height=980, width=1450)
+try:                                       # mínimos da janela (oca_ds mais novo)
+    VERIFY_XAML = build_xaml(min_width=900, min_height=620, **_VERIFY_KW)
+except TypeError:                          # oca_ds mais antigo, sem min_width
+    VERIFY_XAML = build_xaml(**_VERIFY_KW)
 
 GROUP_MODES = [u"Sem agrupamento", u"Keynote", u"Categoria"]
 COLS1 = ("Grupo", "Categoria", "Familia", "Tipo", "Keynote", "PtAtual", "PtNova",
@@ -1758,6 +2026,7 @@ COLS2 = ("Categoria", "Familia", "Tipo", "Qtd", "Keynote", "PtAtual", "PtExcel",
 COLS3 = ("Categoria", "Familia", "Tipo", "Qtd", "Keynote", "Descricao", "DescricaoIN",
          "Verificacao")
 MARKS = ("PtMark", "EnMark", "KeyMark")
+
 NO_KEY = u"(sem keynote)"
 TYPE_INST = {}        # id do tipo -> [ElementId das instâncias] (modelo inteiro)
 
@@ -1803,10 +2072,14 @@ class VerifyWindow(forms.WPFWindow):
     tabela é remontada com as linhas que atendem à busca e, se houver
     agrupamento, com uma linha de título por grupo (Kind = "group")."""
 
-    def __init__(self, rows, inc, notx, info_text):
+    def __init__(self, rows, inc, notx, info_text, demo=False):
+        LOG.begin(u"Interface", u"montando a janela de verificação")
         forms.WPFWindow.__init__(self, VERIFY_XAML, literal_string=True)
         self.closing_for_back = False
+        self.demo = demo                  # dados de teste: nunca grava
         self._busy = False
+        self._h_changed1 = self._safe(self._on_changed1, u"Tabela 1: marcar linha")
+        self._h_changed2 = self._safe(self._on_changed2, u"Tabela 2: editar linha")
         self.rows, self.inc, self.notx = rows, inc, notx
         self.by_rid = dict((r["rid"], r) for r in rows)
         self.by_rid2 = dict((r["rid"], r) for r in inc)
@@ -1824,28 +2097,104 @@ class VerifyWindow(forms.WPFWindow):
             combo.SelectedIndex = idx      # tab. 1 e 3: Keynote · tab. 2: Categoria
         self._rebuild()
 
-        # eventos (ligados UMA vez; as tabelas novas ligam só o ColumnChanged)
-        self.f_mode1.SelectionChanged += self._on_mode
-        self.f_mode2.SelectionChanged += self._on_mode
-        self.f_mode3.SelectionChanged += self._on_mode
-        self.b_search.Click += self._search
-        self.b_clear.Click += self._clear_search
-        self.f_text.KeyDown += self._on_key
-        self.grid.SelectionChanged += self._on_select1
-        self.grid2.SelectionChanged += self._on_select2
-        self.grid3.SelectionChanged += self._on_select3
+        # eventos (ligados UMA vez; as tabelas novas ligam só o ColumnChanged).
+        # Todos passam por _safe: exceção num evento da janela NÃO MODAL subiria
+        # para o Revit e encerraria o programa.
+        sf = self._safe
+        self.f_mode1.SelectionChanged += sf(self._on_mode, u"Agrupar por (tabela 1)")
+        self.f_mode2.SelectionChanged += sf(self._on_mode, u"Agrupar por (tabela 2)")
+        self.f_mode3.SelectionChanged += sf(self._on_mode, u"Agrupar por (tabela 3)")
+        self.b_search.Click += sf(self._search, u"Buscar")
+        self.b_clear.Click += sf(self._clear_search, u"Limpar busca")
+        self.b_refresh.Click += sf(self._refresh, u"Atualizar")
+        self.f_text.KeyDown += sf(self._on_key, u"Busca (tecla)")
+        self.Loaded += sf(self._fit_tables, u"Ajustar tabelas")
+        self.scroll.SizeChanged += sf(self._fit_tables, u"Ajustar tabelas")
+        self.grid.SelectionChanged += sf(self._on_select1, u"Seleção tabela 1")
+        self.grid2.SelectionChanged += sf(self._on_select2, u"Seleção tabela 2")
+        self.grid3.SelectionChanged += sf(self._on_select3, u"Seleção tabela 3")
         # recolher / expandir: botão ▼ ou clique no título da tabela
         for n in (1, 2, 3):
-            getattr(self, "tg%d" % n).Click += (lambda k: lambda s, a: self._toggle(k))(n)
-            getattr(self, "tt%d" % n).MouseLeftButtonUp += (lambda k: lambda s, a: self._toggle(k))(n)
+            tog = sf((lambda k: lambda s, a: self._toggle(k))(n), u"Recolher/expandir")
+            getattr(self, "tg%d" % n).Click += tog
+            getattr(self, "tt%d" % n).MouseLeftButtonUp += tog
         # a roda do mouse sobre uma tabela rola a janela (as tabelas não rolam)
         for g in (self.grid, self.grid2, self.grid3):
-            g.PreviewMouseWheel += self._wheel
-        self.b2_check.Click += self._verify_all
-        self.b_back.Click += self._back
-        self.b_dash.Click += self._dashboard
-        self.b_apply.Click += self._apply
-        self.b_finish.Click += self._finish
+            g.PreviewMouseWheel += sf(self._wheel, u"Rolagem")
+        self.b2_check.Click += sf(self._verify_all, u"Verificar no Excel")
+        self.b_back.Click += sf(self._back, u"Voltar")
+        self.b_dash.Click += sf(self._dashboard, u"Dashboard HTML")
+        self.b_apply.Click += sf(self._apply, u"Atualizar descrições")
+        self.b_finish.Click += sf(self._finish, u"Finalizar")
+        self.Closed += sf(self._on_closed, u"Fechar janela")
+        self._watch_unhandled(True)
+        LOG.end(u"Interface", u"tabela 1: {} · tabela 2: {} · tabela 3: {} linha(s){}".format(
+            len(rows), len(inc), len(notx), u" (DADOS DE TESTE)" if demo else u""))
+
+    # ---- proteção da interface ----
+    def _safe(self, fn, name):
+        """Envolve um evento da interface: registra e mostra o erro em vez de
+        deixar a exceção chegar ao Revit."""
+        win = self
+
+        def handler(sender, args):
+            try:
+                return fn(sender, args)
+            except Exception as ex:
+                LOG.exc(u"Interface: '{}'".format(name))
+                try:
+                    win.viewinfo.Text = u"Erro em '{}': {} (detalhes no log)".format(
+                        name, to_unicode(ex))
+                except Exception:
+                    pass
+        return handler
+
+    def _watch_unhandled(self, on):
+        """Registra no log exceções da interface que escapam do Python (ex.:
+        dentro do DataGrid do WPF). Se a janela deste comando está em uso,
+        marca como tratada para o Revit não ser encerrado."""
+        try:
+            import System
+            from System.Windows.Threading import DispatcherUnhandledExceptionEventHandler
+            if on:
+                self._disp_h = DispatcherUnhandledExceptionEventHandler(self._on_ui_exception)
+                self.Dispatcher.UnhandledException += self._disp_h
+                self._dom_h = System.UnhandledExceptionEventHandler(self._on_domain_exception)
+                System.AppDomain.CurrentDomain.UnhandledException += self._dom_h
+            else:
+                if getattr(self, "_disp_h", None) is not None:
+                    self.Dispatcher.UnhandledException -= self._disp_h
+                    self._disp_h = None
+                if getattr(self, "_dom_h", None) is not None:
+                    System.AppDomain.CurrentDomain.UnhandledException -= self._dom_h
+                    self._dom_h = None
+        except Exception:
+            LOG.exc(u"_watch_unhandled({})".format(on))
+
+    def _on_ui_exception(self, sender, e):
+        try:
+            LOG.error(u"Exceção não tratada na interface WPF:\r\n{}".format(
+                to_unicode(e.Exception)))
+            if self.IsVisible and (self.IsActive or self.IsMouseOver or
+                                   self.IsKeyboardFocusWithin):
+                e.Handled = True
+                self.viewinfo.Text = (u"Erro interno da interface (registrado no log, o Revit "
+                                      u"continua aberto): {}".format(to_unicode(e.Exception.Message)))
+        except Exception:
+            pass
+
+    @staticmethod
+    def _on_domain_exception(sender, e):
+        try:
+            LOG.error(u"Exceção não tratada (AppDomain, terminando={}):\r\n{}".format(
+                e.IsTerminating, to_unicode(e.ExceptionObject)))
+        except Exception:
+            pass
+
+    def _on_closed(self, sender, args):
+        LOG.info(u"Janela de verificação fechada{}".format(
+            u" (Voltar)" if self.closing_for_back else u""))
+        self._watch_unhandled(False)
 
     # ---- montagem das tabelas ----
     @staticmethod
@@ -1870,7 +2219,8 @@ class VerifyWindow(forms.WPFWindow):
             return category or u"(sem categoria)"
         return u""
 
-    def _matches(self, vals, grp):
+    def _matches(self, n, vals, grp, key):
+        """Busca geral: o termo aparece em alguma coluna da linha (sem acento)."""
         if not self._query:
             return True
         hay = u" ".join(to_unicode(v) for k, v in vals.items() if not k.startswith(u"_"))
@@ -1885,7 +2235,7 @@ class VerifyWindow(forms.WPFWindow):
         for r in items:
             g = self._grp_of(mode, key_of(r), r["category"])
             vals = values_of(r)
-            if self._matches(vals, g):
+            if self._matches(n, vals, g, key_of(r)):
                 entries.append((g, r, vals))
         if mode == GROUP_MODES[0]:
             entries.sort(key=lambda e: sort_key(e[1]))
@@ -1900,9 +2250,14 @@ class VerifyWindow(forms.WPFWindow):
             if mode != GROUP_MODES[0] and g != last:
                 last, gi = g, gi + 1
                 hrow = tb.NewRow()
-                hrow["RowId"], hrow["Kind"] = -gi, u"group"
-                hrow["Sel"], hrow["Enabled"] = False, False
-                hrow["Grp"] = u"{}      ·  {} linha(s)".format(g, counts[g])
+                label = u"{}      ·  {} linha(s)".format(g, counts[g])
+                hrow["RowId"], hrow["Sel"], hrow["Enabled"] = -gi, False, False
+                hrow["Grp"] = label
+                if DIAG["simple_group_rows"]:
+                    hrow["Kind"] = u"grouprow"
+                    hrow[(COLS1, COLS2, COLS3)[n - 1][0]] = label
+                else:
+                    hrow["Kind"] = u"group"
                 tb.Rows.Add(hrow)
             row = tb.NewRow()
             row["RowId"], row["Grp"] = r["rid"], g
@@ -1934,12 +2289,13 @@ class VerifyWindow(forms.WPFWindow):
     def _cmp2(r, f, rec, has_param=True):
         """-> (texto da coluna 'Excel', marca da célula) para o campo f."""
         if not has_param:
-            return u"(sem parâmetro no tipo)", u""
+            return NOT_APPLICABLE, u""
         if rec is None:
             return (u"(keynote não está no Excel)" if clean(r["key"]) else u""), u""
         xl = rec[f]
         if r[f] and r[f] != r[f + "0"]:
-            return r[f], u"excel"              # vem do Excel e será gravado
+            # vem do Excel e será gravado: verde preenche vazio, âmbar substitui
+            return r[f], (u"over" if r[f + "0"] else u"excel")
         if not xl:
             return u"(vazio no Excel)", u""
         if r[f + "0"] and xl != r[f + "0"]:
@@ -1952,7 +2308,7 @@ class VerifyWindow(forms.WPFWindow):
         en_x, en_m = self._cmp2(r, "en", rec, r["hasIn"])
         d = dict(zip(COLS2, (r["category"], r["family"], r["name"], to_unicode(r["count"]),
                              r["key"], r["pt0"] or u"(vazio)", pt_x,
-                             (r["en0"] or u"(vazio)") if r["hasIn"] else u"(sem parâmetro)",
+                             (r["en0"] or u"(vazio)") if r["hasIn"] else NOT_APPLICABLE,
                              en_x, r["check"])),
                  _kind=u"match" if rec is not None else
                  (u"changed" if inc_changed(r) else u"inc"))
@@ -1963,7 +2319,7 @@ class VerifyWindow(forms.WPFWindow):
     def _vals3(self, r):
         d = dict(zip(COLS3, (r["category"], r["family"], r["name"], to_unicode(r["count"]),
                              r["key"], r["pt"] or u"(vazio)",
-                             (r["en"] or u"(vazio)") if r["hasIn"] else u"(sem parâmetro)",
+                             (r["en"] or u"(vazio)") if r["hasIn"] else NOT_APPLICABLE,
                              r["check"])), _kind=u"info")
         d.update(PtMark=u"", EnMark=u"", KeyMark=u"")
         return d
@@ -2003,9 +2359,10 @@ class VerifyWindow(forms.WPFWindow):
                                 (3, self.grid3, self.t3)):
                 self._bind(grid, tb)
                 self._reselect(grid, keep[n])
-            self.t1.ColumnChanged += self._on_changed1
-            self.t2.ColumnChanged += self._on_changed2
+            self.t1.ColumnChanged += self._h_changed1
+            self.t2.ColumnChanged += self._h_changed2
         except Exception as ex:
+            LOG.exc(u"Montar tabelas")
             self.viewinfo.Text = u"Erro ao montar as tabelas: {}".format(to_unicode(ex))
         finally:
             self._busy = False
@@ -2029,16 +2386,17 @@ class VerifyWindow(forms.WPFWindow):
 
     # ---- busca: só ao clicar em Buscar (ou Enter); Limpar busca restaura ----
     def _search(self, sender, args):
+        """Aplica a busca geral (Buscar ou Enter)."""
         self._query = _fold(to_unicode(self.f_text.Text).strip())
         self._rebuild()
         if self._query:
-            self.searchinfo.Text = u"Busca '{}': {} linha(s) encontrada(s)".format(
-                to_unicode(self.f_text.Text).strip(),
-                sum(len(v) for v in self._vis.values()))
+            self.searchinfo.Text = u"Busca '{}' · {} linha(s) encontrada(s)".format(
+                to_unicode(self.f_text.Text).strip(), sum(len(v) for v in self._vis.values()))
         else:
             self.searchinfo.Text = u""
 
     def _clear_search(self, sender, args):
+        """Limpa a busca e mostra tudo de novo."""
         self.f_text.Text = u""
         self._query = u""
         self.searchinfo.Text = u""
@@ -2061,9 +2419,47 @@ class VerifyWindow(forms.WPFWindow):
         body.Visibility = Visibility.Visible if show else Visibility.Collapsed
         btn.Content = u"▼" if show else u"▶"
 
+    @staticmethod
+    def _inner_scroll(grid):
+        """ScrollViewer interno do DataGrid (onde ficam as linhas)."""
+        try:
+            from System.Windows.Media import VisualTreeHelper
+            from System.Windows.Controls import ScrollViewer
+            stack = [grid]
+            while stack:
+                el = stack.pop(0)
+                if isinstance(el, ScrollViewer):
+                    return el
+                for i in range(VisualTreeHelper.GetChildrenCount(el)):
+                    stack.append(VisualTreeHelper.GetChild(el, i))
+        except Exception:
+            pass
+        return None
+
     def _wheel(self, sender, args):
+        """Roda do mouse sobre uma tabela: rola as linhas da tabela; quando ela
+        chega ao início/fim, rola a página (sem barras brigando)."""
+        sv = self._inner_scroll(sender)
+        if sv is not None and sv.ScrollableHeight > 0:
+            up = args.Delta > 0
+            if (up and sv.VerticalOffset > 0) or (not up and sv.VerticalOffset <
+                                                  sv.ScrollableHeight):
+                return                     # a própria tabela rola
         args.Handled = True
         self.scroll.ScrollToVerticalOffset(self.scroll.VerticalOffset - args.Delta * 0.4)
+
+    def _fit_tables(self, sender=None, args=None):
+        """Altura máxima de cada tabela = área visível da página menos os
+        títulos: uma tabela aberta ocupa a tela com o cabeçalho sempre à vista."""
+        try:
+            h = self.scroll.ViewportHeight
+            if not h or h != h:            # 0 ou NaN antes de a janela aparecer
+                return
+            mh = max(220.0, h - 150.0)
+            for g in (self.grid, self.grid2, self.grid3):
+                g.MaxHeight = mh
+        except Exception:
+            LOG.exc(u"_fit_tables")
 
     def _commit(self):
         """Confirma células/linhas em edição (tabelas 1 e 2) antes de ler os
@@ -2128,7 +2524,11 @@ class VerifyWindow(forms.WPFWindow):
 
         def act():
             win.viewinfo.Text = show_in_view(win._last_ids)
-        run_in_revit(act)
+        if not run_in_revit(act, u"Selecionar na vista"):
+            self.viewinfo.Text = (u"O Revit não aceitou o pedido agora (comando ou edição em "
+                                  u"andamento?). Termine a operação no Revit e clique de novo.")
+        else:
+            self._watch_action(u"Selecionar na vista", 5)
 
     # ---- tabela 1 ----
     def _check1(self, rid, value):
@@ -2180,10 +2580,9 @@ class VerifyWindow(forms.WPFWindow):
             else:
                 r = self.by_rid2[rid]
                 r["key"] = clean(e.Row["Keynote"] or u"")
-                # novo keynote: confere no Excel (destaque + valores do Excel);
-                # descrições só são usadas depois de 'Verificar no Excel'
-                r["pt"], r["en"] = r["pt0"], r["en0"]
-                verify_incomplete(r, autofill=False)
+                # novo keynote: confere no Excel e já propõe Description / IN da
+                # planilha (gravados só ao confirmar 'Atualizar descrições')
+                verify_incomplete(r, autofill=True)
                 self._refresh2(r)
                 self._check2(rid, inc_changed(r))
             self._update_counter()
@@ -2191,8 +2590,9 @@ class VerifyWindow(forms.WPFWindow):
             self._busy = False
 
     def _verify_all(self, sender, args):
-        """Confere cada Keynote no Excel e traz Descrição / Descrição IN de lá
-        para os campos VAZIOS. Só marca as linhas: gravar é outro passo."""
+        """Confere de novo cada Keynote no Excel, propõe Description /
+        Descrição em IN da planilha e MARCA as linhas que têm algo a gravar.
+        Gravar é outro passo (Atualizar descrições + confirmação)."""
         self._commit()
         self._busy = True
         n_match = 0
@@ -2253,22 +2653,133 @@ class VerifyWindow(forms.WPFWindow):
         """Grava as linhas marcadas - SÓ depois da confirmação - e atualiza as
         tabelas (a janela continua aberta)."""
         self._commit()
+        if self.demo:
+            _tell(self, u"Modo de teste com dados fictícios: nada é gravado no modelo.")
+            return
         sel1, sel2 = self.selected(), [r for r in self.selected_inc() if inc_changed(r)]
         if not sel1 and not sel2:
+            n_marked2 = len(self.selected_inc())
+            _tell(self, u"Nada para gravar.\n\n" + (
+                u"As {} linha(s) marcada(s) da tabela 2 não têm valor novo: digite a Keynote "
+                u"e/ou use 'Verificar no Excel' (o Excel precisa ter a descrição)."
+                .format(n_marked2) if n_marked2 else
+                u"Marque linhas na tabela 1 ou na tabela 2."))
             self.viewinfo.Text = u"Nada marcado para gravar."
             return
         n_over = len([r for r in sel1 if r["over"]])
+        cnt = pending_fields(sel1, sel2)
         if not _ask(self, u"Gravar no modelo?\n\n"
                           u"Tabela 1 (Excel > Modelo): {} tipo(s){}\n"
                           u"Tabela 2 (Keynote / descrições): {} tipo(s)\n\n"
+                          u"Campos que serão gravados:\n"
+                          u"  • Description: {}\n  • {}: {}\n  • Keynote: {}\n\n"
                           u"Ctrl+Z no Revit desfaz a gravação.".format(
                               len(sel1), u" - {} substitui(em) valor atual".format(n_over)
-                              if n_over else u"", len(sel2))):
+                              if n_over else u"", len(sel2), cnt["pt"], PARAM_IN_NAME,
+                              cnt["en"], cnt["key"])):
             self.viewinfo.Text = u"Gravação cancelada - nada foi alterado."
             return
         self.b_apply.IsEnabled = False
         self.viewinfo.Text = u"Gravando no modelo..."
-        run_in_revit(lambda: save_run(sel1, sel2))
+        LOG.info(u"Atualizar descrições confirmado: tabela 1 {} · tabela 2 {}".format(
+            len(sel1), len(sel2)))
+        if not run_in_revit(lambda: save_run(sel1, sel2), u"Atualizar descrições"):
+            self.b_apply.IsEnabled = True
+            self.viewinfo.Text = (u"O Revit não aceitou a gravação agora (comando ou edição em "
+                                  u"andamento?). Nada foi gravado - tente de novo.")
+            return
+        self._watch_action(u"Atualizar descrições", 8)
+
+    def _refresh(self, sender, args):
+        """Botão Atualizar: relê o MODELO e refaz as 3 tabelas pelo mesmo
+        caminho usado depois de gravar (collect_model + analyze_model + reload).
+        Não relê o Excel, não gera o TXT e não grava nada no modelo."""
+        self._commit()
+        if self.demo:
+            _tell(self, u"Modo de teste com dados fictícios: não há modelo para reler.")
+            return
+        typed = [r for r in self.inc if clean(r["key"]) != r["key0"]]
+        if typed and not _ask(self, u"Atualizar as tabelas com o modelo?\n\n{} Keynote(s) "
+                                    u"digitada(s) na tabela 2 e ainda não gravada(s) serão "
+                                    u"descartada(s), e as marcações voltam ao padrão (igual "
+                                    u"a depois de gravar).".format(len(typed))):
+            return
+        self.b_refresh.IsEnabled = False
+        self.viewinfo.Text = u"Atualizando as tabelas com o modelo..."
+        LOG.info(u"Atualizar (tabelas) pedido")
+        if not run_in_revit(refresh_run, u"Atualizar tabelas"):
+            self.b_refresh.IsEnabled = True
+            self.viewinfo.Text = (u"O Revit não aceitou o pedido agora (comando ou edição em "
+                                  u"andamento?). Termine a operação no Revit e clique de novo.")
+            return
+        self._watch_action(u"Atualizar tabelas", 8)
+
+    def engine_probe(self, seconds=2):
+        """Autoteste, alguns segundos depois de a janela abrir (o script já
+        terminou): confere se o motor Python continua vivo e se o Revit executa
+        uma ação externa (sem transação). Se o pyRevit descartou o motor, os
+        eventos da janela param - o aviso usa só variáveis locais para
+        conseguir aparecer mesmo assim."""
+        try:
+            from System import TimeSpan
+            from System.Windows.Threading import DispatcherTimer
+        except Exception:
+            return
+        timer = DispatcherTimer()
+        timer.Interval = TimeSpan.FromSeconds(seconds)
+        box = self.viewinfo
+        dead = (u"ATENÇÃO: o pyRevit encerrou o motor Python deste comando - agrupar, "
+                u"selecionar, digitar e gravar NÃO vão funcionar nesta janela. Confira se o "
+                u"arquivo bundle.yaml (engine: persistent: true) está na pasta do botão, "
+                u"recarregue o pyRevit e abra o comando de novo.")
+        win = self
+
+        def tick(sender, args):
+            timer.Stop()
+            try:
+                LOG.info(u"Autoteste: motor Python ativo depois do fim do script")
+                run_in_revit(lambda: LOG.info(u"Autoteste: ExternalEvent executado"),
+                             u"Autoteste")
+                win._watch_action(u"Autoteste", 6, (
+                    u"ATENÇÃO: o Revit não executou o autoteste da janela - seleção e "
+                    u"gravação não vão funcionar até isso ser resolvido (veja o log). "
+                    u"Termine o comando ativo no Revit (Esc) e abra a janela de novo."))
+            except Exception:
+                try:
+                    box.Text = dead
+                except Exception:
+                    pass
+        timer.Tick += tick
+        timer.Start()
+
+    def _watch_action(self, name, seconds, msg=None):
+        """Se a ação não começar em alguns segundos, avisa na janela e no log
+        (o Revit só executa ações externas quando está livre)."""
+        try:
+            from System import TimeSpan
+            from System.Windows.Threading import DispatcherTimer
+        except Exception:
+            return
+        timer = DispatcherTimer()
+        timer.Interval = TimeSpan.FromSeconds(seconds)
+        win = self
+
+        def tick(sender, args):
+            timer.Stop()
+            try:
+                if action_started(name):
+                    return
+                LOG.warn(u"'{}' ainda não começou após {} s (ExternalEvent pendente)".format(
+                    name, seconds))
+                win.viewinfo.Text = msg or (
+                    u"O Revit ainda não executou '{}'. Ele só executa quando está livre: "
+                    u"termine o comando ativo (Esc), feche diálogos abertos e passe o mouse "
+                    u"sobre a área de desenho. A ação acontece assim que o Revit "
+                    u"liberar.".format(name))
+            except Exception:
+                LOG.exc(u"_watch_action")
+        timer.Tick += tick
+        timer.Start()
 
     def _dashboard(self, sender, args):
         """Dashboard HTML com os dados da última análise (não lê nem grava o
@@ -2276,6 +2787,7 @@ class VerifyWindow(forms.WPFWindow):
         try:
             path = write_dashboard()
         except Exception as ex:
+            LOG.exc(u"Dashboard")
             _tell(self, u"Não foi possível gerar o dashboard.\n\n{}".format(to_unicode(ex)),
                   warn=True)
             return
@@ -2294,11 +2806,12 @@ class VerifyWindow(forms.WPFWindow):
             return
         self.closing_for_back = True
         self.Close()
-        run_in_revit(go_back)
+        run_in_revit(go_back, u"Voltar")
 
     def _finish(self, sender, args):
         """Encerra o comando: só fecha a interface. Não grava, não relê o
         modelo, não gera TXT nem relatório."""
+        LOG.info(u"Finalizar")
         self.Close()
         try:
             output.close()
@@ -2316,14 +2829,19 @@ def _txt_field(text):
     return u" ".join(to_unicode(text).replace(u"\t", u" ").split())
 
 
+TXT_BUILD = {"entries": []}       # última montagem: [(chave, texto, pai, origem)]
+
+
 def build_keynote_txt():
-    """-> (texto, avisos). Estrutura idêntica ao TXT do escritório."""
-    lines, warns = [], []
+    """-> (texto, avisos). Estrutura idêntica ao TXT do escritório. As linhas
+    passam por validate_keynote_entries antes de virar texto; cada entrada
+    guarda a origem (aba/linha do Excel) para as mensagens de erro."""
+    entries, warns = [], []
     for cat, plist in XL["kn_headers"]:
-        lines.append(u"{}\t{}\t".format(cat, plist))
+        entries.append((cat, plist, u"", u"aba {}".format(KN_SHEET_NAME)))
     known = set()
     for pf, grp, cat in XL["dados_rows"]:
-        lines.append(u"{}\t{}\t{}".format(pf, grp, cat))
+        entries.append((pf, grp, cat, u"aba {}".format(DATA_SHEET_NAME)))
         known.add(clean(pf))
     seen = set(known) | set(clean(c) for c, _ in XL["kn_headers"])
     for rec in XL["rows"]:
@@ -2339,54 +2857,427 @@ def build_keynote_txt():
         if not parent:
             warns.append(u"{}: prefixo '{}' não está em DADOS - entra sem agrupamento".format(
                 key, prefix))
-        lines.append(u"{}\t{}\t{}".format(_txt_field(key), text, parent))
+        entries.append((_txt_field(key), text, parent,
+                        u"aba {} linha {}".format(XL.get("sheet", SHEET_NAME), rec["row"])))
+    entries, vwarns = validate_keynote_entries(entries)
+    warns.extend(vwarns)
+    TXT_BUILD["entries"] = entries
+    # texto como está no Excel (só tabulação/quebra de linha viram espaço), para
+    # o arquivo continuar idêntico ao TXT do escritório
+    lines = [u"{}\t{}\t{}".format(*(_no_tab(v) for v in e[:3])) for e in entries]
     return u"\r\n".join(lines) + u"\r\n", warns
 
 
-def write_keynote_txt(path, text):
-    """Grava em ANSI (cp1252, como o arquivo atual do escritório); se houver
-    caractere fora do cp1252, grava em Unicode (UTF-16), que o Revit também lê.
-    Se o arquivo já existe, guarda um backup com data/hora."""
-    backup = u""
-    if os.path.isfile(path):
-        backup = backup_path(path)
-        File.Copy(path, backup, False)
-    try:
-        data, enc = text.encode("cp1252"), u"ANSI (cp1252)"
-    except UnicodeEncodeError:
-        data, enc = codecs.BOM_UTF16_LE + text.encode("utf-16-le"), u"Unicode (UTF-16)"
-    with open(path, "wb") as f:
-        f.write(data)
-    return backup, enc
+# ---- TXT de Keynote em UTF-16 LE COM BOM (FF FE) ----
+# É o "Unicode" do Bloco de Notas, que a Autodesk indica para keynotes com
+# caracteres fora do ANSI (Revit lê ANSI ou UTF-16 LE com BOM). Os bytes são
+# montados aqui, sem depender do codec do motor Python nem de um
+# StreamWriter / Encoding do .NET: o que vai para o disco é exatamente isto.
+# Não representáveis: só caracteres de controle (exceto TAB/CR/LF, que são
+# separadores), metades soltas de pares substitutos e U+FEFF/U+FFFE/U+FFFF.
+TXT_BOM = [0xFF, 0xFE]
+TXT_ENCODING_LABEL = u"UTF-16 LE, com BOM"
+_TXT_HINT = {0xFEFF: u"remova (caractere invisível)", 0x00A0: u" "}
 
 
-def load_keynote_txt(path):
-    """Carrega o TXT como tabela de keynotes do projeto. -> (ok, mensagem)"""
-    t = DB.Transaction(doc, u"Carregar TXT de Keynotes")
-    t.Start()
+def _txt_char_ok(o):
+    if o in (9, 10, 13):
+        return True
+    if o < 0x20 or o == 0x7F or 0x80 <= o <= 0x9F:      # controles C0 / C1
+        return False
+    return o not in (0xFEFF, 0xFFFE, 0xFFFF)
+
+
+def txt_encode(text):
+    """-> (lista de bytes: BOM FF FE + UTF-16 LE, [(índice, caractere)] não
+    representáveis). Pares substitutos válidos (emoji etc.) passam."""
+    units, bad = [], []
+    n, i = len(text), 0
+    while i < n:
+        ch = text[i]
+        o = ord(ch)
+        if 0xD800 <= o <= 0xDBFF:             # 1ª metade de um par (IronPython)
+            if i + 1 < n and 0xDC00 <= ord(text[i + 1]) <= 0xDFFF:
+                units.extend((o, ord(text[i + 1])))
+                i += 2
+                continue
+            bad.append((i, ch))
+        elif 0xDC00 <= o <= 0xDFFF:           # 2ª metade solta
+            bad.append((i, ch))
+        elif o > 0xFFFF:                      # CPython: vira par substituto
+            v = o - 0x10000
+            units.extend((0xD800 + (v >> 10), 0xDC00 + (v & 0x3FF)))
+        elif _txt_char_ok(o):
+            units.append(o)
+        else:
+            bad.append((i, ch))
+        i += 1
+    out = list(TXT_BOM)
+    for u in units:
+        out.append(u & 0xFF)
+        out.append(u >> 8)
+    return out, bad
+
+
+def _utf16le_units(data, start):
+    return [data[k] | (data[k + 1] << 8) for k in range(start, len(data) - 1, 2)]
+
+
+def txt_decode(data):
+    """Bytes UTF-16 LE (com ou sem BOM) -> texto."""
+    start = 2 if data[:2] == TXT_BOM else 0
+    units = _utf16le_units(data, start)
+    if PY2:                       # IronPython 2: o texto já é UTF-16 por dentro
+        return u"".join(unichr(u) for u in units)
+    out, k = [], 0
+    while k < len(units):
+        u = units[k]
+        if 0xD800 <= u <= 0xDBFF and k + 1 < len(units) and 0xDC00 <= units[k + 1] <= 0xDFFF:
+            out.append(unichr(0x10000 + ((u - 0xD800) << 10) + (units[k + 1] - 0xDC00)))
+            k += 2
+            continue
+        out.append(unichr(u))
+        k += 1
+    return u"".join(out)
+
+
+def detect_txt_encoding(data):
+    """Codificação de um TXT existente, pelos bytes (só para log e mensagens:
+    o backup é cópia byte a byte, nunca convertido)."""
+    if data[:2] == [0xFF, 0xFE]:
+        return u"UTF-16 LE, com BOM"
+    if data[:2] == [0xFE, 0xFF]:
+        return u"UTF-16 BE, com BOM"
+    if data[:3] == [0xEF, 0xBB, 0xBF]:
+        return u"UTF-8, com BOM"
+    if not data:
+        return u"vazio"
+    sample = data[:4000]
+    odd0 = len([b for b in sample[1::2] if b == 0])
+    even0 = len([b for b in sample[0::2] if b == 0])
+    half = max(1, len(sample) // 2)
+    if odd0 > half * 0.3 and even0 == 0:
+        return u"UTF-16 LE, sem BOM"
+    if even0 > half * 0.3 and odd0 == 0:
+        return u"UTF-16 BE, sem BOM"
+    if not [b for b in data if b >= 0x80]:
+        return u"ASCII (compatível com ANSI)"
     try:
+        bytearray(data).decode("utf-8")
+        return u"UTF-8, sem BOM"
+    except Exception:
+        return u"ANSI (Windows-1252)"
+
+
+def txt_char_report(entries):
+    """Caracteres que não podem ir para o TXT (controles, pares quebrados).
+    -> [{"char", "code", "key", "origin", "hint"}]"""
+    found = []
+    for k, t, p, origin in [(e + (u"",))[:4] for e in entries]:
+        for field in (k, t, p):
+            _b, bad = txt_encode(_no_tab(field))
+            for _i, ch in bad:
+                o = ord(ch)
+                hint = _TXT_HINT.get(o) or (
+                    u"caractere corrompido - redigite a célula" if 0xD800 <= o <= 0xDFFF
+                    else u"remova (caractere de controle)")
+                found.append({"char": ch if o >= 0x20 else u" ", "code": u"U+{:04X}".format(o),
+                              "key": _txt_field(k), "origin": origin, "hint": hint})
+    return found
+
+
+def _bytes_of(path):
+    return [int(b) for b in File.ReadAllBytes(path)]
+
+
+def validate_txt_bytes(data, expected_lines, expected_text=None):
+    """Confere o arquivo: BOM FF FE (UTF-16 LE), tamanho par, sem metade de
+    par substituto solta, sem NUL, quebras CRLF, 3 campos por linha (chave,
+    texto, pai), nenhuma linha vazia e a quantidade de entradas. Com
+    expected_text: o texto decodificado tem de ser IGUAL ao gerado.
+    -> lista de problemas (vazia = ok)."""
+    probs = []
+    if data[:2] != TXT_BOM:
+        probs.append(u"o arquivo não começa com o BOM do UTF-16 LE (FF FE): {}".format(
+            detect_txt_encoding(data)))
+        return probs
+    if len(data) % 2:
+        probs.append(u"tamanho ímpar ({} bytes): UTF-16 incompleto".format(len(data)))
+    units = _utf16le_units(data, 2)
+    for k, u in enumerate(units):
+        prev_hi = k > 0 and 0xD800 <= units[k - 1] <= 0xDBFF
+        next_lo = k + 1 < len(units) and 0xDC00 <= units[k + 1] <= 0xDFFF
+        if (0xD800 <= u <= 0xDBFF and not next_lo) or (0xDC00 <= u <= 0xDFFF and not prev_hi):
+            probs.append(u"posição {}: metade de par substituto solta".format(k))
+            break
+    if 0 in units:
+        probs.append(u"há caractere NUL (U+0000) no texto")
+    text = txt_decode(data)
+    if expected_text is not None and text != expected_text:
+        probs.append(u"o texto lido do arquivo não é igual ao gerado")
+    if u"\r\n" not in text and text:
+        probs.append(u"quebras de linha não são CRLF")
+    body = text.replace(u"\r\n", u"\n")
+    if u"\r" in body:
+        probs.append(u"há CR solto (quebra de linha inválida)")
+    lines = body.split(u"\n")
+    if lines and lines[-1] == u"":
+        lines = lines[:-1]
+    if len(lines) != expected_lines:
+        probs.append(u"{} linha(s) no arquivo, esperado {}".format(len(lines), expected_lines))
+    for n, ln in enumerate(lines, 1):
+        if not ln.strip():
+            probs.append(u"linha {} vazia".format(n))
+        elif ln.count(u"\t") != 2:
+            probs.append(u"linha {} com {} tabulação(ões) (esperado 2)".format(n, ln.count(u"\t")))
+        if len(probs) > 20:
+            break
+    return probs
+
+
+OBSOLETE_SUFFIX = u"_obsoletos"    # subpasta dos backups: <nome do TXT>_obsoletos
+
+
+def obsolete_backup_path(path):
+    """<pasta do TXT>\\<nome>_obsoletos\\<nome>_AAAAMMDD_HHMMSS.txt (ex.:
+    OCA_693_Keynote.txt -> OCA_693_Keynote_obsoletos\\OCA_693_Keynote_20261021_173527.txt)
+    - nunca repete um nome
+    existente (acrescenta _2, _3...)."""
+    base, ext = os.path.splitext(os.path.basename(path))
+    folder = os.path.join(os.path.dirname(path), base + OBSOLETE_SUFFIX)
+    stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    cand, n = os.path.join(folder, u"{}_{}{}".format(base, stamp, ext)), 1
+    while File.Exists(cand):
+        n += 1
+        cand = os.path.join(folder, u"{}_{}_{}{}".format(base, stamp, n, ext))
+    return folder, cand
+
+
+def _backup_label(path):
+    """'<pasta de backup>\\<arquivo>' para as mensagens da janela."""
+    return u"{}\\{}".format(os.path.basename(os.path.dirname(path)), os.path.basename(path))
+
+
+def _io_message(ex):
+    """Texto claro para os erros de arquivo mais comuns."""
+    name = type(ex).__name__
+    txt = to_unicode(ex)
+    if u"UnauthorizedAccess" in name or u"denied" in txt.lower() or u"negado" in txt.lower():
+        return u"sem permissão para gravar nessa pasta ou arquivo somente leitura ({})".format(txt)
+    if u"being used" in txt or u"sendo usado" in txt or u"IOException" in name:
+        return u"arquivo em uso ou bloqueado por outro programa ({})".format(txt)
+    if u"DirectoryNotFound" in name or u"could not find" in txt.lower():
+        return u"pasta não encontrada ({})".format(txt)
+    return txt
+
+
+def write_keynote_txt(path, text, expected_lines):
+    """Grava o TXT em UTF-16 LE COM BOM (FF FE), com segurança:
+      1. codifica (para se houver caractere não representável);
+      2. grava um .tmp na mesma pasta e confere bytes, BOM, estrutura e que o
+         texto lido de volta é igual ao gerado;
+      3. se o TXT já existe: copia para <pasta>\\<nome>_obsoletos\\<nome>_<data_hora>.txt
+         e confere a cópia - se o backup falhar, o TXT original NÃO é trocado;
+      4. substitui o TXT e confere os bytes finais e a codificação detectada
+         (se falhar, restaura o backup).
+    O backup é cópia byte a byte: um TXT antigo em ANSI continua ANSI.
+    -> (backup, codificação gravada, codificação do anterior). Exceções com
+    mensagem clara."""
+    import System
+    data, bad = txt_encode(text)
+    if bad:
+        raise ValueError(u"{} caractere(s) não representável(is) - o TXT não foi gravado".format(
+            len(bad)))
+    folder = os.path.dirname(path) or u"."
+    if not System.IO.Directory.Exists(folder):
+        raise IOError(u"pasta do TXT não encontrada: {}".format(folder))
+    arr = System.Array[System.Byte](data)
+    tmp = path + u".tmp"
+    try:
+        File.WriteAllBytes(tmp, arr)
+    except Exception as ex:
+        raise IOError(u"não foi possível gravar o arquivo temporário: " + _io_message(ex))
+    try:
+        if _bytes_of(tmp) != data:
+            raise IOError(u"conferência do arquivo temporário falhou (bytes diferentes)")
+        probs = validate_txt_bytes(data, expected_lines, text)
+        if probs:
+            raise IOError(u"estrutura inválida: " + u"; ".join(probs[:5]))
+        backup, previous = u"", u""
+        if File.Exists(path):
+            obs, backup = obsolete_backup_path(path)
+            try:
+                System.IO.Directory.CreateDirectory(obs)
+                original = _bytes_of(path)
+                previous = detect_txt_encoding(original)
+                File.Copy(path, backup, False)          # nunca sobrescreve um backup
+                if _bytes_of(backup) != original:
+                    raise IOError(u"a cópia de backup não confere com o original")
+            except Exception as ex:
+                LOG.exc(u"TXT: backup")
+                try:                    # cópia ruim não pode parecer backup válido
+                    if File.Exists(backup):
+                        bad_name = os.path.splitext(backup)[0] + u"_FALHOU.txt"
+                        File.Move(backup, bad_name)
+                        LOG.warn(u"TXT: cópia de backup que não conferiu renomeada: " + bad_name)
+                except Exception:
+                    LOG.exc(u"TXT: renomear backup que falhou")
+                raise IOError(u"backup em '{}' falhou - o TXT original NÃO foi substituído: "
+                              u"{}".format(obs, _io_message(ex)))
+            LOG.info(u"TXT: backup conferido em {} (anterior: {}, {} bytes, cópia sem "
+                     u"conversão)".format(backup, previous, len(original)))
+        try:
+            File.Copy(tmp, path, True)
+        except Exception as ex:
+            raise IOError(u"não foi possível substituir o TXT (o original continua): " +
+                          _io_message(ex))
+        final = _bytes_of(path)
+        if final != data or detect_txt_encoding(final) != TXT_ENCODING_LABEL:
+            if backup:
+                try:
+                    File.Copy(backup, path, True)
+                    LOG.warn(u"TXT: gravação não conferiu - original restaurado do backup")
+                except Exception:
+                    LOG.exc(u"TXT: restaurar backup")
+            raise IOError(u"o TXT gravado não confere com o gerado")
+    finally:
+        try:
+            if File.Exists(tmp):
+                File.Delete(tmp)
+        except Exception:
+            LOG.exc(u"TXT: apagar temporário")
+    LOG.info(u"TXT: gravado e conferido {} ({} bytes, {}, {} linhas)".format(
+        path, len(data), TXT_ENCODING_LABEL, expected_lines))
+    return backup, TXT_ENCODING_LABEL, previous
+
+
+def _no_tab(text):
+    return to_unicode(text).replace(u"\t", u" ").replace(u"\r", u" ").replace(u"\n", u" ")
+
+
+def validate_keynote_entries(entries):
+    """Garante uma árvore de keynotes válida para o Revit: sem chave vazia,
+    sem chave repetida, pai existente e sem ciclos (A > B > A ou A > A).
+    Linha com problema é corrigida (vai para o nível de cima) ou descartada,
+    sempre com aviso. -> (entradas, avisos)"""
+    warns, out, keys = [], [], set()
+    nk = _txt_field                        # comparação sem espaços extras
+    for ent in entries:
+        k, t, p = ent[0], ent[1], ent[2]
+        origin = ent[3] if len(ent) > 3 else u""
+        if not nk(k):
+            warns.append(u"linha sem keynote descartada ('{}')".format(nk(t)[:30]))
+            continue
+        if nk(k) in keys:
+            warns.append(u"{}: chave repetida no TXT - descartada".format(nk(k)))
+            continue
+        keys.add(nk(k))
+        out.append([k, t, p, origin])
+    for e in out:
+        if nk(e[2]) and nk(e[2]) not in keys:
+            warns.append(u"{}: pai '{}' não existe - vai para o nível de cima".format(
+                nk(e[0]), nk(e[2])))
+            e[2] = u""
+    parent = dict((nk(e[0]), nk(e[2])) for e in out)
+    for e in out:                          # ciclos: sobe pelos pais até a raiz
+        seen, cur = set([nk(e[0])]), nk(e[2])
+        while cur:
+            if cur in seen:
+                warns.append(u"{}: ciclo de pais ({}) - vai para o nível de cima".format(
+                    nk(e[0]), cur))
+                e[2] = u""
+                parent[nk(e[0])] = u""
+                break
+            seen.add(cur)
+            cur = parent.get(cur, u"")
+    return [tuple(e) for e in out], warns
+
+
+def load_keynote_txt(path, expected=None):
+    """Carrega o TXT como tabela de keynotes do projeto e confere o resultado
+    contra as entradas geradas (chave, texto e pai). -> (ok, mensagem). ok=False
+    se o Revit não confirmou a transação ou encontrou erro de sintaxe."""
+    holder = {}
+    # só recarrega o que foi validado: o arquivo no disco tem de ser o UTF-16 LE
+    # com BOM recém-gravado (no diagnóstico C, sem 'expected', só registra)
+    try:
+        enc_disk = detect_txt_encoding(_bytes_of(path))
+    except Exception as ex:
+        LOG.exc(u"TXT: ler bytes antes da recarga")
+        return False, u"não foi possível ler o arquivo: {}".format(_io_message(ex))
+    LOG.info(u"TXT: codificação no disco antes da recarga: {}".format(enc_disk))
+    if expected is not None and enc_disk != TXT_ENCODING_LABEL:
+        return False, u"o arquivo no disco está em {} (esperado {}) - recarga cancelada".format(
+            enc_disk, TXT_ENCODING_LABEL)
+
+    def body():
         mp = DB.ModelPathUtils.ConvertUserVisiblePathToModelPath(path)
         ref = DB.ExternalResourceReference.CreateLocalResource(
             doc, DB.ExternalResourceTypes.BuiltInExternalResourceTypes.KeynoteTable,
             mp, DB.PathType.Absolute)
         res = DB.KeyBasedTreeEntriesLoadResults()
         DB.KeynoteTable.GetKeynoteTable(doc).LoadFrom(ref, res)
-        t.Commit()
-        errs = []
+        holder["res"] = res
         try:
-            errs += [to_unicode(x) for x in res.GetFileSyntaxErrors()]
+            n_syntax = len(list(res.GetFileSyntaxErrors()))
         except Exception:
-            pass
-        try:
-            errs += [to_unicode(x) for x in res.GetKeyBasedTreeEntryErrors()]
-        except Exception:
-            pass
-        return True, (u"carregado no projeto" + (
-            u" com {} aviso(s) do Revit".format(len(errs)) if errs else u""))
-    except Exception as ex:
-        if t.HasStarted() and not t.HasEnded():
-            t.RollBack()
-        return False, to_unicode(ex)
+            n_syntax = 0
+        if n_syntax:                      # desfaz: o projeto fica com a tabela anterior
+            raise Exception(u"o Revit encontrou {} erro(s) de sintaxe no arquivo - "
+                            u"recarga desfeita".format(n_syntax))
+    LOG.begin(u"Recarga do TXT", path)
+    ok, why = run_transaction(u"Carregar TXT de Keynotes", body)
+    if not ok:
+        LOG.end(u"Recarga do TXT", u"FALHOU: " + why)
+        return False, why
+    syntax, entry_errs = [], []
+    res = holder.get("res")
+    try:
+        syntax = [to_unicode(x) for x in res.GetFileSyntaxErrors()]
+    except Exception:
+        pass
+    try:
+        entry_errs = [to_unicode(x) for x in res.GetKeyBasedTreeEntryErrors()]
+    except Exception:
+        pass
+    for x in syntax:
+        LOG.warn(u"TXT: erro de sintaxe informado pelo Revit: {}".format(x))
+    for x in entry_errs:
+        LOG.warn(u"TXT: erro de entrada informado pelo Revit: {}".format(x))
+    # conferência: a tabela do projeto tem as mesmas chaves/textos/pais do arquivo
+    loaded, diffs = {}, []
+    try:
+        for e in DB.KeynoteTable.GetKeynoteTable(doc).GetKeyBasedTreeEntries():
+            try:
+                loaded[clean(e.Key)] = (clean(e.KeynoteText), clean(e.ParentKey))
+            except Exception:
+                continue
+        for ent in TXT_BUILD.get("entries") or []:
+            k, t, p = clean(ent[0]), clean(ent[1]), clean(ent[2])
+            got = loaded.get(k)
+            if got is None:
+                diffs.append(u"{}: não está na tabela do projeto".format(k))
+            elif u" ".join(got[0].split()) != u" ".join(t.split()) or got[1] != p:
+                diffs.append(u"{}: texto/pai diferente no projeto".format(k))
+    except Exception:
+        LOG.exc(u"TXT: conferir tabela de keynotes do projeto")
+        loaded = None
+    for d in diffs[:20]:
+        LOG.warn(u"TXT x projeto: " + d)
+    LOG.end(u"Recarga do TXT", u"entradas no projeto: {} (esperado {}) · diferenças: {} · "
+            u"sintaxe: {} · entradas com erro: {}".format(
+                len(loaded) if loaded is not None else u"?", expected, len(diffs),
+                len(syntax), len(entry_errs)))
+    if syntax:
+        return False, u"o Revit encontrou {} erro(s) de sintaxe no arquivo".format(len(syntax))
+    msg = u"recarregado no projeto"
+    if loaded is not None and expected is not None:
+        msg += u" e conferido ({} de {} entradas{})".format(
+            len(loaded), expected,
+            u", {} diferença(s) - ver log".format(len(diffs)) if diffs else u", iguais ao arquivo")
+    if entry_errs:
+        msg += u" · {} aviso(s) do Revit".format(len(entry_errs))
+    return True, msg
 
 
 # ------------------------------------------------------------------
@@ -2396,38 +3287,20 @@ def load_keynote_txt(path):
 not_written = {}
 DIRS = MODE_DIRS[MODE]
 
-def offer_in_binding():
-    """Oferece vincular o parâmetro compartilhado 'Descrição IN' onde falta."""
-    global MODEL
-    missing_cats = in_param_missing_categories()
-    clash = sorted(set(h["category"] for hs in MODEL.values() for h in hs if h["en_clash"]))
-    if missing_cats:
-        msg = (u"O parâmetro compartilhado '{}' (GUID {}) não está disponível em:\n\n"
-               u"{}\n\nSem ele, a descrição em inglês não é gravada nesses itens.").format(
-                   PARAM_IN_NAME, PARAM_IN_GUID_STR,
-                   u"\n".join(u"  • " + to_unicode(c.Name) for c in missing_cats))
-        if clash:
-            msg += (u"\n\nAtenção: em {} já existe um parâmetro '{}' que NÃO é o "
-                    u"compartilhado do escritório (GUID diferente). Ele será ignorado."
-                    ).format(u", ".join(clash), PARAM_IN_NAME)
-        if forms.alert(u"Vincular o parâmetro '{}' ao projeto como parâmetro de TIPO nessas "
-                       u"categorias?".format(PARAM_IN_NAME), sub_msg=msg, title=ALERT_TITLE,
-                       yes=True, no=True):
-            ok, info = bind_in_param(missing_cats)
-            output.print_md(u"- Parâmetro **{}**: {}{}".format(
-                PARAM_IN_NAME, u"" if ok else u":warning: não vinculado - ", info))
-            if ok:
-                MODEL = collect_model(use_view, opts["materials"])   # relê os parâmetros
-
-
 VERIFY_LOG = []          # linhas da tabela 1 já gravadas (todas as rodadas)
 INC_LOG = []             # linhas da tabela 2 já gravadas (todas as rodadas)
 
 
+IN_STATS = {"with": 0, "without": 0, "clash": []}
+
+
 def analyze_model():
     """(Re)analisa Excel x modelo e monta as 3 tabelas. Roda no início e
-    depois de cada 'Gravar marcados'."""
-    global m_rows, m_plan, m_blocked, VROWS, INC, NOTX
+    depois de cada 'Atualizar descrições'. O modelo é percorrido UMA vez
+    (scan_types) e o resultado é reaproveitado pelas tabelas 2/3, pela seleção
+    na vista e pelo dashboard."""
+    global m_rows, m_plan, m_blocked, VROWS, INC, NOTX, IN_STATS
+    LOG.begin(u"Análise", u"comparação Excel x modelo")
     m_rows, m_plan, m_blocked = model_rows()
     VROWS = m_rows
     for r in VROWS:
@@ -2437,34 +3310,55 @@ def analyze_model():
                               r["view"]["type"]))
     for i, r in enumerate(VROWS):
         r["rid"] = i
-    INC, NOTX = collect_incomplete(set(r["key"] for r in VROWS))
+    scan = scan_types()
+    INC, NOTX = collect_incomplete(set(r["key"] for r in VROWS), scan)
     for i, r in enumerate(INC):
         r["rid"] = i
-        verify_incomplete(r, autofill=False)
+        verify_incomplete(r, autofill=True)   # mostra a proposta; a linha segue desmarcada
     for i, r in enumerate(NOTX):
         r["rid"] = i
     TYPE_INST.clear()
-    recs = []
-    for info in scan_types():             # instâncias de cada tipo (mostrar na vista)
+    recs, n_bad = [], 0
+    for info in scan:                     # instâncias de cada tipo (mostrar na vista)
         TYPE_INST[eid_int(info["t"].Id)] = list(info["ids"])
         try:
             recs.append(classify_type(info["t"], info))
         except Exception:
-            pass                           # tipo ilegível: fica fora (não conta como correto)
+            n_bad += 1                     # tipo ilegível: fica fora (não conta como correto)
+            LOG.exc(u"Dashboard: tipo {} ilegível".format(eid_int(info["t"].Id)))
     recs.sort(key=lambda x: (x["category"], x["family"], x["type"]))
     DASH["records"] = recs
     DASH["analyzedAt"] = datetime.now().strftime("%d/%m/%Y %H:%M:%S")
+    IN_STATS = in_param_stats(scan)
+    if IN_STATS["clash"]:
+        LOG.warn(u"'{}' com GUID diferente do oficial (ignorado) em: {}".format(
+            PARAM_IN_NAME, u", ".join(IN_STATS["clash"])))
+    LOG.end(u"Análise", u"tipos analisados: {} ({} instâncias) · tabela 1: {} · tabela 2: {} · "
+            u"tabela 3: {} · bloqueados: {} · '{}' em {} tipo(s), ausente em {} · "
+            u"tipos ilegíveis: {}".format(
+                len(scan), sum(len(i["ids"]) for i in scan), len(VROWS), len(INC), len(NOTX),
+                len(m_blocked), PARAM_IN_NAME, IN_STATS["with"], IN_STATS["without"], n_bad))
 
 
 def make_info_text():
     keys_with_info = [k for k in MODEL if XL["by_key"].get(k) and
                       (XL["by_key"][k]["pt"] or XL["by_key"][k]["en"])]
-    return (u"{} keynote(s) no modelo · {} com descrição no Excel · {} fora do Excel  ·  "
-            u"Tabela 1: {} linha(s) ({} tipo(s))  ·  Tabela 2: {} tipo(s) sem Keynote ou "
-            u"sem Descrição  ·  Tabela 3: {} tipo(s) com Keynote fora do Excel".format(
-                len(MODEL), len(keys_with_info),
-                len([k for k in MODEL if not XL["by_key"].get(k)]),
-                len(VROWS), sum(len(r["hs"]) for r in VROWS), len(INC), len(NOTX)))
+    txt = (u"{} keynote(s) no modelo · {} com descrição no Excel · {} fora do Excel  ·  "
+           u"Tabela 1: {} linha(s) ({} tipo(s))  ·  Tabela 2: {} tipo(s) sem Keynote ou "
+           u"sem Descrição  ·  Tabela 3: {} tipo(s) com Keynote fora do Excel".format(
+               len(MODEL), len(keys_with_info),
+               len([k for k in MODEL if not XL["by_key"].get(k)]),
+               len(VROWS), sum(len(r["hs"]) for r in VROWS), len(INC), len(NOTX)))
+    n_in, n_tot = IN_STATS["with"], IN_STATS["with"] + IN_STATS["without"]
+    if n_tot and not n_in:
+        txt += u"  ·  {}: não existe neste modelo (ignorada)".format(PARAM_IN_NAME)
+    elif n_in < n_tot:
+        txt += u"  ·  {}: existe em {} de {} tipo(s) (nos demais é ignorada)".format(
+            PARAM_IN_NAME, n_in, n_tot)
+    if IN_STATS["clash"]:
+        txt += (u"  ·  Atenção: '{}' com GUID diferente do oficial em {} - não é usado"
+                .format(PARAM_IN_NAME, u", ".join(IN_STATS["clash"])))
+    return txt
 
 
 info_text = u""
@@ -2487,147 +3381,335 @@ def inc_view(r):
             "status": r["status"]}
 
 
-def save_run(chosen_rows, chosen_inc):
-    global INC_FIELDS, MODEL, chosen_ids, chosen_inc_ids, chosen_item_ids, chosen_items
-    global errs, f, failed_rows, field, getp, h, it, label, n_before, n_saved
-    global new, old, p, r, t, to_write, tp, where
-    n_before = len(changes)
-    chosen_ids = set(r["rid"] for r in chosen_rows)
-    for r in VROWS:
-        r["status"] = (u"Bloqueado" if not r["enabled"] else
-                       (u"Marcado" if r["rid"] in chosen_ids else u"Não marcado"))
+class _FailureCollector(DB.IFailuresPreprocessor):
+    """Captura as mensagens de falha do Revit na transação: avisos são
+    registrados e descartados; erros fazem a transação ser desfeita SEM abrir
+    diálogo modal do Revit no meio do ExternalEvent (o motivo vai para o log e
+    para o resumo da gravação)."""
 
-    # ---- Tabela 1 (Excel -> Modelo): grava os tipos das linhas marcadas ----
-    chosen_items = [it for r in chosen_rows for it in r["items"] if not it["reason"]]
-    chosen_item_ids = set(id(it) for it in chosen_items)
-    for it in m_plan:
-        if id(it) not in chosen_item_ids:
-            not_written[(it["h"]["id"], it["field"])] = (
-                u"não selecionado pelo usuário" +
-                (u" (modelo diferente do Excel)" if it["old"] else u""))
+    def __init__(self):
+        self.errors, self.warnings = [], []
 
-    failed_rows = set()
-    if chosen_items:
-        t = DB.Transaction(doc, u"Atualizar descrições por Keynote")
-        t.Start()
+    def PreprocessFailures(self, accessor):
+        has_error = False
         try:
-            for r in chosen_rows:
-                for it in r["items"]:
-                    if it["reason"]:
-                        continue
-                    h, field, old, new = it["h"], it["field"], it["old"], it["new"]
+            for m in accessor.GetFailureMessages():
+                try:
+                    txt = to_unicode(m.GetDescriptionText())
+                except Exception:
+                    txt = u"(falha sem descrição)"
+                if m.GetSeverity() == DB.FailureSeverity.Warning:
+                    self.warnings.append(txt)
                     try:
-                        it["p"].Set(new)
-                        h[field] = new
-                        changes.append({"target": "model",
-                                        "action": "overwrite" if old else "fill",
-                                        "key": h["key"], "field": it["label"],
-                                        "fieldKey": field, "category": h["category"],
-                                        "old": old, "new": new, "where": where_label(h),
-                                        "id": h["id"]})
-                    except Exception as ex:
-                        failed_rows.add(r["rid"])
-                        not_written[(h["id"], field)] = to_unicode(ex)
-                        skipped.append({"key": h["key"], "where": where_label(h),
-                                        "id": h["id"], "eid": h["elem"].Id,
-                                        "reason": to_unicode(ex)})
-            t.Commit()
-        except Exception as ex:
-            t.RollBack()
-            del changes[n_before:]            # nada desta transação ficou no modelo
-            failed_rows.update(r["rid"] for r in chosen_rows)
-            forms.alert(u"Gravação da tabela 1 desfeita (rollback). Nada foi alterado no modelo.",
-                        sub_msg=to_unicode(ex), title=ALERT_TITLE)
+                        accessor.DeleteWarning(m)
+                    except Exception:
+                        pass
+                else:
+                    self.errors.append(txt)
+                    has_error = True
+        except Exception:
+            LOG.exc(u"PreprocessFailures")
+        if has_error:
+            return DB.FailureProcessingResult.ProceedWithRollBack
+        return DB.FailureProcessingResult.Continue
 
-    for r in VROWS:
-        if r["rid"] in failed_rows:
-            r["status"] = u"Não gravado"
-        elif r["status"] == u"Marcado":
-            r["status"] = u"Gravado"
 
-    # ---- Tabela 2 (tipos sem Keynote / sem Descrição): grava o que foi digitado ----
-    INC_FIELDS = (("key", u"Keynote", lambda t: t.get_Parameter(BIP.KEYNOTE_PARAM)),
-                  ("pt", u"Description", desc_param),
-                  ("en", PARAM_IN_NAME, in_param))
-    chosen_inc_ids = set(r["rid"] for r in chosen_inc)
-    for r in INC:
-        r["status"] = u"Não marcado"
-        r["written"] = []
-    to_write = [r for r in chosen_inc if inc_changed(r)]
-    for r in chosen_inc:
-        if not inc_changed(r):
-            r["status"] = u"Sem alteração"
-    if to_write:
-        n_before2 = len(changes)
-        t = DB.Transaction(doc, u"Completar Keynote / Descrição dos tipos")
-        t.Start()
+def run_transaction(name, body):
+    """Executa body() numa transação e só devolve sucesso se o Revit confirmar
+    o Commit. -> (ok, mensagem). Nunca abre transação aninhada."""
+    try:
+        if not doc.IsValidObject:
+            return False, u"o documento não está mais aberto"
+        if doc.IsReadOnly:
+            return False, u"o documento está somente leitura"
+        if doc.IsModifiable:
+            return False, u"já existe uma transação aberta no documento (tente de novo)"
+    except Exception:
+        LOG.exc(u"run_transaction: checagem do documento")
+    t = DB.Transaction(doc, name)
+    fc = _FailureCollector()
+    LOG.info(u"Transação '{}': Start".format(name))
+    try:
+        st = t.Start()
+    except Exception as ex:
+        LOG.exc(u"Transação '{}': Start falhou".format(name))
+        return False, u"não foi possível iniciar a transação: {}".format(to_unicode(ex))
+    if st != DB.TransactionStatus.Started:
+        LOG.error(u"Transação '{}': Start devolveu {}".format(name, st))
+        return False, u"o Revit não iniciou a transação ({})".format(to_unicode(st))
+    try:                                   # depois do Start, como no exemplo da API
+        fho = t.GetFailureHandlingOptions()
+        fho.SetFailuresPreprocessor(fc)
+        fho.SetClearAfterRollback(True)
+        t.SetFailureHandlingOptions(fho)
+    except Exception:
+        LOG.exc(u"run_transaction: opções de falha")
+    try:
+        body()
+    except Exception as ex:
+        LOG.exc(u"Transação '{}': erro durante a gravação".format(name))
         try:
+            if t.HasStarted() and not t.HasEnded():
+                t.RollBack()
+            LOG.warn(u"Transação '{}': RollBack".format(name))
+        except Exception:
+            LOG.exc(u"Transação '{}': RollBack falhou".format(name))
+        return False, u"erro durante a gravação (desfeita): {}".format(to_unicode(ex))
+    try:
+        st = t.Commit()
+    except Exception as ex:
+        LOG.exc(u"Transação '{}': Commit falhou".format(name))
+        return False, u"o Revit recusou a gravação: {}".format(to_unicode(ex))
+    for w in fc.warnings:
+        LOG.warn(u"Transação '{}': aviso do Revit: {}".format(name, w))
+    if st != DB.TransactionStatus.Committed:
+        LOG.error(u"Transação '{}': Commit devolveu {} · erros: {}".format(
+            name, st, u" | ".join(fc.errors)))
+        return False, u"o Revit desfez a gravação ({}){}".format(
+            to_unicode(st), u": " + u"; ".join(fc.errors[:3]) if fc.errors else u"")
+    LOG.info(u"Transação '{}': Commit OK".format(name))
+    return True, u""
+
+
+def _set_param(p, new):
+    """Grava e diz se o Revit aceitou (Parameter.Set devolve False sem
+    exceção quando recusa o valor)."""
+    try:
+        ok = p.Set(new)
+    except Exception as ex:
+        return False, to_unicode(ex)
+    if ok is False:
+        return False, u"o Revit recusou o valor"
+    return True, u""
+
+
+def pending_fields(rows1, rows2):
+    """Quantos campos cada gravação vai tentar: {"pt": n, "en": n, "key": n}."""
+    cnt = {"pt": 0, "en": 0, "key": 0}
+    for r in rows1:
+        for it in r["items"]:
+            if not it["reason"]:
+                cnt[it["field"]] += 1
+    for r in rows2:
+        for f in ("key", "pt", "en"):
+            if f == "en" and not r["hasIn"]:
+                continue
+            if clean(r[f]) and clean(r[f]) != r[f + "0"]:
+                cnt[f] += 1
+    return cnt
+
+
+def save_run(chosen_rows, chosen_inc):
+    """'Atualizar descrições' (já confirmado pelo usuário). Grava, CONFERE no
+    modelo o que ficou gravado, reanalisa, atualiza as tabelas e mostra o
+    resumo. Roda via ExternalEvent."""
+    global MODEL
+    LOG.begin(u"Gravar", u"tabela 1: {} linha(s) · tabela 2: {} linha(s)".format(
+        len(chosen_rows), len(chosen_inc)))
+    n_before = len(changes)
+    written = []          # (Parameter, valor, registro de 'changes') para conferir
+    problems = []         # (onde, motivo, "bloqueio" | "erro")
+    # ignorados: linhas da tabela 1 que podiam ser gravadas e não foram marcadas
+    n_ignored = len([r for r in VROWS if r["enabled"] and not r["sel"]]) + \
+        len([r for r in chosen_inc if not inc_changed(r)])
+    try:
+        # ---- Tabela 1 (Excel -> Modelo): grava os tipos das linhas marcadas ----
+        chosen_ids = set(r["rid"] for r in chosen_rows)
+        for r in VROWS:
+            r["status"] = (u"Bloqueado" if not r["enabled"] else
+                           (u"Marcado" if r["rid"] in chosen_ids else u"Não marcado"))
+        chosen_items = [it for r in chosen_rows for it in r["items"] if not it["reason"]]
+        chosen_item_ids = set(id(it) for it in chosen_items)
+        for it in m_plan:
+            if id(it) not in chosen_item_ids:
+                not_written[(it["h"]["id"], it["field"])] = (
+                    u"não selecionado pelo usuário" +
+                    (u" (modelo diferente do Excel)" if it["old"] else u""))
+        pend1 = []
+
+        def write1():
+            for it in chosen_items:
+                h, field, old, new = it["h"], it["field"], it["old"], it["new"]
+                ok, why = _set_param(it["p"], new)
+                if ok:
+                    pend1.append((it["p"], new, {
+                        "target": "model", "action": "overwrite" if old else "fill",
+                        "key": h["key"], "field": it["label"], "fieldKey": field,
+                        "category": h["category"], "old": old, "new": new,
+                        "where": where_label(h), "id": h["id"]}))
+                else:
+                    problems.append((where_label(h) + u" · " + it["label"], why, u"erro"))
+        if chosen_items:
+            ok, msg = run_transaction(u"Atualizar descrições por Keynote", write1)
+            if ok:
+                written.extend(pend1)
+            else:
+                problems.append((u"Tabela 1", msg, u"erro"))
+
+        # ---- Tabela 2 (tipos sem Keynote / sem Descrição) ----
+        fields2 = (("key", u"Keynote", lambda t: t.get_Parameter(BIP.KEYNOTE_PARAM)),
+                   ("pt", u"Description", desc_param),
+                   ("en", PARAM_IN_NAME, in_param))
+        for r in INC:
+            r["status"], r["written"] = u"Não marcado", []
+        to_write = [r for r in chosen_inc if inc_changed(r)]
+        for r in chosen_inc:
+            if not inc_changed(r):
+                r["status"] = u"Sem alteração"
+        pend2 = []
+
+        def write2():
             for r in to_write:
                 tp = r["t"]
-                where = u"{}: {}{}".format(r["category"],
-                                           (r["family"] + u" - ") if r["family"] else u"", r["name"])
-                errs = []
+                where = u"{}: {}{}".format(r["category"], (r["family"] + u" - ")
+                                           if r["family"] else u"", r["name"])
                 if owned_by_other(tp):
-                    errs.append(u"tipo emprestado por outro usuário (workshared)")
-                else:
-                    for f, label, getp in INC_FIELDS:
-                        new, old = clean(r[f]), r[f + "0"]
-                        if not new or new == old:
-                            continue
-                        try:
-                            p = getp(tp)
-                        except Exception:
-                            p = None
-                        if p is None:
-                            errs.append(u"parâmetro '{}' não existe".format(label))
-                            continue
-                        if param_text(p) == new:
-                            r["written"].append(f)      # já gravado pela tabela 1
-                            continue
-                        if p.IsReadOnly:
-                            errs.append(u"'{}' somente leitura".format(label))
-                            continue
-                        try:
-                            p.Set(new)
-                            r["written"].append(f)
-                            changes.append({"target": "model",
-                                            "action": "overwrite" if old else "fill",
-                                            "key": clean(r["key"]) or NO_KEY, "field": label,
-                                            "fieldKey": "inc_" + f, "category": r["category"],
-                                            "old": old, "new": new, "where": where,
-                                            "id": r["id"]})
-                        except Exception as ex:
-                            errs.append(to_unicode(ex))
-                if errs:
-                    r["status"] = (u"Gravado em parte: " if r["written"] else u"Não gravado: ") + \
-                        u"; ".join(errs)
-                    skipped.append({"key": clean(r["key"]) or NO_KEY, "where": where,
-                                    "id": r["id"], "eid": tp.Id, "reason": u"; ".join(errs)})
-                else:
-                    r["status"] = u"Gravado"
-            t.Commit()
-        except Exception as ex:
-            t.RollBack()
-            del changes[n_before2:]
-            for r in to_write:
-                r["status"], r["written"] = u"Não gravado (rollback)", []
-            forms.alert(u"Gravação da tabela 2 desfeita (rollback). Nada foi alterado no modelo.",
-                        sub_msg=to_unicode(ex), title=ALERT_TITLE)
+                    problems.append((where, u"tipo emprestado por outro usuário (workshared)", u"bloqueio"))
+                    continue
+                for f, label, getp in fields2:
+                    new, old = clean(r[f]), r[f + "0"]
+                    if not new or new == old:
+                        continue
+                    if f == "en" and not r["hasIn"]:
+                        continue                  # Descrição em IN não aplicável neste tipo
+                    try:
+                        p = getp(tp)
+                    except Exception:
+                        p = None
+                    if p is None:
+                        if f != "en":             # IN ausente / GUID diferente: ignora
+                            problems.append((where, u"parâmetro '{}' não existe".format(label), u"bloqueio"))
+                        continue
+                    if param_text(p) == new:
+                        r["written"].append(f)    # já gravado pela tabela 1
+                        continue
+                    if p.IsReadOnly:
+                        problems.append((where, u"'{}' somente leitura".format(label), u"bloqueio"))
+                        continue
+                    ok, why = _set_param(p, new)
+                    if ok:
+                        pend2.append((p, new, {
+                            "target": "model", "action": "overwrite" if old else "fill",
+                            "key": clean(r["key"]) or NO_KEY, "field": label,
+                            "fieldKey": "inc_" + f, "category": r["category"],
+                            "old": old, "new": new, "where": where, "id": r["id"]}, r, f))
+                    else:
+                        problems.append((where + u" · " + label, why, u"erro"))
+        if to_write:
+            ok, msg = run_transaction(u"Completar Keynote / Descrição dos tipos", write2)
+            if ok:
+                for p, new, rec, r, f in pend2:
+                    r["written"].append(f)
+                    written.append((p, new, rec))
+            else:
+                problems.append((u"Tabela 2", msg, u"erro"))
 
-    # guarda o que foi gravado nesta rodada
-    for r in chosen_rows:
-        VERIFY_LOG.append(dict(r["view"], status=r["status"]))
-    for r in chosen_inc:
-        INC_LOG.append(inc_view(r))
-    n_saved = len(changes) - n_before
+        # ---- conferência: relê cada parâmetro gravado ----
+        def same(a, b):                    # ignora diferença só de espaço/quebra de linha
+            return u" ".join(to_unicode(a).split()) == u" ".join(to_unicode(b).split())
+        by_field = defaultdict(int)
+        for p, new, rec in written:
+            try:
+                now = param_text(p)
+            except Exception:
+                now = None
+            if now is not None and same(now, new):
+                changes.append(rec)
+                by_field[rec["fieldKey"].replace(u"inc_", u"")] += 1
+                LOG.info(u"Gravado e conferido: {} · {}: '{}' -> '{}'".format(
+                    rec["where"], rec["field"], rec["old"], now))
+            else:
+                problems.append((rec["where"] + u" · " + rec["field"],
+                                 u"depois de gravar o modelo mostra '{}'".format(now), u"erro"))
+        for r in chosen_inc:
+            if r["status"] == u"Não marcado":
+                r["status"] = u"Gravado" if r.get("written") else u"Não gravado"
+        for r in VROWS:
+            if r["status"] == u"Marcado":
+                r["status"] = u"Gravado"
+        for r in chosen_rows:
+            VERIFY_LOG.append(dict(r["view"], status=r["status"]))
+        for r in chosen_inc:
+            INC_LOG.append(inc_view(r))
+        n_saved = len(changes) - n_before
+        blocks = [x for x in problems if x[2] == u"bloqueio"]
+        errors = [x for x in problems if x[2] == u"erro"]
+        for where, why, kind in problems:
+            LOG.warn(u"Não gravado ({}): {} - {}".format(kind, where, why))
+        LOG.end(u"Gravar", u"{} parâmetro(s) gravado(s) e conferido(s) · {} problema(s)"
+                .format(n_saved, len(problems)))
 
-    # relê o modelo e refaz as tabelas
-    MODEL = collect_model(use_view, opts["materials"])
-    analyze_model()
-    if VW is not None:
-        VW.reload(VROWS, INC, NOTX, make_info_text(),
-                  u"{} parâmetro(s) gravado(s) no modelo. Tabelas atualizadas - "
-                  u"grave mais ou clique em Finalizar.".format(n_saved))
+        # ---- relê o modelo e refaz as tabelas ----
+        LOG.begin(u"Reanálise após gravar")
+        MODEL = collect_model(use_view, opts["materials"])
+        analyze_model()
+        LOG.end(u"Reanálise após gravar")
+        msg = (u"{} parâmetro(s) gravado(s) e conferido(s) no modelo: Description {} · "
+               u"{} {} · Keynote {}.".format(n_saved, by_field["pt"], PARAM_IN_NAME,
+                                            by_field["en"], by_field["key"]))
+        if problems:
+            msg += u" {} bloqueio(s) e {} erro(s) - veja o resumo.".format(len(blocks), len(errors))
+        if VW is not None:
+            VW.reload(VROWS, INC, NOTX, make_info_text(),
+                      msg + u" Tabelas atualizadas - grave mais ou clique em Finalizar.")
+            summary = (u"Concluído: {} parâmetro(s) gravado(s) e conferido(s) "
+                       u"(Description {} · {} {} · Keynote {})\n"
+                       u"Ignorados (não marcados / sem alteração): {}\n"
+                       u"Bloqueados (somente leitura, emprestado, parâmetro ausente): {}\n"
+                       u"Erros (Revit recusou ou desfez): {}").format(
+                n_saved, by_field["pt"], PARAM_IN_NAME, by_field["en"], by_field["key"],
+                n_ignored, len(blocks), len(errors))
+            for title, lst in ((u"Bloqueados", blocks), (u"Erros", errors)):
+                if lst:
+                    summary += u"\n\n{}:\n".format(title) + u"\n".join(
+                        u"• {} - {}".format(w, why) for w, why, _k in lst[:10])
+                    if len(lst) > 10:
+                        summary += u"\n• ... e mais {} (ver log)".format(len(lst) - 10)
+            if not problems and n_saved == 0:
+                summary += (u"\n\nNada foi alterado: as linhas marcadas não tinham valor "
+                            u"novo para gravar (Excel vazio ou igual ao modelo).")
+            _tell(VW, summary, warn=bool(problems))
+    except Exception:
+        LOG.exc(u"save_run")
+        raise
+    finally:
+        try:
+            if VW is not None:
+                VW.b_apply.IsEnabled = True
+        except Exception:
+            pass
+
+
+def refresh_run():
+    """Botão 'Atualizar' (via ExternalEvent): relê o modelo e refaz as tabelas,
+    exatamente como a reanálise depois de gravar. Só leitura - sem transação."""
+    global MODEL
+    LOG.begin(u"Atualizar tabelas", u"releitura do modelo (Excel e TXT não mudam)")
+    try:
+        MODEL = collect_model(use_view, opts["materials"])
+        analyze_model()
+        LOG.end(u"Atualizar tabelas", u"tabela 1: {} · tabela 2: {} · tabela 3: {}".format(
+            len(VROWS), len(INC), len(NOTX)))
+        if VW is not None:
+            VW.reload(VROWS, INC, NOTX, make_info_text(),
+                      u"Tabelas atualizadas com o modelo às {}. Nada foi gravado.".format(
+                          datetime.now().strftime("%H:%M:%S")))
+    except Exception as ex:
+        LOG.exc(u"Atualizar tabelas")
+        LOG.end(u"Atualizar tabelas", u"FALHOU")
+        try:
+            if VW is not None:
+                VW.viewinfo.Text = (u"Não foi possível atualizar as tabelas: {} (detalhes no "
+                                    u"log). Clique em Atualizar de novo antes de gravar.".format(
+                                        to_unicode(ex)))
+        except Exception:
+            pass
+    finally:
+        try:
+            if VW is not None:
+                VW.b_refresh.IsEnabled = True
+        except Exception:
+            pass
 
 
 # ------------------------------------------------------------------
@@ -2636,11 +3718,11 @@ def save_run(chosen_rows, chosen_inc):
 #   modelo. Registro = TIPO (família + tipo) usado por elementos do modelo
 #   em categoria com parâmetro Keynote (mesmo universo das tabelas).
 #   Critérios por registro:
-#     falta ........ Keynote vazio · Description vazia · Descrição IN vazia
+#     falta ........ Keynote vazio · Description vazia · Descrição em IN vazia
 #     divergência .. Keynote não está no Excel · Description diferente do
-#                    Excel · Descrição IN diferente do Excel (só compara quando
+#                    Excel · Descrição em IN diferente do Excel (só compara quando
 #                    os DOIS lados têm valor)
-#     não verificado parâmetro Descrição IN inexistente no tipo, ou Excel sem
+#     não verificado parâmetro Descrição em IN inexistente no tipo, ou Excel sem
 #                    descrição para comparar com a do modelo
 #   Situação (uma por registro, nesta ordem): Informação faltante >
 #   Divergência > Não verificado > Correto.
@@ -2650,7 +3732,9 @@ DASH = {"records": [], "analyzedAt": u""}
 
 
 def classify_type(t, info):
-    """Situação de UM tipo para o dashboard (só leitura)."""
+    """Situação de UM tipo para o dashboard (só leitura). 'Descrição em IN'
+    inexistente no tipo é 'não aplicável': não conta como falta, divergência
+    nem 'não verificado'."""
     key, desc, en, has_in, _missing = type_status(t)
     rec = XL["by_key"].get(key) if key else None
     missing, diverg, unver = [], [], []
@@ -2658,9 +3742,7 @@ def classify_type(t, info):
         missing.append(u"Keynote vazio")
     if not desc:
         missing.append(u"Description vazia")
-    if not has_in:
-        unver.append(u"Parâmetro {} não existe no tipo".format(PARAM_IN_NAME))
-    elif not en:
+    if has_in and not en:
         missing.append(u"{} vazia".format(PARAM_IN_NAME))
     if key and rec is None:
         diverg.append(u"Keynote não está no Excel")
@@ -2683,7 +3765,8 @@ def classify_type(t, info):
         status = "ok"
     return {"id": eid_int(t.Id), "category": info["category"], "family": family_name(t),
             "type": elem_name(t), "count": len(info["ids"]), "key": key,
-            "pt": desc, "en": en, "hasIn": has_in, "inExcel": rec is not None,
+            "pt": desc, "en": en, "hasIn": has_in, "inNA": not has_in,
+            "inExcel": rec is not None,
             "xlRow": rec["row"] if rec is not None else None,
             "xlPt": rec["pt"] if rec is not None else u"",
             "xlEn": rec["en"] if rec is not None else u"",
@@ -2715,6 +3798,7 @@ def build_dashboard_data():
                    "diverg": by["diverg"], "unverified": by["unverified"],
                    "evaluated": evaluated, "flagMissing": flag_missing,
                    "flagDiverg": flag_diverg,
+                   "inNA": len([r for r in recs if r.get("inNA")]),
                    "instances": sum(r["count"] for r in recs)},
         "occurrences": [{"label": k, "group": v[0], "count": v[1]} for k, v in occ.items()],
         "records": recs,
@@ -2741,145 +3825,540 @@ def write_dashboard():
 # 9. Remove as cores que as versões anteriores deixaram no modelo e abre a
 #    tabela de verificação (NÃO modal)
 # ------------------------------------------------------------------
+# vistas em que as versões antigas pintavam (vistas de modelo); folhas, tabelas,
+# legendas e vistas de desenho nunca recebiam cor
+_CLEANUP_VIEW_TYPES = ("FloorPlan", "CeilingPlan", "EngineeringPlan", "AreaPlan", "Section",
+                       "Elevation", "ThreeD", "Detail")
+CLEANUP_BUDGET_S = 90        # tempo máximo por execução; o restante fica para a próxima
+
+
 def cleanup_old_colors():
-    """Na 1ª execução desta versão (por documento) procura em TODAS as vistas;
-    depois, só na vista ativa e nas vistas anotadas pela versão anterior."""
-    done_mark = _colors_log_path("keynotes_cores_limpeza")
+    """Remove as cores que versões ANTIGAS deste comando deixaram no modelo.
+    - Só confere elementos que essas versões pintavam (instâncias de tipos com
+      parâmetro Keynote, em categorias de modelo) e só em vistas de modelo.
+    - Varredura completa uma vez por documento, em partes de até
+      CLEANUP_BUDGET_S segundos (o progresso fica salvo); depois, só a vista
+      ativa e as vistas anotadas pela versão antiga.
+    - Pergunta antes de limpar. Falhas vão para o log e não param o comando."""
+    LOG.begin(u"Limpeza de cores antigas")
+    state_path = _colors_log_path("keynotes_cores_limpeza")
     old_log = _colors_log_path()
+    state = {"complete": False, "scanned": []}
+    try:
+        if state_path and os.path.isfile(state_path):
+            with codecs.open(state_path, "r", encoding="utf-8") as f:
+                st = json.load(f)
+            # arquivo da versão anterior ({"done": data}) = varredura já feita
+            state["complete"] = bool(st.get("complete", "done" in st))
+            state["scanned"] = list(st.get("scanned", []))
+    except Exception:
+        LOG.exc(u"Limpeza: leitura do estado")
     logged = set()
     if old_log and os.path.isfile(old_log):
         try:
             with codecs.open(old_log, "r", encoding="utf-8") as f:
                 logged = set(int(v) for v in json.load(f).get("views", {}).keys())
         except Exception:
-            logged = set()
-    first = not (done_mark and os.path.isfile(done_mark))
-    if first:
-        views = graphic_views()
-    else:
-        views = [v for v in graphic_views()
-                 if eid_int(v.Id) in logged or eid_int(v.Id) == eid_int(active_view.Id)]
-    if not views:
-        found = []
-    elif len(views) > 3:
-        with forms.ProgressBar(title=u"Procurando cores antigas do comando nas vistas "
-                                     u"({value} de {max_value})") as pb:
-            found = find_old_highlight(views, pb)
-    else:
-        found = find_old_highlight(views)
+            LOG.exc(u"Limpeza: leitura das vistas anotadas")
 
-    def mark_done():
-        for path in (old_log,):
+    allowed = set(getattr(DB.ViewType, n) for n in _CLEANUP_VIEW_TYPES
+                  if hasattr(DB.ViewType, n))
+    views = [v for v in graphic_views() if v.ViewType in allowed]
+    if state["complete"]:
+        views = [v for v in views
+                 if eid_int(v.Id) in logged or eid_int(v.Id) == eid_int(active_view.Id)]
+    else:
+        done = set(state["scanned"])
+        views = [v for v in views if eid_int(v.Id) not in done]
+    candidates = set()
+    for info in scan_types():
+        candidates.update(eid_int(i) for i in info["ids"])
+    LOG.info(u"Limpeza: {} vista(s) para conferir · {} elemento(s) candidato(s) · "
+             u"varredura completa já feita: {}".format(len(views), len(candidates),
+                                                      state["complete"]))
+
+    found, scanned, t0 = [], [], time.time()
+    pb = None
+    try:
+        if len(views) > 3:
+            pb = forms.ProgressBar(title=u"Procurando cores antigas do comando nas vistas "
+                                         u"({value} de {max_value})")
+            pb.__enter__()
+        for n, v in enumerate(views):
+            if time.time() - t0 > CLEANUP_BUDGET_S:
+                LOG.warn(u"Limpeza: tempo limite atingido - {} vista(s) ficam para a "
+                         u"próxima execução".format(len(views) - n))
+                break
+            if pb is not None:
+                try:
+                    pb.update_progress(n + 1, len(views))
+                except Exception:
+                    pass
+            ids = []
             try:
-                if path and os.path.isfile(path):
-                    os.remove(path)
+                in_view = [i for i in DB.FilteredElementCollector(doc, v.Id)
+                           .WhereElementIsNotElementType().ToElementIds()
+                           if eid_int(i) in candidates]
+                for eid in in_view:
+                    try:
+                        if is_old_highlight(v.GetElementOverrides(eid)):
+                            ids.append(eid)
+                    except Exception:
+                        continue
+            except Exception:
+                LOG.exc(u"Limpeza: vista {} ({})".format(eid_int(v.Id), to_unicode(v.Name)))
+            scanned.append(eid_int(v.Id))
+            if ids:
+                found.append((v, ids))
+                LOG.info(u"Limpeza: vista '{}' - {} elemento(s) com cor antiga".format(
+                    to_unicode(v.Name), len(ids)))
+    finally:
+        if pb is not None:
+            try:
+                pb.__exit__(None, None, None)
             except Exception:
                 pass
-        try:
-            if done_mark:
-                with codecs.open(done_mark, "w", encoding="utf-8") as f:
-                    json.dump({"done": datetime.now().isoformat()}, f)
-        except Exception:
-            pass
 
-    if not found:
-        mark_done()
-        return
-    n = sum(len(ids) for _v, ids in found)
-    lines = [u"  • {}: {} elemento(s)".format(to_unicode(v.Name), len(ids))
-             for v, ids in found[:12]]
-    if len(found) > 12:
-        lines.append(u"  • ... e mais {} vista(s)".format(len(found) - 12))
-    if forms.alert(u"Remover as cores deixadas no modelo por versões anteriores deste comando?",
-                   sub_msg=u"{} elemento(s) em {} vista(s):\n\n{}\n\nA sobreposição gráfica desses "
-                   u"elementos volta ao padrão da vista."
-                   .format(n, len(found), u"\n".join(lines)), title=ALERT_TITLE, yes=True, no=True):
-        ok, bad = clear_old_highlight(found)
-        output.print_md(u"- Cores antigas do comando removidas: **{}** elemento(s){}.".format(
-            ok, u" · {} não puderam ser limpos (vista emprestada por outro usuário?)"
-            .format(bad) if bad else u""))
-        if not bad:
-            mark_done()
-    else:
-        output.print_md(u"- :warning: {} elemento(s) ainda com as cores antigas do comando "
-                        u"(pergunta de novo na próxima execução).".format(n))
+    if not state["complete"]:
+        state["scanned"] = sorted(set(state["scanned"]) | set(scanned))
+        state["complete"] = len(scanned) == len(views)
+    try:
+        if state_path:
+            with codecs.open(state_path, "w", encoding="utf-8") as f:
+                json.dump({"complete": state["complete"], "scanned": state["scanned"],
+                           "date": datetime.now().isoformat()}, f)
+    except Exception:
+        LOG.exc(u"Limpeza: gravar estado")
+
+    if found:
+        n = sum(len(ids) for _v, ids in found)
+        lines = [u"  • {}: {} elemento(s)".format(to_unicode(v.Name), len(ids))
+                 for v, ids in found[:12]]
+        if len(found) > 12:
+            lines.append(u"  • ... e mais {} vista(s)".format(len(found) - 12))
+        if forms.alert(u"Remover as cores deixadas no modelo por versões anteriores deste comando?",
+                       sub_msg=u"{} elemento(s) em {} vista(s):\n\n{}\n\nA sobreposição gráfica desses "
+                       u"elementos volta ao padrão da vista."
+                       .format(n, len(found), u"\n".join(lines)), title=ALERT_TITLE, yes=True, no=True):
+            ok, bad = clear_old_highlight(found)
+            LOG.info(u"Limpeza: {} elemento(s) limpos, {} falha(s)".format(ok, bad))
+            if not bad and old_log and os.path.isfile(old_log):
+                try:
+                    os.remove(old_log)
+                except Exception:
+                    pass
+        else:
+            LOG.info(u"Limpeza: usuário não quis limpar {} elemento(s)".format(n))
+    LOG.end(u"Limpeza de cores antigas", u"{} vista(s) conferida(s) em {:.1f} s · {} com cor "
+            u"antiga".format(len(scanned), time.time() - t0, len(found)))
 
 
-def make_keynote_txt():
+def make_keynote_txt(reload_txt=True):
     """Ao executar a 1ª aba: gera o TXT de Keynote a partir do Excel (mesma
-    estrutura de sempre) e carrega no projeto. Se o arquivo já existe, é
-    SEMPRE substituído, sem perguntar; antes, o atual é copiado para um backup
-    com data/hora na mesma pasta (write_keynote_txt). -> mensagem"""
+    estrutura de sempre), grava em UTF-16 LE com BOM e recarrega no projeto.
+    Arquivo existente: substituído sem perguntar, depois de copiado e conferido
+    em <pasta>\\<nome>_obsoletos. Caractere não representável (controle, par
+    quebrado): o TXT NÃO é gravado e os caracteres são listados. Só diz
+    "gravado em UTF-16 LE, com BOM, e validado" depois de conferir os bytes do
+    arquivo, e "recarregado" depois que o Revit confirma. -> mensagem."""
     path = opts["txt_path"]
+    LOG.begin(u"Geração do TXT", path)
     try:
         text, warns = build_keynote_txt()
     except Exception as ex:
-        msg = u"TXT de Keynote não gerado: {}".format(to_unicode(ex))
+        LOG.exc(u"Geração do TXT")
         forms.alert(u"O TXT de Keynote não foi gerado.", sub_msg=to_unicode(ex), title=ALERT_TITLE)
-        return msg
+        return u"TXT de Keynote NÃO gerado: {}".format(to_unicode(ex))
+    entries = TXT_BUILD["entries"]
+    n_entries = len(entries)
+    for w in warns:
+        LOG.warn(u"TXT: " + w)
+    LOG.end(u"Geração do TXT", u"{} entrada(s) · {} aviso(s)".format(n_entries, len(warns)))
+    if n_entries == 0:
+        return u"TXT de Keynote NÃO gerado: nenhuma entrada no Excel (o arquivo atual foi mantido)."
+    # caracteres: confere ANTES de tocar em qualquer arquivo
+    bad = txt_char_report(entries)
+    if bad:
+        for b in bad:
+            LOG.error(u"TXT: caractere não representável {} '{}' na keynote {} ({})".format(
+                b["code"], b["char"], b["key"], b["origin"]))
+        lines = [u"• '{}' ({}) em {} - {}{}".format(
+            b["char"], b["code"], b["key"] or u"(sem chave)", b["origin"],
+            u" · {}".format(b["hint"]) if b["hint"] else u"")
+            for b in bad[:15]]
+        if len(bad) > 15:
+            lines.append(u"• ... e mais {} (ver log)".format(len(bad) - 15))
+        forms.alert(u"O TXT de Keynote NÃO foi gravado: há caracteres que não podem ir "
+                    u"para o arquivo (controles ou caracteres corrompidos).",
+                    sub_msg=u"Corrija no Excel, salve e use Voltar > Executar. O TXT anterior "
+                            u"continua como estava.\n\n" + u"\n".join(lines),
+                    title=ALERT_TITLE)
+        return (u"TXT de Keynote NÃO gravado: {} caractere(s) não representável(is) no Excel "
+                u"(ex.: {} em {}). O TXT anterior continua carregado.".format(
+                    len(bad), bad[0]["code"], bad[0]["key"]))
+    LOG.begin(u"Gravação do TXT")
     try:
-        backup, enc = write_keynote_txt(path, text)
+        backup, enc, previous = write_keynote_txt(path, text, n_entries)
     except Exception as ex:
-        msg = u"TXT de Keynote não gravado: {}".format(to_unicode(ex))
-        forms.alert(u"O TXT de Keynote não foi gravado.", sub_msg=to_unicode(ex), title=ALERT_TITLE)
-        return msg
-    ok, info = load_keynote_txt(path)
-    msg = u"TXT de Keynote gravado ({}){} e {}.{}".format(
-        enc, u", backup: " + os.path.basename(backup) if backup else u"",
-        info if ok else u"NÃO carregado no projeto: " + info,
+        LOG.exc(u"Gravação do TXT")
+        forms.alert(u"O TXT de Keynote não foi gravado (o arquivo anterior foi mantido).",
+                    sub_msg=to_unicode(ex), title=ALERT_TITLE)
+        LOG.end(u"Gravação do TXT", u"FALHOU")
+        return u"TXT de Keynote NÃO gravado: {}".format(to_unicode(ex))
+    LOG.end(u"Gravação do TXT")
+    if reload_txt:
+        ok, info = load_keynote_txt(path, n_entries)
+    else:
+        ok, info = True, u"NÃO recarregado (modo de diagnóstico)"
+        LOG.warn(u"TXT: recarga pulada (modo de diagnóstico)")
+    # a frase da codificação só aparece porque write_keynote_txt conferiu os
+    # bytes gravados (BOM FF FE, texto igual ao gerado, estrutura)
+    msg = u"TXT de Keynotes gravado em {}, e validado com sucesso{} · {}.{}".format(
+        enc, u" · anterior ({}) em {}".format(previous, _backup_label(backup))
+        if backup else u"", info if ok else u"NÃO recarregado no projeto: " + info,
         u"  {} aviso(s): {}".format(len(warns), u"; ".join(warns[:3])) if warns else u"")
     if not ok:
-        forms.alert(u"O TXT de Keynote foi gravado, mas não foi carregado no projeto.",
+        restored = restore_txt_after_failed_reload(path, backup)
+        msg += u" " + restored
+        forms.alert(u"O TXT de Keynote NÃO foi recarregado no projeto - o projeto continua "
+                    u"com a tabela de keynotes anterior.",
                     sub_msg=msg, title=ALERT_TITLE)
     return msg
+
+
+def restore_txt_after_failed_reload(path, backup):
+    """TXT e modelo não são atômicos: se o Revit não aceitou o TXT novo, o
+    arquivo volta a ser o anterior (o que o projeto ainda usa). O TXT recusado
+    é guardado em <nome>_obsoletos\<nome>_<data>_REJEITADO.txt. Nada é apagado.
+    -> mensagem"""
+    if not backup:
+        return (u"Não havia TXT anterior para restaurar: o arquivo novo ficou na pasta, "
+                u"mas o projeto não o carregou.")
+    try:
+        obs, rej = obsolete_backup_path(path)
+        rej = os.path.splitext(rej)[0] + u"_REJEITADO.txt"
+        File.Copy(path, rej, False)
+        File.Copy(backup, path, True)
+        if _bytes_of(path) != _bytes_of(backup):
+            raise IOError(u"o TXT restaurado não confere com o backup")
+        LOG.warn(u"TXT: recarga falhou - anterior restaurado de {} · recusado guardado em {}"
+                 .format(backup, rej))
+        return (u"O TXT anterior foi restaurado (igual ao projeto); o gerado ficou em "
+                u"{}.".format(_backup_label(rej)))
+    except Exception as ex:
+        LOG.exc(u"TXT: restaurar após recarga falhar")
+        return (u"ATENÇÃO: não foi possível restaurar o TXT anterior ({}). Copie manualmente "
+                u"{} sobre {}.".format(_io_message(ex), backup, path))
+
+
+
+
+def _step(name, fn, *args):
+    """Roda uma etapa do fluxo principal com início/fim no log.
+    -> (ok, resultado)"""
+    LOG.begin(name)
+    try:
+        res = fn(*args)
+    except Exception as ex:
+        LOG.exc(name)
+        LOG.end(name, u"FALHOU")
+        forms.alert(u"Falha na etapa: {}".format(name),
+                    sub_msg=u"{}\n\nDetalhes no log:\n{}".format(
+                        to_unicode(ex), LOG.path or u"(log indisponível)"),
+                    title=ALERT_TITLE)
+        return False, None
+    LOG.end(name)
+    return True, res
 
 
 def start_session(new_opts):
     """Lê o Excel e o modelo com as opções da 1ª aba, analisa e abre a 2ª aba.
     Roda no início do comando e de novo pelo botão Voltar (via ExternalEvent).
-    -> True se a janela abriu."""
+    Cada etapa vai para o log com início e fim. -> True se a janela abriu."""
     global opts, XLSX_PATH, XL, MODEL, FILE_TEXT, active_view, info_text, VW
     global not_written
     opts = new_opts
     XLSX_PATH = opts["xlsx"]
     active_view = doc.ActiveView
-    try:
-        XL = read_excel(XLSX_PATH)
-    except Exception as ex:
-        forms.alert(u"Não foi possível ler a planilha.", sub_msg=u"{}\n\n{}".format(
-            XLSX_PATH, to_unicode(ex)), title=ALERT_TITLE)
+    LOG.info(u"Sessão: Excel={} · TXT={}".format(XLSX_PATH, opts["txt_path"]))
+    # 1-2. Excel (leitura + cabeçalhos validados em read_excel)
+    ok, xl = _step(u"1. Leitura do Excel", read_excel, XLSX_PATH)
+    if not ok:
         return False
-    txt_msg = make_keynote_txt()          # TXT do Excel -> carrega no projeto
-    MODEL = collect_model(use_view, opts["materials"])
+    XL = xl
+    LOG.info(u"Excel: aba '{}' · {} linha(s) · {} keynote(s) distintos · {} prefixo(s) em "
+             u"DADOS".format(XL.get("sheet"), len(XL.get("rows", [])), len(XL["by_key"]),
+                             len(XL.get("prefix_map", {}))))
+    # 3-6. TXT: geração, backup, gravação, recarga (make_keynote_txt registra cada uma)
+    ok, txt_msg = _step(u"3-6. TXT de Keynote", make_keynote_txt,
+                        not DIAG["skip_txt_reload"])
+    if not ok:
+        txt_msg = u"TXT de Keynote: falha (ver log)."
+    # 7. Coleta do modelo (depois da recarga: textos do TXT relidos do projeto)
+    ok, model = _step(u"7. Coleta do modelo", collect_model, use_view, opts["materials"])
+    if not ok:
+        return False
+    MODEL = model
     FILE_TEXT = keynote_file_texts()
-    offer_in_binding()
+    LOG.info(u"Modelo: {} keynote(s) em {} tipo(s) · {} entrada(s) na tabela de keynotes".format(
+        len(MODEL), sum(len(v) for v in MODEL.values()), len(FILE_TEXT)))
     not_written = {}
     del VERIFY_LOG[:]
     del INC_LOG[:]
-    analyze_model()
+    # 8-9. Comparação e dados das três tabelas
+    ok, _r = _step(u"8-9. Comparação e tabelas", analyze_model)
+    if not ok:
+        return False
     info_text = make_info_text()
     if not VROWS and not INC:
         info_text += u"  ·  Nada a atualizar: o modelo já coincide com o Excel."
-    VW = VerifyWindow(VROWS, INC, NOTX, info_text)
+    # 10. Interface
+    ok, win = _step(u"10. Abertura da janela", VerifyWindow, VROWS, INC, NOTX, info_text)
+    if not ok:
+        return False
+    VW = win
     VW.viewinfo.Text = txt_msg
-    VW.Show()
+    try:
+        VW.Show()
+        LOG.info(u"Janela de verificação exibida")
+        VW.engine_probe()
+    except Exception:
+        LOG.exc(u"Exibir janela")
+        raise
     return True
 
 
 def go_back():
     """Botão Voltar: reabre a 1ª aba com as opções atuais e, se confirmada,
     analisa de novo. Cancelar na 1ª aba encerra o comando."""
-    new_opts = ask_options({"xlsx": opts["xlsx"], "txt_path": opts["txt_path"]})
+    LOG.info(u"Voltar para a 1ª aba")
+    new_opts = ask_options({"xlsx": opts["xlsx"], "txt_path": opts["txt_path"]}
+                           if opts else None)
     if new_opts is not None:
         start_session(new_opts)
 
 
-_first_opts = ask_options()
-if _first_opts is None:
-    script.exit()
+# ------------------------------------------------------------------
+# 10. Modo de diagnóstico (Shift+Clique no botão)
+#   Roda as etapas separadas para descobrir onde um erro acontece. Use numa
+#   CÓPIA do modelo. Tudo vai para o log.
+# ------------------------------------------------------------------
+DIAG_OPTIONS = OrderedDict([
+    ("A", u"A · Só a limpeza das cores antigas"),
+    ("B", u"B · Gerar e gravar o TXT (sem recarregar no projeto)"),
+    ("C", u"C · Recarregar o TXT atual no projeto (sem abrir a janela)"),
+    ("D", u"D · Coletar e analisar o modelo (sem abrir a janela)"),
+    ("E", u"E · Abrir a janela com dados de teste (não toca no modelo)"),
+    ("F", u"F · Execução completa com log detalhado"),
+    ("G", u"G · Completa SEM limpeza de cores e SEM recarga do TXT"),
+    ("H", u"H · Completa com títulos de grupo simples (teste da interface)"),
+    ("I", u"I · Teste de gravação da Description (grava e DESFAZ - não altera o modelo)"),
+    ("L", u"Abrir a pasta dos logs"),
+])
+
+
+def _demo_data():
+    """Linhas fictícias para testar só a interface (sem ler o modelo)."""
+    global XL
+    XL = {"by_key": {u"RE01": {"key": u"RE01", "pt": u"Revestimento cerâmico",
+                               "en": u"Ceramic tile", "row": 5, "obs": u""}},
+          "prefix_map": {u"RE": (u"REVESTIMENTO", u"MATERIAIS")}, "rows": [],
+          "sheet": u"MATERIAIS", "kn_headers": [], "dados_rows": [], "cat_order": []}
+    h = {"id": -1, "family": u"Basic Wall", "name": u"Parede teste", "category": u"Walls",
+         "count": 0, "en_p": None, "en": None, "kind": "type", "key": u"RE01"}
+    rows = [{"key": u"RE01", "h": h, "hs": [h], "items": [], "category": u"Walls",
+             "pt_old": u"", "en_old": None, "pt_new": u"Revestimento cerâmico",
+             "en_new": None, "over": set(), "blocked": {}, "enabled": True, "dir": "model"}]
+    for r in rows:
+        r["view"] = row_view(r)
+        r["sel"], r["rid"] = True, 0
+    base = {"t": None, "id": -2, "category": u"Floors", "family": u"Floor", "count": 0,
+            "hasIn": False, "sel": False, "check": u"", "status": u""}
+    inc = [dict(base, rid=0, name=u"Piso sem keynote", key0=u"", pt0=u"", en0=u"",
+                key=u"", pt=u"", en=u"")]
+    notx = [dict(base, rid=0, name=u"Piso ZZ", key0=u"ZZ01", pt0=u"Teste", en0=u"",
+                 key=u"ZZ01", pt=u"Teste", en=u"", check=u"Keynote ZZ01 não está no Excel")]
+    for r in inc:
+        verify_incomplete(r, autofill=False)
+    return rows, inc, notx
+
+
+def write_selftest(source):
+    """Teste de gravação SEM alterar o modelo: grava um valor de teste na
+    Description (e na Descrição em IN, se existir) de um tipo, relê e DESFAZ a
+    transação (RollBack). -> lista de linhas para o relatório/log."""
+    lines = [u"Executor: {}".format(source)]
+    target = None
+    for info in scan_types():
+        try:
+            p = desc_param(info["t"])
+            if p is not None and not p.IsReadOnly and not owned_by_other(info["t"]):
+                target = (info, p)
+                break
+        except Exception:
+            continue
+    if target is None:
+        return lines + [u"Nenhum tipo com Description editável foi encontrado no modelo."]
+    info, p = target
+    t = info["t"]
+    lines.append(u"Tipo usado: {} · {} · {} (id {})".format(
+        info["category"], family_name(t), elem_name(t), eid_int(t.Id)))
+    before_pt = param_text(p)
+    ip = in_param(t)
+    before_en = param_text(ip) if ip is not None else None
+    val = u"OCA_TESTE_{}".format(datetime.now().strftime("%H%M%S"))
+    tx = DB.Transaction(doc, u"Teste de gravação - Keynotes (desfeito)")
+    try:
+        st = tx.Start()
+        lines.append(u"Transaction.Start: {}".format(st))
+        ok = p.Set(val)
+        lines.append(u"Description.Set: {}".format(ok))
+        if ip is not None and not ip.IsReadOnly:
+            lines.append(u"{}.Set: {}".format(PARAM_IN_NAME, ip.Set(val)))
+        else:
+            lines.append(u"{}: não aplicável neste tipo".format(PARAM_IN_NAME))
+        try:
+            doc.Regenerate()
+        except Exception:
+            pass
+        now = param_text(desc_param(t))
+        lines.append(u"Releitura da Description: {}".format(
+            u"OK (valor de teste gravado)" if now == val else u"FALHOU - mostra '{}'".format(now)))
+    except Exception as ex:
+        LOG.exc(u"Teste de gravação")
+        lines.append(u"ERRO: {}".format(to_unicode(ex)))
+    finally:
+        try:
+            if tx.HasStarted() and not tx.HasEnded():
+                tx.RollBack()
+                lines.append(u"RollBack: feito (o modelo não foi alterado)")
+        except Exception as ex:
+            lines.append(u"RollBack: ERRO {}".format(to_unicode(ex)))
+    after_pt = param_text(desc_param(t))
+    after_en = param_text(ip) if ip is not None else None
+    lines.append(u"Valores depois do teste: {}".format(
+        u"iguais aos originais" if (after_pt, after_en) == (before_pt, before_en)
+        else u"ATENÇÃO - diferentes dos originais"))
+    for ln in lines:
+        LOG.info(u"Teste de gravação: " + ln)
+    return lines
+
+
+def diagnostic_write_test():
+    """Opção I: testa a gravação direto no comando e depois pelo mesmo caminho
+    do botão 'Atualizar descrições' (ExternalEvent / Idling)."""
+    env = u"Revit {} · build {} · pyRevit {}".format(
+        ENV_INFO.get("revit_update"), ENV_INFO.get("revit_build"), ENV_INFO.get("pyrevit"))
+    direct = write_selftest(u"direto no comando")
+    t0 = time.time()
+
+    def via_event():
+        lines = write_selftest(u"ação externa (mesmo caminho do botão)")
+        lines.insert(1, u"Tempo até executar: {:.1f} s".format(time.time() - t0))
+        forms.alert(u"Teste de gravação - parte 2 de 2 (caminho do botão)",
+                    sub_msg=u"{}\n\n{}\n\nLog: {}".format(env, u"\n".join(lines), LOG.path),
+                    title=ALERT_TITLE)
+    queued = run_in_revit(via_event, u"Teste de gravação")
+    forms.alert(u"Teste de gravação - parte 1 de 2 (direto no comando)",
+                sub_msg=u"{}\n\n{}\n\n{}".format(
+                    env, u"\n".join(direct),
+                    u"A parte 2 abre sozinha em seguida. Se ela NÃO aparecer em até 10 s, "
+                    u"o Revit não está executando ações externas - me envie o log."
+                    if queued else u"A parte 2 NÃO pôde ser enfileirada (ver log)."),
+                title=ALERT_TITLE)
+
+
+def diagnostic_mode():
+    LOG.info(u"Modo de diagnóstico")
+    pick = forms.CommandSwitchWindow.show(
+        list(DIAG_OPTIONS.values()),
+        message=u"Modo de diagnóstico (versão {}) - use numa CÓPIA do modelo. Log: {}".format(
+            SCRIPT_VERSION, LOG.path or u"(indisponível)"))
+    if not pick:
+        return
+    code = [k for k, v in DIAG_OPTIONS.items() if v == pick][0]
+    LOG.info(u"Diagnóstico: opção {}".format(pick))
+    global opts, XLSX_PATH, XL, MODEL, FILE_TEXT, VW
+    if code == "L":
+        folder = os.path.dirname(LOG.path) if LOG.path else None
+        if folder and not open_in_browser(folder):
+            forms.alert(u"Pasta dos logs:", sub_msg=folder, title=ALERT_TITLE)
+        return
+    if code == "I":
+        _step(u"I. Teste de gravação", diagnostic_write_test)
+        return
+    if code == "A":
+        ok, _r = _step(u"A. Limpeza de cores antigas", cleanup_old_colors)
+        forms.alert(u"Diagnóstico A {}.".format(u"concluído" if ok else u"FALHOU"),
+                    sub_msg=u"Detalhes (vistas conferidas, tempo, elementos) no log:\n{}".format(
+                        LOG.path), title=ALERT_TITLE)
+    elif code == "E":
+        rows, inc, notx = _demo_data()
+        VW = VerifyWindow(rows, inc, notx, u"DADOS DE TESTE - nada é gravado no modelo.",
+                          demo=True)
+        VW.Show()
+        return
+    elif code in ("F", "G", "H"):
+        DIAG["skip_cleanup"] = code == "G"
+        DIAG["skip_txt_reload"] = code == "G"
+        DIAG["simple_group_rows"] = code == "H"
+        main()
+        return
+    else:
+        o = ask_options()
+        if o is None:
+            return
+        opts, XLSX_PATH = o, o["xlsx"]
+        if code in ("B", "D"):
+            ok, xl = _step(u"Leitura do Excel", read_excel, XLSX_PATH)
+            if not ok:
+                return
+            XL = xl
+        if code == "B":
+            ok, msg = _step(u"B. TXT sem recarga", make_keynote_txt, False)
+        elif code == "C":
+            ok, res = _step(u"C. Recarga do TXT", load_keynote_txt, o["txt_path"])
+            msg = (u"Carregado: " if res and res[0] else u"NÃO carregado: ") + (
+                res[1] if res else u"")
+        else:
+            ok, model = _step(u"D. Coleta do modelo", collect_model, use_view, False)
+            if ok:
+                MODEL = model
+                FILE_TEXT = keynote_file_texts()
+                ok, _r = _step(u"D. Análise", analyze_model)
+            msg = make_info_text() if ok else u"falhou"
+        forms.alert(u"Diagnóstico {} concluído.".format(code),
+                    sub_msg=u"{}\n\nLog: {}".format(msg, LOG.path), title=ALERT_TITLE)
+    LOG.info(u"Diagnóstico {} concluído".format(code))
+
+
+def main():
+    first = ask_options()
+    if first is None:
+        LOG.info(u"Cancelado na 1ª aba")
+        return
+    if not DIAG["skip_cleanup"]:
+        try:
+            cleanup_old_colors()
+        except Exception:
+            LOG.exc(u"Limpeza de cores antigas")
+    else:
+        LOG.warn(u"Limpeza de cores antigas pulada (diagnóstico)")
+    start_session(first)
+
+
+ENV_INFO = revit_env_info()
+LOG.info(u"===== Início: {} versão {} ({}) · log: {} =====".format(
+    TOOL_TITLE, SCRIPT_VERSION, u"diagnóstico" if CONFIG_MODE else u"normal", LOG.path))
 try:
-    cleanup_old_colors()
+    if CONFIG_MODE:
+        diagnostic_mode()
+    else:
+        main()
+except SystemExit:
+    raise
 except Exception as _ex:
-    output.print_md(u"- :warning: Não foi possível verificar as cores antigas: {}".format(
-        to_unicode(_ex)))
-start_session(_first_opts)
+    LOG.exc(u"Fluxo principal")
+    forms.alert(u"O comando encontrou um erro e foi interrompido.",
+                sub_msg=u"{}\n\nDetalhes no log:\n{}".format(to_unicode(_ex), LOG.path),
+                title=ALERT_TITLE)
