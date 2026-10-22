@@ -9,10 +9,10 @@
 # Onde cada dado mora:
 #   * Keynote ........ parâmetro nativo KEYNOTE dos TIPOS usados no modelo.
 #   * Descrição PT ... parâmetro nativo "Description" do tipo.
-#   * Descrição em IN ... parâmetro compartilhado "Descrição em IN" do tipo, associado
-#                      pelo GUID 70307f6e-3b31-4049-bed4-62dfc3570fec
-#                      (OCA_Parametros_Template.txt). OPCIONAL: onde não existe
-#                      (ou tem outro GUID) o campo é "Não aplicável" e a
+#   * Descrição em IN ... parâmetro "Descrição em IN" do tipo, localizado pelo
+#                      NOME (qualquer GUID); tem de ser COMPARTILHADO e de texto.
+#                      OPCIONAL: onde não existe (ou não é compartilhado, ou há
+#                      dois com esse nome) o campo é "Não aplicável" e a
 #                      Description continua sendo atualizada. O comando nunca
 #                      cria nem vincula esse parâmetro.
 #   * Excel .......... aba MATERIAIS: colunas KEYNOTE, DESCRIÇÃO, DESCRIÇÃO IN
@@ -124,19 +124,16 @@ SHEET_NAME = u"MATERIAIS"          # aba com os keynotes
 DATA_SHEET_NAME = u"DADOS"         # aba PREFIXO -> GRUPO -> CATEGORIA
 KN_SHEET_NAME = u"KEYNOTE BÁSICO"  # aba com CATEGORIA -> lista de prefixos (topo do TXT)
 NO_GROUP = u"SEM AGRUPAMENTO"
-# Parâmetro compartilhado da descrição em inglês (OCA_Parametros_Template.txt).
-# A associação é feita pelo GUID - um parâmetro de mesmo nome com outro GUID
-# NÃO é considerado (não aparece nas tabelas/etiquetas do template).
+# Parâmetro da descrição em inglês: localizado pelo NOME (o GUID pode variar
+# de um projeto para outro); só vale se for parâmetro COMPARTILHADO de texto.
 PARAM_IN_NAME = u"Descrição em IN"
-PARAM_IN_GUID_STR = "70307f6e-3b31-4049-bed4-62dfc3570fec"
-PARAM_IN_GUID = Guid(PARAM_IN_GUID_STR)
 # opções do modo de diagnóstico (Shift+Clique no botão) - padrão = normal
 DIAG = {"skip_cleanup": False, "skip_txt_reload": False, "simple_group_rows": False}
 NOT_APPLICABLE = u"Não aplicável"   # Descrição em IN inexistente no tipo (≠ campo vazio)
 MATERIALS_LABEL = u"Materiais"     # categoria usada no relatório p/ materiais
 
 TOOL_TITLE = u"ATUALIZAÇÃO DAS DESCRIÇÕES DO MODELO POR KEYNOTE"
-SCRIPT_VERSION = u"2026.10.22c"     # aparece na janela e no log: confira se é a cópia nova
+SCRIPT_VERSION = u"2026.10.22d"     # aparece na janela e no log: confira se é a cópia nova
 # fluxo único: Excel -> Modelo (o Excel é só lido)
 MODES = OrderedDict([("to_model", u"Excel → Modelo")])
 MODE_DIRS = {"to_model": ("model",)}
@@ -926,28 +923,62 @@ def desc_param(elem):
     return None
 
 
-def in_param(elem):
-    """Parâmetro compartilhado 'Descrição em IN', localizado pelo GUID
-    (None se o parâmetro não estiver vinculado a este tipo / material)."""
+def _in_candidates(elem):
+    """Todos os parâmetros chamados 'Descrição em IN' no tipo / material."""
     try:
-        p = elem.get_Parameter(PARAM_IN_GUID)
-        if p is not None and p.StorageType == DB.StorageType.String:
-            return p
+        ps = list(elem.GetParameters(PARAM_IN_NAME))
     except Exception:
-        pass
-    return None
+        try:
+            p = elem.LookupParameter(PARAM_IN_NAME)
+            ps = [p] if p is not None else []
+        except Exception:
+            ps = []
+    return [p for p in ps if p is not None]
+
+
+def in_param_check(elem):
+    """-> (parâmetro, problema). Localiza 'Descrição em IN' pelo NOME, com
+    qualquer GUID. Só é usado se houver UM parâmetro com esse nome, e ele for
+    compartilhado e de texto. problema: None (ok, ou o tipo não tem o
+    parâmetro) ou o motivo de não usar - nesse caso nada é gravado nele."""
+    ps = _in_candidates(elem)
+    if not ps:
+        return None, None
+    if len(ps) > 1:
+        return None, u"{} parâmetros com esse nome no mesmo tipo".format(len(ps))
+    p = ps[0]
+    try:
+        shared = bool(p.IsShared)
+    except Exception:
+        shared = False
+    if not shared:
+        return None, u"não é parâmetro compartilhado"
+    try:
+        is_text = p.StorageType == DB.StorageType.String
+    except Exception:
+        is_text = False
+    if not is_text:
+        return None, u"não é parâmetro de texto"
+    return p, None
+
+
+def in_param(elem):
+    """Parâmetro 'Descrição em IN' do tipo / material (None se não existe ou
+    não pode ser usado - ver in_param_check)."""
+    return in_param_check(elem)[0]
 
 
 def in_param_clash(elem):
-    """True se existe um parâmetro chamado 'Descrição em IN' que NÃO é o
-    compartilhado do escritório (GUID diferente / parâmetro de projeto)."""
+    """True se existe 'Descrição em IN' no tipo mas ele não pode ser usado
+    (não compartilhado, não é texto ou há mais de um com esse nome)."""
+    return in_param_check(elem)[1] is not None
+
+
+def in_param_guid(p):
     try:
-        p = elem.LookupParameter(PARAM_IN_NAME)
-        if p is None:
-            return False
-        return not (p.IsShared and p.GUID == PARAM_IN_GUID)
+        return to_unicode(p.GUID)
     except Exception:
-        return False
+        return u"?"
 
 
 def is_model_category(cat):
@@ -1060,21 +1091,25 @@ FILE_TEXT = {}
 # 3b. 'Descrição em IN' é OPCIONAL
 #   O comando nunca cria nem vincula o parâmetro. Onde ele não existe, o campo
 #   é ignorado ("Não aplicável") e a Description continua sendo atualizada.
-#   Parâmetro com o MESMO NOME e GUID diferente: só aparece no diagnóstico
-#   (log e aviso), nunca recebe gravação.
+#   Localizado pelo NOME, com qualquer GUID. Se existir mas não for
+#   compartilhado, não for texto ou houver dois com esse nome no mesmo tipo,
+#   aparece no aviso do topo e no log, e nunca recebe gravação.
 # ------------------------------------------------------------------
 def in_param_stats(scan):
-    """-> {"with": n, "without": n, "clash": [categorias]} dos tipos analisados."""
-    st = {"with": 0, "without": 0, "clash": set()}
+    """-> {"with": n, "without": n, "clash": ["Categoria (motivo)"], "guids": [GUIDs
+    encontrados]} dos tipos analisados."""
+    st = {"with": 0, "without": 0, "clash": set(), "guids": set()}
     for info in scan:
-        t = info["t"]
-        if in_param(t) is not None:
+        p, why = in_param_check(info["t"])
+        if p is not None:
             st["with"] += 1
+            st["guids"].add(in_param_guid(p))
         else:
             st["without"] += 1
-            if in_param_clash(t):
-                st["clash"].add(info["category"])
+            if why:
+                st["clash"].add(u"{} ({})".format(info["category"], why))
     st["clash"] = sorted(st["clash"])
+    st["guids"] = sorted(st["guids"])
     return st
 
 
@@ -1130,7 +1165,7 @@ def where_label(h):
 def plan_to_model():
     """-> (plan, bloqueados). plan: alterações possíveis; bloqueados: diferenças
     que não podem ser gravadas (parâmetro somente leitura, workshared...).
-    'Descrição em IN' ausente no tipo (ou com GUID diferente) NÃO é bloqueio: o
+    'Descrição em IN' ausente no tipo (ou inutilizável) NÃO é bloqueio: o
     campo é simplesmente ignorado e a Description segue normalmente."""
     plan, blocked = [], []
     for key, holders in MODEL.items():
@@ -3291,7 +3326,7 @@ VERIFY_LOG = []          # linhas da tabela 1 já gravadas (todas as rodadas)
 INC_LOG = []             # linhas da tabela 2 já gravadas (todas as rodadas)
 
 
-IN_STATS = {"with": 0, "without": 0, "clash": []}
+IN_STATS = {"with": 0, "without": 0, "clash": [], "guids": []}
 
 
 def analyze_model():
@@ -3330,8 +3365,11 @@ def analyze_model():
     DASH["records"] = recs
     DASH["analyzedAt"] = datetime.now().strftime("%d/%m/%Y %H:%M:%S")
     IN_STATS = in_param_stats(scan)
+    if IN_STATS["guids"]:
+        LOG.info(u"'{}' localizado pelo nome · GUID(s) encontrado(s): {}".format(
+            PARAM_IN_NAME, u", ".join(IN_STATS["guids"])))
     if IN_STATS["clash"]:
-        LOG.warn(u"'{}' com GUID diferente do oficial (ignorado) em: {}".format(
+        LOG.warn(u"'{}' existe mas não é usado em: {}".format(
             PARAM_IN_NAME, u", ".join(IN_STATS["clash"])))
     LOG.end(u"Análise", u"tipos analisados: {} ({} instâncias) · tabela 1: {} · tabela 2: {} · "
             u"tabela 3: {} · bloqueados: {} · '{}' em {} tipo(s), ausente em {} · "
@@ -3356,7 +3394,7 @@ def make_info_text():
         txt += u"  ·  {}: existe em {} de {} tipo(s) (nos demais é ignorada)".format(
             PARAM_IN_NAME, n_in, n_tot)
     if IN_STATS["clash"]:
-        txt += (u"  ·  Atenção: '{}' com GUID diferente do oficial em {} - não é usado"
+        txt += (u"  ·  Atenção: '{}' existe mas não é usado em {}"
                 .format(PARAM_IN_NAME, u", ".join(IN_STATS["clash"])))
     return txt
 
@@ -3577,7 +3615,7 @@ def save_run(chosen_rows, chosen_inc):
                     except Exception:
                         p = None
                     if p is None:
-                        if f != "en":             # IN ausente / GUID diferente: ignora
+                        if f != "en":             # IN ausente / inutilizável: ignora
                             problems.append((where, u"parâmetro '{}' não existe".format(label), u"bloqueio"))
                         continue
                     if param_text(p) == new:

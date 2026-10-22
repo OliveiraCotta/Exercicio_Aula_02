@@ -11,6 +11,42 @@
 
 ---
 
+## 0f. "Descrição em IN" localizado pelo NOME (revisão 2026.10.22d)
+
+**Decisão do escritório (22/10):** o parâmetro passa a ser encontrado pelo **nome**
+"Descrição em IN", com **qualquer GUID**, porque o GUID pode variar de um projeto para
+outro. O parâmetro antigo "Descrição IN" (GUID `70307f6e…`) não é mais usado. A regra da
+auditoria "mesmo nome com outro GUID nunca é gravado" foi **substituída** por esta.
+
+Ele só é usado se:
+- houver **um** parâmetro com esse nome no tipo;
+- for **compartilhado**;
+- for de **texto**.
+
+Se não cumprir, nada é gravado nele e o aviso do topo diz onde e por quê, por exemplo:
+`Atenção: 'Descrição em IN' existe mas não é usado em Walls (não é parâmetro
+compartilhado)`. Os motivos possíveis são "não é parâmetro compartilhado", "não é
+parâmetro de texto" e "2 parâmetros com esse nome no mesmo tipo".
+
+O log registra os GUIDs encontrados, por exemplo:
+`'Descrição em IN' localizado pelo nome · GUID(s) encontrado(s): …`.
+
+O resto não mudou: somente leitura e emprestado (workshared) são bloqueados, Excel vazio
+nunca apaga, a gravação é conferida depois do `Commit` e nada é gravado sem confirmação.
+
+**Funções alteradas:** `in_param` e `in_param_clash` (agora usam `in_param_check`, que
+busca com `Element.GetParameters(nome)`), `in_param_stats`, a mensagem do topo e o log.
+Saíram `PARAM_IN_GUID_STR` e `PARAM_IN_GUID`.
+
+**Testado no simulador:**
+
+| Modelo | Resultado |
+|--------|-----------|
+| Parâmetro compartilhado com o GUID antigo | 5 gravados na Descrição em IN |
+| **Parâmetro compartilhado com GUID novo** (o caso do print de 22/10) | **5 gravados** (antes: 0) |
+| Parâmetro de projeto (não compartilhado) | 0 gravados; aviso "não é parâmetro compartilhado" |
+| Dois parâmetros com o nome no mesmo tipo | Esse tipo não recebe; os outros recebem; aviso "2 parâmetros com esse nome" |
+
 ## 0e. Coluna "DESCRIÇÃO EM IN" do Excel → parâmetro "Descrição em IN" (revisão 2026.10.22c)
 
 O valor da coluna **DESCRIÇÃO EM IN** da aba MATERIAIS vai para o parâmetro
@@ -34,6 +70,7 @@ com quebra de linha no cabeçalho.
 Na janela, nas mensagens, no log e no dashboard, o parâmetro agora se chama
 **"Descrição em IN"** (`PARAM_IN_NAME`). A lógica não mudou.
 
+- *(Substituído na 2026.10.22d: agora a busca é pelo nome — ver 0f.)*
 - **O comando encontra o parâmetro pelo GUID** `70307f6e-3b31-4049-bed4-62dfc3570fec`,
   não pelo nome. No `OCA_Parametros_Template.txt` do escritório (01/10), esse GUID está
   como `Descrição IN`, tipo `TEXT`.
@@ -165,7 +202,7 @@ quando moveu o comando para `OCA01.extension/…`. **Por isso nenhuma correção
 "versão …".
 
 Esta versão está em `OCA01.extension/OCA.tab/Keynote.panel/02_Atualização Descrição por
-Keynotes.pushbutton/`. A janela de verificação mostra **"versão 2026.10.22c"** no subtítulo,
+Keynotes.pushbutton/`. A janela de verificação mostra **"versão 2026.10.22d"** no subtítulo,
 e o log também. Se o texto não aparecer, o Revit está rodando outra cópia.
 
 ---
@@ -329,8 +366,8 @@ Cada etapa registra início, fim e duração. Também entram no log:
 |-------|------|-----------|
 | Célula vazia no Excel nunca apaga o modelo | `plan_to_model`, `save_run` (tabela 2: `if not new … continue`) | Ok. A tabela mostra "(mantém)". |
 | A Description é atualizada mesmo sem Descrição em IN | `plan_to_model`, `save_run` | Ok. No cenário `noin`: Description 4, IN 0, sem erro. |
-| A IN é identificada **pelo GUID** `70307f6e-3b31-4049-bed4-62dfc3570fec` | `in_param` (`get_Parameter(Guid)`) | Ok. |
-| Parâmetro com o mesmo nome e outro GUID nunca é gravado | `in_param_clash` | Ok. Aviso no topo e no log ("Generic Models … ignorado"); nenhum valor gravado nele. |
+| *(substituída na 2026.10.22d — ver 0f)* A IN é identificada **pelo GUID** `70307f6e-3b31-4049-bed4-62dfc3570fec` | `in_param` (`get_Parameter(Guid)`) | Ok. |
+| *(substituída na 2026.10.22d — ver 0f)* Parâmetro com o mesmo nome e outro GUID nunca é gravado | `in_param_clash` | Ok. Aviso no topo e no log ("Generic Models … ignorado"); nenhum valor gravado nele. |
 | Somente leitura e emprestado (workshared) | Tabela 1: o plano marca o bloqueio, e a linha fica desabilitada com o motivo. Tabela 2: `IsReadOnly` / `owned_by_other` na gravação. | Ok. Vão para **Bloqueados** no resumo. |
 | As marcações correspondem ao que pode ser gravado | Tabela 1: linhas bloqueadas não podem ser marcadas. Tabela 2: só grava o que mudou. | Ok. Limite: na tabela 2, somente leitura e workshared só são detectados **na gravação**, e a linha continua marcável. Fica no resumo como bloqueio; não é erro silencioso. |
 | A confirmação lista os campos | `_apply` | Ok: "Description N · Descrição em IN N · Keynote N" e quantas linhas substituem valor. |
@@ -578,7 +615,7 @@ Anote em cada teste: a versão (do log), o teste, o resultado e, se o Revit fech
    Keynotes.pushbutton` se ela ainda existir **e** estiver registrada no pyRevit. Duas
    cópias do botão causam exatamente o problema do item 1.
 4. pyRevit → **Reload**.
-5. Abra o comando e confira **"versão 2026.10.22c"** no subtítulo. Espere 3 s: não pode
+5. Abra o comando e confira **"versão 2026.10.22d"** no subtítulo. Espere 3 s: não pode
    aparecer nenhum "ATENÇÃO" na linha verde.
 
 **Como testar com segurança:**
