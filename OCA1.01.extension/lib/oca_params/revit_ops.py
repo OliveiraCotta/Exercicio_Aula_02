@@ -1,0 +1,845 @@
+# -*- coding: utf-8 -*-
+"""Tudo do Gerenciador de Parâmetros Compartilhados que usa a API do Revit.
+
+Diferenças de versão tratadas aqui (detecção por recurso, não por número):
+
+- Grupo de propriedades
+    Revit 2022+  : ForgeTypeId (GroupTypeId), ParameterUtils.GetAllBuiltInGroups(),
+                   LabelUtils.GetLabelForGroup(), BindingMap.Insert(def, binding, ForgeTypeId),
+                   InternalDefinition.GetGroupTypeId().
+    Revit <= 2023: BuiltInParameterGroup (removido no 2024+),
+                   LabelUtils.GetLabelFor(BuiltInParameterGroup), Insert(def, binding, BIPG),
+                   InternalDefinition.ParameterGroup.
+    No 2022/2023 existem os dois: usa-se ForgeTypeId.
+    "Outros" = ForgeTypeId vazio (2022+) ou BuiltInParameterGroup.INVALID.
+- Tipo de dado: ExternalDefinition.GetDataType() + LabelUtils.GetLabelForSpec()
+  (2022+) ou ExternalDefinition.ParameterType (versões antigas). Só exibição.
+- ElementId: .Value (2024+) ou .IntegerValue.
+
+Arquivo de parâmetros compartilhados: a API só abre o arquivo configurado em
+Application.SharedParametersFilename (configuração do usuário no Revit). O
+comando troca esse caminho pelo do arquivo escolhido SÓ enquanto lê as
+definições e enquanto vincula, e devolve o caminho original logo depois
+(também em caso de erro). Na leitura e na vinculação o arquivo é só aberto:
+nenhuma definição é criada nele, então nenhum GUID novo é gerado.
+
+Exportação (aba "Parâmetros no projeto"): é o ÚNICO ponto que grava no TXT,
+sempre com confirmação do usuário:
+- só parâmetros compartilhados do projeto que ainda não estão no TXT (mesmo
+  GUID) e cujo nome não existe no TXT com outro GUID;
+- antes de gravar, cópia do TXT na mesma pasta (<nome>_backup_<data>.txt); sem
+  cópia, nada é gravado;
+- Definitions.Create com ExternalDefinitionCreationOptions.GUID = GUID do
+  projeto (o GUID é preservado, não é gerado um novo), nome e tipo de dado do
+  projeto, Visible e HideWhenNoValue quando a API informa. Descrição e
+  "editável pelo usuário" não são expostos pela API no projeto: ficam vazio / sim;
+- tudo é validado antes da primeira gravação; o Revit grava cada definição
+  na hora e regrava o arquivo inteiro no formato dele.
+
+Vinculação (uma única transação, tudo ou nada):
+- create: BindingMap.Insert(ExternalDefinition, InstanceBinding|TypeBinding, grupo).
+- extend: BindingMap.ReInsert(definição interna, mesmo tipo de vínculo com as
+  categorias atuais + as novas, grupo atual). Antes de confirmar, valores já
+  preenchidos de uma amostra de elementos são relidos; se algum mudar ou sumir,
+  tudo é desfeito (RollBack).
+- Qualquer recusa do Revit (Insert/ReInsert = False), exceção ou Commit que
+  não termine em Committed -> RollBack: o projeto fica como estava.
+- Nunca chama BindingMap.Remove nem Document.Delete; Definitions.Create só na
+  exportação.
+
+Edição de um parâmetro de projeto (aba "Parâmetros no projeto", update_binding):
+- grupo de propriedades: InternalDefinition.SetGroupTypeId (2022+) ou, sem ele,
+  ReInsert com o grupo novo;
+- categorias: ReInsert com o mesmo tipo de vínculo e a lista nova. Categorias
+  retiradas apagam os valores preenchidos nelas (o Revit faz isso): a janela
+  conta esses valores (count_values) e pede confirmação antes;
+- valores das categorias que continuam são conferidos antes do commit; o
+  vínculo final é conferido (tipo, categorias, grupo). Erro -> RollBack.
+
+Engine: IronPython 2.7 (pyRevit).
+"""
+
+import os
+import shutil
+from datetime import datetime
+
+import System
+from Autodesk.Revit import DB
+
+from oca_params import plan as P
+
+try:
+    unicode
+except NameError:           # IronPython 3
+    unicode = str
+
+TRANSACTION_NAME = u"OCA · Gerenciador de Parâmetros Compartilhados"
+VERIFY_LIMIT = 300          # elementos conferidos por parâmetro ampliado (extend)
+EXPORT_GROUP = u"Exported Parameters"   # grupo do TXT usado SEMPRE na exportação
+
+# categorias sem tipos: um parâmetro de Tipo vinculado a elas não aparece
+_NO_TYPE_BICS = ("OST_Rooms", "OST_Areas", "OST_MEPSpaces", "OST_HVAC_Zones",
+                 "OST_ProjectInformation", "OST_Sheets", "OST_Materials")
+
+CATEGORY_TYPE_LABELS = (("Model", u"Modelo"), ("Annotation", u"Anotação"),
+                        ("AnalyticalModel", u"Analítico"))
+
+
+class ApplyError(Exception):
+    """Falha que desfez a transação inteira (mensagem já em português)."""
+
+
+class ExportError(Exception):
+    """Falha na exportação para o TXT. written = nomes já gravados antes da falha;
+    backup = caminho da cópia feita antes de gravar (ou None)."""
+
+    def __init__(self, message, written=None, backup=None):
+        Exception.__init__(self, message)
+        self.written = list(written or [])
+        self.backup = backup
+
+
+# ------------------------------------------------------------------
+# utilidades
+# ------------------------------------------------------------------
+def to_unicode(value):
+    if value is None:
+        return u""
+    if isinstance(value, unicode):
+        return value
+    try:
+        return unicode(value)
+    except Exception:
+        return u"{!r}".format(value)
+
+
+def eid_int(eid):
+    """ElementId -> int (Revit 2024+ usa .Value, versões antigas .IntegerValue)."""
+    raw = eid.Value if hasattr(eid, "Value") else eid.IntegerValue
+    return int(raw)
+
+
+def guid_key(guid):
+    return to_unicode(guid.ToString()).lower()
+
+
+def revit_version(app):
+    try:
+        return int(app.VersionNumber)
+    except Exception:
+        return 0
+
+
+def uses_forge_groups():
+    """True no Revit 2022+ (grupos por ForgeTypeId)."""
+    return (hasattr(DB, "GroupTypeId") and hasattr(DB, "ParameterUtils")
+            and hasattr(DB.ParameterUtils, "GetAllBuiltInGroups"))
+
+
+# ------------------------------------------------------------------
+# arquivo de parâmetros compartilhados (troca temporária do caminho)
+# ------------------------------------------------------------------
+class SharedParamFile(object):
+    """with SharedParamFile(app, path) as dfile: ...
+
+    Aponta o Revit para o arquivo escolhido, abre (DefinitionFile) e, na
+    saída, devolve o caminho original do usuário, com ou sem erro.
+    """
+
+    def __init__(self, app, path):
+        self.app = app
+        self.path = path
+        self.original = None
+        self.changed = False
+
+    def __enter__(self):
+        self.original = self.app.SharedParametersFilename
+        if (self.original or u"") != self.path:
+            self.app.SharedParametersFilename = self.path
+            self.changed = True
+        try:
+            dfile = self.app.OpenSharedParameterFile()
+        except Exception as ex:
+            self._restore()
+            raise ApplyError(u"O Revit não conseguiu abrir o arquivo de parâmetros "
+                             u"compartilhados: {}".format(to_unicode(ex)))
+        if dfile is None:
+            self._restore()
+            raise ApplyError(u"O Revit não conseguiu abrir o arquivo de parâmetros compartilhados "
+                             u"(arquivo inexistente ou em formato que esta versão não reconhece).")
+        return dfile
+
+    def _restore(self):
+        if self.changed:
+            try:
+                self.app.SharedParametersFilename = self.original or u""
+            except Exception:
+                pass
+            self.changed = False
+
+    def __exit__(self, exc_type, exc, tb):
+        self._restore()
+        return False
+
+
+def _external_definitions(dfile):
+    """guid -> ExternalDefinition de todos os grupos do DefinitionFile."""
+    out = {}
+    for group in dfile.Groups:
+        for definition in group.Definitions:
+            try:
+                out[guid_key(definition.GUID)] = definition
+            except Exception:
+                continue
+    return out
+
+
+def spec_label(definition):
+    """Rótulo do tipo de dado no idioma do Revit, ou u'' se não der para saber."""
+    try:
+        spec = definition.GetDataType()                     # Revit 2022+
+        try:
+            return to_unicode(DB.LabelUtils.GetLabelForSpec(spec))
+        except Exception:
+            return to_unicode(spec.TypeId)
+    except Exception:
+        pass
+    try:
+        return to_unicode(DB.LabelUtils.GetLabelFor(definition.ParameterType))
+    except Exception:
+        return u""
+
+
+def read_definitions(app, path):
+    """Lê o arquivo pelo Revit. Devolve (guid -> info, erro ou None).
+
+    info = {"usable", "reason", "revit_name", "visible", "modifiable", "datatype"}
+    Nenhum objeto do Revit sai daqui: o arquivo é fechado e o caminho do usuário
+    é restaurado antes do retorno.
+    """
+    out = {}
+    try:
+        with SharedParamFile(app, path) as dfile:
+            for key, definition in _external_definitions(dfile).items():
+                info = {"usable": True, "reason": u"",
+                        "revit_name": to_unicode(definition.Name),
+                        "datatype": spec_label(definition)}
+                try:
+                    info["visible"] = bool(definition.Visible)
+                except Exception:
+                    info["visible"] = None
+                try:
+                    info["modifiable"] = bool(definition.UserModifiable)
+                except Exception:
+                    info["modifiable"] = None
+                out[key] = info
+    except ApplyError as ex:
+        return out, to_unicode(ex)
+    except Exception as ex:
+        return out, u"Erro ao ler o arquivo pelo Revit: {}".format(to_unicode(ex))
+    return out, None
+
+
+# ------------------------------------------------------------------
+# grupos de propriedades (paleta Propriedades)
+# ------------------------------------------------------------------
+def list_property_groups():
+    """[(chave, rótulo)] em ordem alfabética, válidos para a versão em execução.
+
+    Chave: TypeId do ForgeTypeId (2022+; u"" = Outros) ou nome do
+    BuiltInParameterGroup (versões antigas).
+    """
+    items = []
+    if uses_forge_groups():
+        seen = set()
+        for gid in DB.ParameterUtils.GetAllBuiltInGroups():
+            key = to_unicode(gid.TypeId)
+            if key in seen:
+                continue
+            seen.add(key)
+            try:
+                label = to_unicode(DB.LabelUtils.GetLabelForGroup(gid))
+            except Exception:
+                continue
+            if label.strip():
+                items.append((key, label))
+        if u"" not in seen:
+            try:
+                other = to_unicode(DB.LabelUtils.GetLabelForGroup(DB.ForgeTypeId(u"")))
+            except Exception:
+                other = u""
+            items.append((u"", other.strip() or u"Outros"))
+    else:
+        for name in System.Enum.GetNames(DB.BuiltInParameterGroup):
+            value = getattr(DB.BuiltInParameterGroup, name)
+            try:
+                label = to_unicode(DB.LabelUtils.GetLabelFor(value))
+            except Exception:
+                label = u""
+            if name == "INVALID":
+                label = label.strip() or u"Outros"
+            if label.strip():
+                items.append((to_unicode(name), label))
+    # rótulos repetidos (grupos diferentes com o mesmo nome traduzido): mostra a chave
+    counts = {}
+    for _, label in items:
+        counts[label] = counts.get(label, 0) + 1
+    items = [(k, label if counts[label] == 1 else u"{} ({})".format(label, k.split(u":")[-1] or k))
+             for k, label in items]
+    items.sort(key=lambda kv: kv[1].lower())
+    return items
+
+
+def default_group_key(groups):
+    """Dados de identidade, se existir; senão Outros; senão o primeiro."""
+    keys = [k for k, _ in groups]
+    try:
+        if uses_forge_groups():
+            ident = to_unicode(DB.GroupTypeId.IdentityData.TypeId)
+        else:
+            ident = u"PG_IDENTITY_DATA"
+        if ident in keys:
+            return ident
+    except Exception:
+        pass
+    for k in (u"", u"INVALID"):
+        if k in keys:
+            return k
+    return keys[0] if keys else None
+
+
+def group_object(key):
+    """Chave -> objeto aceito por BindingMap.Insert na versão em execução."""
+    if uses_forge_groups():
+        return DB.ForgeTypeId(key or u"")
+    return getattr(DB.BuiltInParameterGroup, key or "INVALID")
+
+
+def _definition_group(definition):
+    """(chave, objeto) do grupo de uma InternalDefinition já vinculada."""
+    try:
+        gid = definition.GetGroupTypeId()                   # Revit 2022+
+        return to_unicode(gid.TypeId), gid
+    except Exception:
+        pass
+    try:
+        bipg = definition.ParameterGroup
+        return to_unicode(bipg), bipg
+    except Exception:
+        return None, None
+
+
+def group_label_of(key, groups):
+    return dict(groups).get(key, key or u"Outros")
+
+
+# ------------------------------------------------------------------
+# categorias
+# ------------------------------------------------------------------
+def _category_type_label(cat):
+    try:
+        ctype = to_unicode(cat.CategoryType)
+    except Exception:
+        return None
+    return dict(CATEGORY_TYPE_LABELS).get(ctype)
+
+
+def list_bindable_categories(doc):
+    """[{"id", "name", "type", "cat"}] das categorias que aceitam parâmetros de
+    projeto (Category.AllowsBoundParameters), sem as internas."""
+    out = []
+    for cat in doc.Settings.Categories:
+        try:
+            if not cat.AllowsBoundParameters:
+                continue
+        except Exception:
+            continue
+        type_label = _category_type_label(cat)
+        if type_label is None:                              # Internal / Invalid
+            continue
+        out.append({"id": eid_int(cat.Id), "name": to_unicode(cat.Name),
+                    "type": type_label, "cat": cat})
+    out.sort(key=lambda c: c["name"].lower())
+    return out
+
+
+def no_type_category_ids():
+    out = set()
+    for name in _NO_TYPE_BICS:
+        bic = getattr(DB.BuiltInCategory, name, None)
+        if bic is not None:
+            try:
+                out.add(int(bic))
+            except Exception:
+                pass
+    return out
+
+
+# ------------------------------------------------------------------
+# estado atual do projeto
+# ------------------------------------------------------------------
+def _binding_kind(binding):
+    if isinstance(binding, DB.InstanceBinding):
+        return P.INSTANCE
+    if isinstance(binding, DB.TypeBinding):
+        return P.TYPE
+    return None
+
+
+def _iter_bindings(doc):
+    """(InternalDefinition, Binding) de todos os parâmetros de projeto."""
+    it = doc.ParameterBindings.ForwardIterator()
+    it.Reset()
+    while it.MoveNext():
+        yield it.Key, it.Current
+
+
+def scan_project(doc, groups):
+    """Estado dos parâmetros do projeto (ver plan.empty_project)."""
+    state = P.empty_project()
+    for definition, binding in _iter_bindings(doc):
+        name = to_unicode(definition.Name)
+        guid = None
+        try:
+            element = doc.GetElement(definition.Id)
+            if isinstance(element, DB.SharedParameterElement):
+                guid = guid_key(element.GuidValue)
+        except Exception:
+            pass
+        state["bound_names"].setdefault(name.strip(), set()).add(guid)
+        if guid is None:
+            continue
+        cats = set()
+        try:
+            for cat in binding.Categories:
+                cats.add(eid_int(cat.Id))
+        except Exception:
+            pass
+        gkey, _ = _definition_group(definition)
+        state["bound"][guid] = {"kind": _binding_kind(binding), "cats": cats,
+                                "group_key": gkey, "group_label": group_label_of(gkey, groups),
+                                "name": name}
+    for element in DB.FilteredElementCollector(doc).OfClass(DB.SharedParameterElement):
+        try:
+            state["shared"][guid_key(element.GuidValue)] = to_unicode(element.Name)
+        except Exception:
+            continue
+    return state
+
+
+# ------------------------------------------------------------------
+# execução
+# ------------------------------------------------------------------
+def _category_set(app, categories):
+    cset = app.Create.NewCategorySet()
+    for cat in categories:
+        cset.Insert(cat)
+    return cset
+
+
+def _new_binding(app, kind, categories):
+    cset = _category_set(app, categories)
+    if kind == P.TYPE:
+        return app.Create.NewTypeBinding(cset)
+    return app.Create.NewInstanceBinding(cset)
+
+
+def _bound_definition(doc, key):
+    """(InternalDefinition, Binding) do parâmetro já vinculado com este GUID."""
+    for definition, binding in _iter_bindings(doc):
+        try:
+            element = doc.GetElement(definition.Id)
+            if isinstance(element, DB.SharedParameterElement) and guid_key(element.GuidValue) == key:
+                return definition, binding
+        except Exception:
+            continue
+    return None, None
+
+
+def _param_value(param):
+    st = param.StorageType
+    if st == DB.StorageType.String:
+        return param.AsString()
+    if st == DB.StorageType.Integer:
+        return param.AsInteger()
+    if st == DB.StorageType.Double:
+        return round(param.AsDouble(), 9)
+    if st == DB.StorageType.ElementId:
+        return eid_int(param.AsElementId())
+    return None
+
+
+def _snapshot(doc, guid, kind, categories, limit=VERIFY_LIMIT):
+    """[(ElementId, valor)] de até `limit` elementos que já têm valor no parâmetro."""
+    out = []
+    sys_guid = System.Guid(guid)
+    for cat in categories:
+        collector = DB.FilteredElementCollector(doc).OfCategoryId(cat.Id)
+        collector = (collector.WhereElementIsElementType() if kind == P.TYPE
+                     else collector.WhereElementIsNotElementType())
+        for element in collector:
+            try:
+                param = element.get_Parameter(sys_guid)
+                if param is not None and param.HasValue:
+                    out.append((element.Id, _param_value(param)))
+            except Exception:
+                continue
+            if len(out) >= limit:
+                return out
+    return out
+
+
+def _verify_snapshot(doc, guid, snapshot, name):
+    sys_guid = System.Guid(guid)
+    for eid, before in snapshot:
+        element = doc.GetElement(eid)
+        param = element.get_Parameter(sys_guid) if element is not None else None
+        if param is None or not param.HasValue or _param_value(param) != before:
+            raise ApplyError(u"'{}': ao alterar o vínculo, um valor já preenchido mudou "
+                             u"(elemento {}). Nada foi gravado.".format(name, eid_int(eid)))
+
+
+def apply_plan(doc, path, rows, categories_by_id, groups):
+    """Executa as linhas create/extend numa única transação. Tudo ou nada.
+
+    rows             [plan.PlanRow] (só create/extend são executadas)
+    categories_by_id id -> Category (de list_bindable_categories)
+    Lança ApplyError (projeto inalterado) em qualquer falha.
+    """
+    todo = [r for r in rows if r.actionable]
+    if not todo:
+        raise ApplyError(u"Nada a aplicar.")
+    if doc.IsReadOnly:
+        raise ApplyError(u"O modelo está aberto como somente leitura.")
+    app = doc.Application
+    bmap = doc.ParameterBindings
+
+    with SharedParamFile(app, path) as dfile:
+        external = _external_definitions(dfile)
+        tx = DB.Transaction(doc, TRANSACTION_NAME)
+        try:
+            tx.Start()
+            for row in todo:
+                cats = []
+                for cid in (row.cats if row.action == P.CREATE else row.add_cats):
+                    cat = categories_by_id.get(cid)
+                    if cat is None:
+                        raise ApplyError(u"'{}': categoria {} não encontrada no projeto.".format(
+                            row.name, cid))
+                    cats.append(cat)
+
+                if row.action == P.CREATE:
+                    definition = external.get(row.guid)
+                    if definition is None:
+                        raise ApplyError(u"'{}': a definição (GUID {}) não está no arquivo aberto "
+                                         u"pelo Revit.".format(row.name, row.guid))
+                    current, _ = _bound_definition(doc, row.guid)
+                    if current is not None:
+                        raise ApplyError(u"'{}': o parâmetro passou a estar vinculado. Revise "
+                                         u"de novo.".format(row.name))
+                    ok = bmap.Insert(definition, _new_binding(app, row.kind, cats),
+                                     group_object(row.group_key))
+                    if not ok:
+                        raise ApplyError(u"'{}': o Revit recusou o vínculo.".format(row.name))
+                    _check_binding(doc, row, set(row.cats))
+                else:
+                    definition, binding = _bound_definition(doc, row.guid)
+                    if definition is None:
+                        raise ApplyError(u"'{}': o vínculo atual não foi encontrado.".format(row.name))
+                    if _binding_kind(binding) != row.kind:
+                        raise ApplyError(u"'{}': o tipo de vínculo atual mudou. Revise de novo.".format(
+                            row.name))
+                    existing = list(binding.Categories)
+                    snapshot = _snapshot(doc, row.guid, row.kind, existing)
+                    _, group = _definition_group(definition)
+                    if group is None:
+                        raise ApplyError(u"'{}': não foi possível ler o grupo atual.".format(row.name))
+                    new_binding = _new_binding(app, row.kind, existing + cats)
+                    ok = bmap.ReInsert(definition, new_binding, group)
+                    if not ok:
+                        raise ApplyError(u"'{}': o Revit recusou a ampliação das categorias.".format(
+                            row.name))
+                    doc.Regenerate()
+                    _check_binding(doc, row, set(eid_int(c.Id) for c in existing) | row.add_cats)
+                    _verify_snapshot(doc, row.guid, snapshot, row.name)
+            status = tx.Commit()
+            if status != DB.TransactionStatus.Committed:
+                raise ApplyError(u"O Revit não confirmou a transação (status {}).".format(status))
+        except ApplyError:
+            _rollback(tx)
+            raise
+        except Exception as ex:
+            _rollback(tx)
+            raise ApplyError(u"Erro do Revit: {}".format(to_unicode(ex)))
+        finally:
+            tx.Dispose()
+    return len(todo)
+
+
+def _check_binding(doc, row, expected):
+    """Depois do ReInsert: mesmo tipo de vínculo e todas as categorias esperadas."""
+    definition, binding = _bound_definition(doc, row.guid)
+    if definition is None or _binding_kind(binding) != row.kind:
+        raise ApplyError(u"'{}': o vínculo não ficou como esperado.".format(row.name))
+    now = set(eid_int(c.Id) for c in binding.Categories)
+    if not expected.issubset(now):
+        raise ApplyError(u"'{}': {} categoria(s) não ficaram vinculadas.".format(
+            row.name, len(expected - now)))
+
+
+def _rollback(tx):
+    try:
+        if tx.HasStarted() and not tx.HasEnded():
+            tx.RollBack()
+    except Exception:
+        pass
+
+
+# ------------------------------------------------------------------
+# parâmetros compartilhados do projeto e exportação para o TXT
+# ------------------------------------------------------------------
+def list_project_shared(doc, state, cat_names):
+    """Todos os SharedParameterElement do projeto (vinculados ou só em famílias).
+
+    [{"guid", "name", "datatype", "kind", "group_label", "cats": set(ids),
+      "cats_names": [nomes], "bound": bool}]
+    state = scan_project(...) (vínculo, grupo e categorias de cada GUID).
+    """
+    out = []
+    for element in DB.FilteredElementCollector(doc).OfClass(DB.SharedParameterElement):
+        try:
+            key = guid_key(element.GuidValue)
+        except Exception:
+            continue
+        try:
+            definition = element.GetDefinition()
+        except Exception:
+            definition = None
+        bound = state["bound"].get(key)
+        cats = set(bound["cats"]) if bound else set()
+        out.append({
+            "guid": key,
+            "name": to_unicode(element.Name),
+            "datatype": spec_label(definition) if definition is not None else u"",
+            "kind": bound["kind"] if bound else None,
+            "group_label": bound.get("group_label", u"") if bound else u"",
+            "cats": cats,
+            "cats_names": sorted((cat_names.get(c, u"Categoria {}".format(c)) for c in cats),
+                                 key=lambda n: n.lower()),
+            "bound": bool(bound),
+        })
+    return out
+
+
+def backup_file(path):
+    """Cópia do TXT na mesma pasta: <nome>_backup_<AAAAMMDD_HHMMSS><ext>."""
+    folder, name = os.path.split(path)
+    base, ext = os.path.splitext(name)
+    stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    target = os.path.join(folder, u"{}_backup_{}{}".format(base, stamp, ext or u".txt"))
+    n = 2
+    while os.path.exists(target):                       # nunca sobrescreve uma cópia anterior
+        target = os.path.join(folder, u"{}_backup_{}_{}{}".format(base, stamp, n, ext or u".txt"))
+        n += 1
+    try:
+        shutil.copyfile(path, target)           # só o conteúdo (sem copiar metadados)
+    except Exception as ex:
+        raise ExportError(u"Não foi possível criar a cópia de segurança do TXT; nada foi "
+                          u"gravado. {}".format(to_unicode(ex)))
+    return target
+
+
+def valid_group_name(name):
+    """Mensagem de erro, ou None se o nome de grupo puder ir para o TXT."""
+    name = name or u""
+    if not name.strip():
+        return u"Informe o grupo de definição do TXT."
+    if any(ch in name for ch in u"\t\r\n"):
+        return u"O nome do grupo não pode ter tabulação nem quebra de linha."
+    return None
+
+
+def _creation_options(element, definition, key):
+    name = to_unicode(element.Name)
+    if hasattr(definition, "GetDataType"):                  # Revit 2022+
+        options = DB.ExternalDefinitionCreationOptions(name, definition.GetDataType())
+    else:
+        options = DB.ExternalDefinitionCreationOptions(name, definition.ParameterType)
+    options.GUID = System.Guid(key)
+    try:
+        options.Visible = bool(definition.Visible)
+    except Exception:
+        pass
+    try:
+        options.HideWhenNoValue = bool(element.ShouldHideWhenNoValue())
+    except Exception:
+        pass
+    return options
+
+
+def _definition_group_in_file(dfile, name):
+    try:
+        group = dfile.Groups.get_Item(name)
+    except Exception:
+        group = None
+    return group
+
+
+def export_definitions(doc, path, guids, group_name):
+    """Grava no TXT as definições dos parâmetros compartilhados do projeto
+    (GUIDs informados), no grupo group_name (existente ou novo).
+
+    Devolve (nomes gravados, caminho da cópia). Lança ExportError.
+    """
+    error = valid_group_name(group_name)
+    if error:
+        raise ExportError(error)
+    if not guids:
+        raise ExportError(u"Nenhum parâmetro para exportar.")
+    if not os.path.isfile(path):
+        raise ExportError(u"O arquivo TXT não foi encontrado: {}".format(path))
+    if not os.access(path, os.W_OK):
+        raise ExportError(u"O arquivo TXT está protegido contra gravação (somente leitura).")
+
+    # 1. validação completa antes de qualquer gravação
+    app = doc.Application
+    try:
+        with SharedParamFile(app, path) as dfile:
+            existing = _external_definitions(dfile)
+            names = set(to_unicode(d.Name).strip() for d in existing.values())
+            todo = []
+            for key in guids:
+                element = DB.SharedParameterElement.Lookup(doc, System.Guid(key))
+                if element is None:
+                    raise ExportError(u"O parâmetro {} não existe mais no projeto.".format(key))
+                name = to_unicode(element.Name)
+                if key in existing:
+                    raise ExportError(u"'{}' já está no TXT (mesmo GUID).".format(name))
+                if name.strip() in names:
+                    raise ExportError(u"Já existe no TXT um parâmetro chamado '{}' com outro "
+                                      u"GUID.".format(name.strip()))
+                names.add(name.strip())
+                todo.append((key, name, _creation_options(element, element.GetDefinition(), key)))
+    except ApplyError as ex:
+        raise ExportError(to_unicode(ex))
+
+    # 2. cópia de segurança e gravação (o Revit grava cada definição na hora)
+    backup = backup_file(path)
+    written = []
+    try:
+        with SharedParamFile(app, path) as dfile:
+            group = _definition_group_in_file(dfile, group_name)
+            if group is None:
+                group = dfile.Groups.Create(group_name)
+            for key, name, options in todo:
+                created = group.Definitions.Create(options)
+                if created is None or guid_key(created.GUID) != key:
+                    raise ExportError(u"O Revit não gravou '{}' com o GUID original.".format(name),
+                                      written, backup)
+                written.append(name)
+    except ExportError as ex:
+        ex.written, ex.backup = written, backup
+        raise
+    except Exception as ex:
+        raise ExportError(u"Erro do Revit ao gravar no TXT: {}".format(to_unicode(ex)),
+                          written, backup)
+    return written, backup
+
+
+# ------------------------------------------------------------------
+# edição de parâmetro de projeto já vinculado (grupo e categorias)
+# ------------------------------------------------------------------
+def count_values(doc, guid, kind, categories):
+    """Quantos elementos (ou tipos, se kind = Tipo) dessas categorias têm valor
+    preenchido no parâmetro. Texto vazio não conta."""
+    total = 0
+    sys_guid = System.Guid(guid)
+    for cat in categories:
+        collector = DB.FilteredElementCollector(doc).OfCategoryId(cat.Id)
+        collector = (collector.WhereElementIsElementType() if kind == P.TYPE
+                     else collector.WhereElementIsNotElementType())
+        for element in collector:
+            try:
+                param = element.get_Parameter(sys_guid)
+                if param is None or not param.HasValue:
+                    continue
+                if param.StorageType == DB.StorageType.String and not param.AsString():
+                    continue
+                total += 1
+            except Exception:
+                continue
+    return total
+
+
+def binding_categories(doc, guid):
+    """[Category] do vínculo atual do parâmetro (vazio se não estiver vinculado)."""
+    definition, binding = _bound_definition(doc, guid)
+    return list(binding.Categories) if binding is not None else []
+
+
+def update_binding(doc, guid, cat_ids, group_key, categories_by_id):
+    """Muda o grupo de propriedades e/ou as categorias de um parâmetro de projeto
+    compartilhado, mantendo Instância/Tipo. Uma transação; erro -> RollBack.
+    Lança ApplyError (projeto inalterado)."""
+    cat_ids = set(cat_ids)
+    if not cat_ids:
+        raise ApplyError(u"Marque ao menos uma categoria. Para tirar o parâmetro do projeto, "
+                         u"use Gerenciar > Parâmetros de projeto.")
+    if doc.IsReadOnly:
+        raise ApplyError(u"O modelo está aberto como somente leitura.")
+    definition, binding = _bound_definition(doc, guid)
+    if definition is None:
+        raise ApplyError(u"O parâmetro não está vinculado ao projeto.")
+    name = to_unicode(definition.Name)
+    kind = _binding_kind(binding)
+    old_cats = list(binding.Categories)
+    old_ids = set(eid_int(c.Id) for c in old_cats)
+    old_key, old_group = _definition_group(definition)
+    group_changed = group_key is not None and group_key != old_key
+    cats_changed = cat_ids != old_ids
+    if not (group_changed or cats_changed):
+        raise ApplyError(u"Nada mudou: grupo e categorias são os atuais.")
+    new_cats = []
+    for cid in sorted(cat_ids):
+        cat = categories_by_id.get(cid)
+        if cat is None:
+            raise ApplyError(u"Categoria {} não encontrada no projeto.".format(cid))
+        new_cats.append(cat)
+    kept = [c for c in old_cats if eid_int(c.Id) in cat_ids]
+    app = doc.Application
+
+    tx = DB.Transaction(doc, TRANSACTION_NAME + u" - editar parâmetro")
+    try:
+        tx.Start()
+        snapshot = _snapshot(doc, guid, kind, kept)
+        group = old_group
+        if group_changed:
+            group = group_object(group_key)
+            if hasattr(definition, "SetGroupTypeId"):           # Revit 2022+
+                definition.SetGroupTypeId(group)
+            elif not cats_changed:                               # versões antigas: ReInsert
+                cats_changed = True
+        if cats_changed:
+            if not doc.ParameterBindings.ReInsert(definition, _new_binding(app, kind, new_cats), group):
+                raise ApplyError(u"'{}': o Revit recusou a alteração do vínculo.".format(name))
+        doc.Regenerate()
+        current, now_binding = _bound_definition(doc, guid)
+        if current is None or _binding_kind(now_binding) != kind:
+            raise ApplyError(u"'{}': o vínculo não ficou como esperado.".format(name))
+        now_ids = set(eid_int(c.Id) for c in now_binding.Categories)
+        if now_ids != cat_ids:
+            raise ApplyError(u"'{}': as categorias não ficaram como escolhido.".format(name))
+        if group_changed and _definition_group(current)[0] != group_key:
+            raise ApplyError(u"'{}': o grupo de propriedades não foi alterado.".format(name))
+        _verify_snapshot(doc, guid, snapshot, name)
+        status = tx.Commit()
+        if status != DB.TransactionStatus.Committed:
+            raise ApplyError(u"O Revit não confirmou a transação (status {}).".format(status))
+    except ApplyError:
+        _rollback(tx)
+        raise
+    except Exception as ex:
+        _rollback(tx)
+        raise ApplyError(u"Erro do Revit: {}".format(to_unicode(ex)))
+    finally:
+        tx.Dispose()

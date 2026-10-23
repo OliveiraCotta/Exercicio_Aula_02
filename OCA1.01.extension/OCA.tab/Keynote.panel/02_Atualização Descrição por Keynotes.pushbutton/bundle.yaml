@@ -1,0 +1,7 @@
+# Janela não modal + ExternalEvent: o motor Python precisa continuar vivo
+# depois que o script termina. No pyRevit 6.x/7.x isto é lido daqui (o
+# __persistentengine__ do script.py fica como reserva para o pyRevit 5).
+title: "Atualização\ndas Descrições\npor Keynote"
+tooltip: "Confere as Keynotes dos tipos do modelo com a planilha de materiais (aba MATERIAIS) e atualiza Description e Descrição IN pelo código de Keynote.\n\nFluxo: Excel > Modelo. Nada é gravado sem confirmação.\nInclui conferência em tabelas, seleção no modelo, TXT de Keynote e dashboard de qualidade."
+engine:
+  persistent: true
